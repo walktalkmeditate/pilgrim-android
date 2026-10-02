@@ -109,7 +109,6 @@ class WalkViewModelHonorTest {
         voiceRecorder = VoiceRecorder(context, FakeAudioCapture(bursts = listOf(ShortArray(1_600) { 500 })), audioFocus, clock)
         viewModel = WalkViewModel(
             context, controller, repository, clock, voiceRecorder, FakeLocationSource(),
-            org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.weather.FakeWeatherFetching(),

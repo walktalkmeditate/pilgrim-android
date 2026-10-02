@@ -9,6 +9,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -128,6 +129,23 @@ class HonorImportCoordinatorTest {
         assertNull(imports.fetched.value)
     }
 
+    // What the link toast answers with (S2 §4.2), a paste's included.
+    @Test
+    fun `each import nobody replaced announces how it ended, and a replaced one announces nothing`() = runTest(dispatcher) {
+        val imports = coordinator()
+        val outcomes = mutableListOf<HonorImportOutcome>()
+        backgroundScope.launch { imports.outcomes.collect { outcomes += it } }
+
+        imports.openWay(FIRST)
+        imports.openWay(SECOND)
+        land(FIRST)
+        land(SECOND)
+        imports.openWay(THIRD)
+        fail(THIRD, WayImportException(WayError.NOT_FOUND))
+
+        assertEquals(listOf(HonorImportOutcome.Listed, HonorImportOutcome.Failed(WayError.NOT_FOUND)), outcomes)
+    }
+
     // iOS `startWalk`: the import is cancelled and the state left as it was.
     @Test
     fun `a walk starting drops the import in flight, and its Way never opens`() = runTest(dispatcher) {
@@ -217,6 +235,42 @@ class HonorImportCoordinatorTest {
         assertEquals(HonorImportState.Failed(WayError.UNAVAILABLE), imports.state.value)
 
         imports.overviewClosed(overview)
+        assertEquals(HonorImportState.Idle, imports.state.value)
+    }
+
+    // S2 §5 row 8: a link for the share already showing keeps its overview, which gathers again.
+    @Test
+    fun `a link for the share whose overview is up gathers it again in place`() = runTest(dispatcher) {
+        val imports = coordinator()
+        val way = withVoices(FIRST, 4)
+        imports.gather(way, Any())
+        report(way.id, WayMediaWork.State.RUNNING, unfinished = 2)
+
+        imports.openWay(FIRST)
+        held.getValue(FIRST).resume(way)
+        assertEquals("the landed import leaves no line of its own", HonorImportState.Idle, imports.state.value)
+
+        imports.gatherShownAgain(way.id)
+
+        assertEquals(HonorImportState.Gathering(0.5), imports.state.value)
+        assertEquals("the running download carries on", 1, scheduler.gathers.size)
+        report(way.id, WayMediaWork.State.SUCCEEDED, unfinished = 0)
+        assertEquals("the watch follows it again", HonorImportState.Ready, imports.state.value)
+    }
+
+    @Test
+    fun `another share's id, or no overview up, gathers nothing`() = runTest(dispatcher) {
+        val imports = coordinator()
+        val overview = Any()
+        imports.gather(way(FIRST), overview)
+        imports.openWay(SECOND)
+        land(SECOND)
+
+        imports.gatherShownAgain("share:$SECOND")
+        assertEquals(HonorImportState.Idle, imports.state.value)
+        imports.overviewClosed(overview)
+        imports.gatherShownAgain("share:$FIRST")
+
         assertEquals(HonorImportState.Idle, imports.state.value)
     }
 

@@ -13,11 +13,13 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
@@ -103,6 +105,15 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
     internal fun playbackInvariantSnapshot(): Pair<Int, Int>? = configuredInvariants
 
     @Volatile private var configuredInvariants: Pair<Int, Int>? = null
+
+    /**
+     * Test-only: the looper ExoPlayer's playback thread runs on. A test
+     * holding it paused keeps placeholder bytes from ever being decoded,
+     * so no asynchronous decode error races its assertions. Null in
+     * production: ExoPlayer makes its own.
+     */
+    @androidx.annotation.VisibleForTesting
+    internal var playbackLooperForTest: Looper? = null
 
     // Cross-thread publication: focus listener fires on the handler
     // thread (we pass mainHandler) but the write happens there too,
@@ -337,6 +348,8 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
         _state.value = SoundscapePlayer.State.Playing
     }
 
+    /** `setPlaybackLooper` is Media3's unstable API, used only with the test's looper. */
+    @OptIn(UnstableApi::class)
     private fun createPlayer(): ExoPlayer {
         val attrs = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
@@ -348,6 +361,7 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
         return ExoPlayer.Builder(context)
             // handleAudioFocus = false — our standalone request owns focus.
             .setAudioAttributes(attrs, /* handleAudioFocus = */ false)
+            .apply { playbackLooperForTest?.let { setPlaybackLooper(it) } }
             .build()
             .also { it.addListener(playerListener) }
     }

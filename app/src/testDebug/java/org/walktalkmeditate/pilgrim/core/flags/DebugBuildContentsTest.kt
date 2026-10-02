@@ -41,6 +41,15 @@ class DebugBuildContentsTest {
     }
 
     @Test
+    fun `the honor link check sees the debug filter take honor links to MainActivity, and the walk host stays unclaimed`() {
+        val claimed = context.packageManager.queryIntentActivities(BuildContents.honorLink(context), 0)
+            .map { it.activityInfo.name }
+
+        assertEquals(listOf("org.walktalkmeditate.pilgrim.MainActivity"), claimed)
+        assertEquals(emptyList<Any>(), context.packageManager.queryIntentActivities(BuildContents.walkLink(context), 0))
+    }
+
+    @Test
     fun `the permission check sees every debug-only permission`() {
         val requested = context.packageManager
             .getPackageInfo(context.packageName, PackageManager.GET_PERMISSIONS)

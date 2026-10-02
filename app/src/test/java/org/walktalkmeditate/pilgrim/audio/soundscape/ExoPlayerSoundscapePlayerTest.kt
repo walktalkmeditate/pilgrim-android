@@ -37,6 +37,7 @@ class ExoPlayerSoundscapePlayerTest {
     private lateinit var audioManager: AudioManager
     private lateinit var player: ExoPlayerSoundscapePlayer
     private lateinit var tempFile: File
+    private var heldPlaybackThread: android.os.HandlerThread? = null
 
     @Before fun setUp() {
         context = ApplicationProvider.getApplicationContext()
@@ -48,13 +49,29 @@ class ExoPlayerSoundscapePlayerTest {
     }
 
     @After fun tearDown() {
+        heldPlaybackThread?.let { shadowOf(it.looper).unPause() }
         player.release()
         runMainQueueUntilIdle()
+        heldPlaybackThread?.quitSafely()
         tempFile.delete()
     }
 
     private fun runMainQueueUntilIdle() {
         shadowOf(android.os.Looper.getMainLooper()).idle()
+    }
+
+    /**
+     * The placeholder bytes aren't audio, and ExoPlayer's decode error
+     * abandons focus whenever it lands. For the tests that assert focus is
+     * kept, hold the playback thread paused so the bytes are never decoded.
+     * Only for tests that never release the player mid-test: release waits
+     * on the playback thread, which a paused looper never answers.
+     */
+    private fun holdPlayback() {
+        val thread = android.os.HandlerThread("soundscape-test-playback").apply { start() }
+        shadowOf(thread.looper).pause()
+        player.playbackLooperForTest = thread.looper
+        heldPlaybackThread = thread
     }
 
     /**
@@ -170,6 +187,7 @@ class ExoPlayerSoundscapePlayerTest {
         // iOS parity SoundscapePlayer.swift:30-33 — a crossfade keeps
         // the audio session active. Abandoning focus on every swap
         // would preempt the in-flight voice guide.
+        holdPlayback()
         player.play(tempFile)
         runMainQueueUntilIdle()
         player.stopForSwap()
@@ -187,6 +205,7 @@ class ExoPlayerSoundscapePlayerTest {
         // already-held request. Focus must never be abandoned across
         // the swap so the voice guide's GAIN_TRANSIENT_MAY_DUCK is
         // never preempted.
+        holdPlayback()
         player.play(tempFile)
         runMainQueueUntilIdle()
         val firstRequest = shadowOf(audioManager).lastAudioFocusRequest

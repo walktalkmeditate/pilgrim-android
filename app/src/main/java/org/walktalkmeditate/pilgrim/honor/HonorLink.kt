@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.honor
 
+import android.net.Uri
 import java.net.URI
 import java.net.URISyntaxException
 import java.net.URLDecoder
@@ -27,7 +28,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.trimmingWhitespacesAndNewlines
  * a brace still parses there, and both platforms ignore what follows the
  * path. In the host or the path such a character still fails: `URI`
  * refuses it, and iOS's decoded segment fails the id. `Uri.parse`
- * refuses nothing, so it isn't used (S2 §11.1).
+ * refuses nothing, so pasted text never goes through it (S2 §11.1).
  */
 object HonorLink {
 
@@ -43,6 +44,22 @@ object HonorLink {
         val id = parts.singleOrNull() ?: return null
         return id.takeIf(::isId)
     }
+
+    /**
+     * A link the OS hands the app, iOS's `parse(_ url:)` for an intent's
+     * data. The platform already parsed it: [Uri.getPathSegments] decodes
+     * each segment and drops the empty ones, as Foundation's
+     * `pathComponents` does, and [Uri.getHost] leaves out the port and the
+     * user info.
+     */
+    fun parse(uri: Uri): String? {
+        val host = uri.host?.lowercase(Locale.ROOT) ?: return null
+        if (host !in HOSTS) return null
+        return uri.pathSegments.singleOrNull()?.takeIf(::isId)
+    }
+
+    /** [candidate] itself when it is a whole share id, untrimmed: the install referrer's value (S2 §10.3). */
+    fun shareId(candidate: String): String? = candidate.takeIf(::isId)
 
     /** A bare id, or a link on either host with or without a scheme, trimmed of whitespace first. */
     fun parse(text: String): String? {

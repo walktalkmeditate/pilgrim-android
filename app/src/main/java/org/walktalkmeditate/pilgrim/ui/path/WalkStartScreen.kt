@@ -127,7 +127,6 @@ fun WalkStartScreen(
     // exactly this purpose (mirrors ActiveWalkScreen line 53).
     val walkState by walkViewModel.walkState.collectAsStateWithLifecycle()
     val isInProgress = walkState.isInProgress
-    val recoveredWalkId by walkViewModel.recoveredWalkId.collectAsStateWithLifecycle()
 
     // Back from the Path tab (the effective root) should background
     // the app, not destroy it. Launcher re-tap then resumes here.
@@ -245,16 +244,6 @@ fun WalkStartScreen(
             reduceMotion = reduceMotion,
             honorEnabled = honorEnabled,
             modifier = Modifier.matchParentSize(),
-        )
-        // iOS-parity recovery banner: shows when a walk was auto-finalized
-        // because the user swiped the app from recents mid-walk. Auto-
-        // dismisses after 4s via the banner's internal LaunchedEffect.
-        // Aligned to the top of the screen so it doesn't push the rest of
-        // the layout around — overlays via the outer Box.
-        RecoveryBanner(
-            visible = recoveredWalkId != null,
-            onDismiss = { walkViewModel.dismissRecovery() },
-            modifier = Modifier.align(Alignment.TopCenter),
         )
         Column(
             modifier = Modifier

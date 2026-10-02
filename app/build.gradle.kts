@@ -303,6 +303,10 @@ dependencies {
     implementation(libs.mlkit.language.id)
     implementation(libs.kotlinx.coroutines.play.services)
 
+    // Phase 21 U27: an install from an honor page's Play link opens its
+    // Way once setup finishes (R19), read through InstallReferrerClientAdapter.
+    implementation(libs.install.referrer)
+
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.turbine)

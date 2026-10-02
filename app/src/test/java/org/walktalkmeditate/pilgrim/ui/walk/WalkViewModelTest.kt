@@ -202,7 +202,6 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.audio.voiceguide.FakeVoiceGuidePauseController()
         viewModel = WalkViewModel(
             context, controller, repository, clock, voiceRecorder, FakeLocationSource(),
-            org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             FakeWeatherFetching(),
@@ -853,7 +852,6 @@ class WalkViewModelTest {
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
         viewModel = WalkViewModel(
             context, controller, repository, clock, voiceRecorder, FakeLocationSource(),
-            org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             FakeWeatherFetching(),
@@ -903,7 +901,6 @@ class WalkViewModelTest {
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
         viewModel = WalkViewModel(
             context, controller, repository, clock, voiceRecorder, FakeLocationSource(),
-            org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             FakeWeatherFetching(),
@@ -1026,7 +1023,6 @@ class WalkViewModelTest {
         val seededSource = FakeLocationSource(lastKnown = cachedFix)
         val vm = WalkViewModel(
             context, controller, repository, clock, voiceRecorder, seededSource,
-            org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             FakeWeatherFetching(),
@@ -1072,7 +1068,6 @@ class WalkViewModelTest {
         val vm = WalkViewModel(
             context, controller, repository, clock, voiceRecorder,
             FakeLocationSource(lastKnown = null),
-            org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             FakeWeatherFetching(),
@@ -1147,7 +1142,6 @@ class WalkViewModelTest {
         val throwingRepo = HemisphereRepository(throwingDataStore, throwingSource, throwingScope)
         val vm = WalkViewModel(
             context, controller, repository, clock, voiceRecorder, FakeLocationSource(),
-            org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             FakeWeatherFetching(),
@@ -1341,7 +1335,6 @@ class WalkViewModelTest {
         val locationSource = FakeLocationSource(lastKnown = lastKnown)
         return WalkViewModel(
             context, controller, repository, clock, voiceRecorder, locationSource,
-            org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             weather,
@@ -1372,7 +1365,6 @@ class WalkViewModelTest {
         beginHonorWalk: Provider<BeginHonorWalk>,
     ): WalkViewModel = WalkViewModel(
         context, walkController, repository, clock, voiceRecorder, FakeLocationSource(),
-        org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
         org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
         org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
         FakeWeatherFetching(),
@@ -1399,7 +1391,6 @@ class WalkViewModelTest {
         soundscape: FakeWalkSoundscapeUiController,
     ): WalkViewModel = WalkViewModel(
         context, controller, repository, clock, voiceRecorder, FakeLocationSource(),
-        org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
         org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
         org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
         FakeWeatherFetching(),
@@ -1468,7 +1459,6 @@ class WalkViewModelTest {
         )
         val vm = WalkViewModel(
             context, controller, repository, clock, voiceRecorder, FakeLocationSource(),
-            org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             prefs,
             FakeWeatherFetching(),

@@ -2,8 +2,10 @@
 package org.walktalkmeditate.pilgrim.core.flags
 
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ComponentInfo
 import android.content.pm.PackageManager
+import android.net.Uri
 
 /**
  * What the release build must not contain, shared by the release checks
@@ -38,6 +40,16 @@ internal object BuildContents {
 
     fun isOnClasspath(className: String): Boolean =
         runCatching { Class.forName(className) }.isSuccess
+
+    /** A tapped honor link, as a browser hands it to the app; debug claims it until the 2.0.0 flip moves the filter. */
+    fun honorLink(context: Context): Intent = browsable(context, "https://honor.pilgrimapp.org/9mYhRL7GWx")
+
+    /** A tapped walk link, which no build ever claims (AE4). */
+    fun walkLink(context: Context): Intent = browsable(context, "https://walk.pilgrimapp.org/9mYhRL7GWx")
+
+    private fun browsable(context: Context, url: String): Intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        .addCategory(Intent.CATEGORY_BROWSABLE)
+        .setPackage(context.packageName)
 
     /**
      * The app's own components that only a `DUMP` holder (adb) can reach —

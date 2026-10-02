@@ -2,7 +2,10 @@
 package org.walktalkmeditate.pilgrim.widget
 
 import android.app.Application
+import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -64,4 +67,34 @@ class DeepLinkTargetTest {
         val intent = Intent().putExtra(DeepLinkTarget.EXTRA_DEEP_LINK, DeepLinkTarget.DEEP_LINK_ACTIVE_WALK)
         assertEquals(DeepLinkTarget.ActiveWalk, DeepLinkTarget.parse(intent))
     }
+
+    // Phase 21 U27: MainActivity is exported, so a link can carry any extras.
+    @Test
+    fun `parse ignores widget extras on an intent that carries link data`() {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://honor.pilgrimapp.org/Qoi4YmPHLN"))
+            .putExtra(DeepLinkTarget.EXTRA_DEEP_LINK, DeepLinkTarget.DEEP_LINK_WALK_SUMMARY)
+            .putExtra(DeepLinkTarget.EXTRA_WALK_ID, 42L)
+        assertNull(DeepLinkTarget.parse(intent))
+    }
+
+    // Glance gives every click its own data, with no action: a widget tap is never a link.
+    @Test
+    fun `parse reads a Last Walk widget tap through the data Glance gives it`() {
+        val tap = widgetClickIntent(context, lastWalk(42L)).asGlanceClick()
+
+        assertEquals("glance-action", tap.data?.scheme)
+        assertEquals(DeepLinkTarget.WalkSummary(42L), DeepLinkTarget.parse(tap))
+    }
+
+    @Test
+    fun `parse reads an Empty widget tap through the data Glance gives it`() {
+        val tap = widgetClickIntent(context, WidgetState.Empty).asGlanceClick()
+
+        assertEquals(DeepLinkTarget.Home, DeepLinkTarget.parse(tap))
+    }
+
+    private val context: Context get() = ApplicationProvider.getApplicationContext()
+
+    private fun lastWalk(walkId: Long) =
+        WidgetState.LastWalk(walkId = walkId, endTimestampMs = 0L, distanceMeters = 1_000.0, activeDurationMs = 600_000L)
 }

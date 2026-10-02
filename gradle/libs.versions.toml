@@ -38,6 +38,7 @@ mlkitTextRecognition = "16.0.1"
 mlkitFaceDetection = "16.1.7"
 mlkitLanguageId = "17.0.6"
 coroutinesPlayServices = "1.11.0"
+installReferrer = "2.2"
 
 junit = "4.13.2"
 turbine = "1.2.1"
@@ -109,6 +110,7 @@ mlkit-text-recognition = { group = "com.google.mlkit", name = "text-recognition"
 mlkit-face-detection = { group = "com.google.mlkit", name = "face-detection", version.ref = "mlkitFaceDetection" }
 mlkit-language-id = { group = "com.google.mlkit", name = "language-id", version.ref = "mlkitLanguageId" }
 kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "coroutinesPlayServices" }
+install-referrer = { group = "com.android.installreferrer", name = "installreferrer", version.ref = "installReferrer" }
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 turbine = { group = "app.cash.turbine", name = "turbine", version.ref = "turbine" }

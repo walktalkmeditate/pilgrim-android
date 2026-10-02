@@ -15,6 +15,10 @@ See ThreadsFieldReport.kt (src/debug/kotlin) for the harness itself.
 Also the Honor desk harness (plan U19): mock locations for the Way
 replayer, and its two adb triggers, one in the UI process and one in
 :tracker beside the walk. HonorDebugReceiver.kt lists every command.
+
+And the Honor links' App Links filter (plan U27), which moves to the main
+manifest at the 2.0.0 flip; ReleaseBuildContentsTest proves release claims
+no honor link until then.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
@@ -27,6 +31,23 @@ replayer, and its two adb triggers, one in the UI process and one in
         tools:ignore="MockLocation" />
 
     <application>
+        <!-- iOS associates only the honor host, every path
+             (`applinks:honor.pilgrimapp.org`, the worker's `"/*"`): a path
+             that doesn't parse opens the app and does nothing. The walk
+             host is never claimed, so a tapped walk link opens the
+             browser and imports only when pasted (AE4). -->
+        <activity
+            android:name="org.walktalkmeditate.pilgrim.MainActivity"
+            android:exported="true">
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:host="honor.pilgrimapp.org" />
+            </intent-filter>
+        </activity>
+
         <receiver
             android:name="org.walktalkmeditate.pilgrim.core.threads.ThreadsFieldReportReceiver"
             android:exported="true"

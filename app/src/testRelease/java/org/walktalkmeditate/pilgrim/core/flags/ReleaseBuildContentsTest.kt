@@ -6,7 +6,6 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -68,11 +67,12 @@ class ReleaseBuildContentsTest {
         // Guard: intent resolution works here, so an empty honor answer means unclaimed.
         assertTrue(context.packageManager.queryIntentActivities(launcher, 0).isNotEmpty())
 
-        val honorLink = Intent(Intent.ACTION_VIEW, Uri.parse("https://honor.pilgrimapp.org/9mYhRL7GWx"))
-            .addCategory(Intent.CATEGORY_BROWSABLE)
-            .setPackage(context.packageName)
+        assertEquals(emptyList<Any>(), context.packageManager.queryIntentActivities(BuildContents.honorLink(context), 0))
+    }
 
-        assertEquals(emptyList<Any>(), context.packageManager.queryIntentActivities(honorLink, 0))
+    @Test
+    fun `release never claims the walk host`() {
+        assertEquals(emptyList<Any>(), context.packageManager.queryIntentActivities(BuildContents.walkLink(context), 0))
     }
 
     @Test
@@ -105,5 +105,7 @@ class ReleaseBuildContentsTest {
         "android.permission.WAKE_LOCK",
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "${context.packageName}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+        // Play Install Referrer 2.2 (U27): binds the Play Store's referrer service.
+        "com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE",
     )
 }

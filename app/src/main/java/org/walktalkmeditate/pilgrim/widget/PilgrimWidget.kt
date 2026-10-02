@@ -255,22 +255,23 @@ private fun MantraContent(mantras: String, today: LocalDate) {
 }
 
 @Composable
-private fun onClickFor(state: WidgetState): androidx.glance.action.Action {
-    val context = LocalContext.current
-    val intent = Intent(context, MainActivity::class.java).apply {
+private fun onClickFor(state: WidgetState): androidx.glance.action.Action =
+    actionStartActivity(widgetClickIntent(LocalContext.current, state))
+
+/** What a widget tap starts. Glance then gives the intent a `glance-action:` data id of its own. */
+internal fun widgetClickIntent(context: Context, state: WidgetState): Intent =
+    Intent(context, MainActivity::class.java).apply {
         flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        when (val s = state) {
+        when (state) {
             is WidgetState.LastWalk -> {
                 putExtra(DeepLinkTarget.EXTRA_DEEP_LINK, DeepLinkTarget.DEEP_LINK_WALK_SUMMARY)
-                putExtra(DeepLinkTarget.EXTRA_WALK_ID, s.walkId)
+                putExtra(DeepLinkTarget.EXTRA_WALK_ID, state.walkId)
             }
             WidgetState.Empty -> {
                 putExtra(DeepLinkTarget.EXTRA_DEEP_LINK, DeepLinkTarget.DEEP_LINK_HOME)
             }
         }
     }
-    return actionStartActivity(intent)
-}
 
 // --- Helpers (formatters that the composable reads at render time) ---
 
