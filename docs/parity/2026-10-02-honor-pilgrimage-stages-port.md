@@ -33,7 +33,7 @@ This spec outranks the plan wherever they disagree (the plan's authority order).
 The plan was written before these reads. Where it disagrees with iOS, iOS as shipped wins. Each item points to its evidence; the cluster sections carry the detail.
 
 **Across units**
-- **What iOS walks is the Way it captured at the door.** The view model holds `let way: Way?` from Begin, and iOS neither waits for a package commit nor refuses Start (P2 C-5, C-10; P2 §10). The plan's door file stamp and Start's wait are Android additions, not equivalents. Owner decision 2 settles which Android builds. The plan's Risks table ("Start refuses during a commit") also contradicts its Key Technical Decisions; it goes whichever way decision 2 lands.
+- **What iOS walks is the Way it captured at the door.** The view model holds `let way: Way?` from Begin, and iOS neither waits for a package commit nor refuses Start (P2 C-5, C-10; P2 §10). The plan's door file stamp and Start's wait are Android additions, not equivalents. Owner decision 2 chose per-walk staging, so Android builds neither. The plan's Risks table ("Start refuses during a commit") also contradicts its Key Technical Decisions; it goes whichever way decision 2 lands.
 - **The walk guard:** iOS checks on entry and before the commit, and never after. Replace's old-route removal and Update's tail sweep and reconcile run unguarded (P2 C-4). Android holds its guard from entry to the last post-commit step.
 - **E-15 and E-16 are matched as shipped** (P5 C14): "they sat here 5 minutes" after a stage's Sit? is a "they" iOS ships, so R14 allows it; the card measures to `at`, not `pin` (up to 1,247 m apart in live data). Both are filed.
 
@@ -135,7 +135,7 @@ The plan was written before these reads. Where it disagrees with iOS, iOS as shi
 Gathered from the clusters; the gate records each with its reason.
 
 - **The process split:** the guard's extra clauses and the one-time `finalizePending()` (P2 A-1); a failed ledger record retried at launch (P2 A-2); the two lock layers (P2 A-3); records dated at the walk's end (P2 A-4); the order-safe merge (P2 A-5); the record's identity from the session row (P2 A-7, P3 addition 4); the water state, caption and arrival metres persisted and revived (P3 additions 1, 3, 5; P5 A2, A4; Annex A.11 item 1); the outcome from the continuously written row (P3 addition 6); the soft-tap clause applied in `BeginHonorWalk` (P3 addition 7); the marks' anchor on the walk's first recorded fix (P5 A1); a summary that can open before the Honor step lands (P5 A3).
-- **Owner decision 2:** either a per-walk staged stage Way (recommended), or the door's file-stamp refusal and Start's wait (P2 A-8, A-9).
+- **Owner decision 2 (decided):** the stage Way is staged per walk at Start from the copy the door loaded, discarded at finalize and never promoted. The plan's file-stamp refusal and Start's wait (P2 A-8, A-9) are not built.
 - **The water haptic in the pocket** (P3 addition 2, R6's existing addition).
 - **Files and caches:** no HTTP cache on the CDN clients (P1 A1); redirects kept on the CDN host (P1 A2, owner decision 6); the temp set under `noBackupFilesDir`, swept at launch (P2 A-6); `list()` skipping stage ids (P2 A-11); `retireMany` bumping the deletion counter (P2 A-10).
 - **Kotlin and Compose mechanics, no visible change:** cancellation rethrown (P1 A3); a single-flight `load` (P1 A4); millisecond `fetchedAt` (P1 A5); list keys by id and position (P1 A6); wire integers as `Long` (P1 A7); work on `Dispatchers.IO` (P1 A8); kotlinx's decoding differences, recorded and not emulated (P1 A9); NFC-normalized name comparisons (P1 A10); the camera subscriptions only where marks exist (P5 A5).
@@ -160,14 +160,14 @@ Android ports every one of these exactly as shipped (the house rule: iOS defects
 
 ---
 
-## Owner decisions (proposed)
+## Owner decisions (decided 2026-10-02)
 
-Each has a recommendation. The default for every defect above is parity plus the upstream issue.
+The owner accepted every recommendation below on 2026-10-02, decision 2 included (it replaces the plan's file-stamp check and Start's wait). The default for every defect above stays parity plus the upstream issue.
 
 | # | Decision | Recommendation | Refs |
 |---|---|---|---|
 | 1 | **Schema 12's notice state.** A `honor_notices` table (walk id, kind, ref id, metres, fired at) plus `last_notice_seconds` and `arrival_walked_meters` on `honor_sessions`; or the plan's columns with a kind and a reserved fired-stamps column added | The table: right for water alone, and iOS PR #91 then needs no schema change whenever it merges. Never ship the plan's three caption columns with no kind | Annex A.5, A.14 item 1; P3 §12, decision 1; P5 C4 |
-| 2 | **What `:tracker` walks when the package changes after the door.** (a) The plan: read the package at Start and revival, refuse Start with the "Gone" copy when the door's file stamp no longer matches, and make Start wait for an operation in flight. (b) Stage the stage Way per walk at Start from the copy the door loaded, discarded at finalize, never promoted | **(b).** It is the platform equivalent of iOS's in-memory capture: nothing differs for the walker, there's no refusal or wait, and it costs one write of up to 2 MB per stage walk. The wide guard stays for gap 2. This revisits the plan's "stages read from the package" call-out (confirmed 2026-10-02) on new evidence: iOS's view model holds `let way` from Begin, and its finish path says an Update may redraw the stage while the walk is on | P2 O-2, C-5, C-10 |
+| 2 | **What `:tracker` walks when the package changes after the door.** (a) The plan: read the package at Start and revival, refuse Start with the "Gone" copy when the door's file stamp no longer matches, and make Start wait for an operation in flight. (b) Stage the stage Way per walk at Start from the copy the door loaded, discarded at finalize, never promoted | **(b), decided.** It is the platform equivalent of iOS's in-memory capture: nothing differs for the walker, there's no refusal or wait, and it costs one write of up to 2 MB per stage walk. The wide guard stays for gap 2. This revisits the plan's "stages read from the package" call-out (confirmed 2026-10-02) on new evidence: iOS's view model holds `let way` from Begin, and its finish path says an Update may redraw the stage while the walk is on | P2 O-2, C-5, C-10 |
 | 3 | **A launch repair for a half-committed install** | Parity: port the marker exactly, call `installed()` at launch, file the gap. The window is about a second, and a repair still couldn't fix an Update's mixed stages | P2 O-1, D-1 |
 | 4 | **Replace's busy race** | Parity: the refused Replace deletes the marker, as iOS does; fold in iOS's fix if it lands before the gate | P2 O-3, C-6 |
 | 5 | **The catalog cache's home** | `filesDir/Pilgrimages/`: iOS's copy is backed up and moves to a new phone, as `filesDir` does on a device transfer | P1 O1, C6 |
