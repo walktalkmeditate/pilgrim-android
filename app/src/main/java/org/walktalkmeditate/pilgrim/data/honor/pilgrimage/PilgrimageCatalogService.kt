@@ -8,6 +8,7 @@ import java.io.IOException
 import java.nio.charset.CharacterCodingException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -85,8 +86,15 @@ class PilgrimageCatalogService internal constructor(
         ioDispatcher = Dispatchers.IO,
     )
 
-    /** Resolved on first use and created only by a write. */
-    internal val directory: File by lazy(resolveDirectory)
+    /**
+     * Resolved on first use and created only by a write. The first use,
+     * the process's first load or preview, deletes every temp file in it:
+     * one left there was a write's until a kill took it between its create
+     * and its rename. That comes before any write of this service can
+     * start, and nothing else writes here; a temp deleted from under some
+     * other write would only drop that write, as a failed write is dropped.
+     */
+    internal val directory: File by lazy { resolveDirectory().also { deleteTempFiles(it) } }
 
     private val cacheFile: File get() = File(directory, CACHE_FILE)
 
@@ -247,13 +255,15 @@ class PilgrimageCatalogService internal constructor(
     }
 
     /**
-     * A temp file, then a rename over [target], so a reader never meets half
-     * a file (`CollectiveRouteCatalogService`'s write). A write that fails is
-     * dropped, as iOS's `try? … .atomic` drops it: what was fetched is still
-     * returned, and the next load asks again.
+     * A temp file of this write's own, then a rename over [target], as iOS's
+     * `.atomic` makes a fresh one each time: a reader never meets half a
+     * file, even while two previews of one route overlap, since no two
+     * writes share a temp. A write that fails is dropped, as iOS's
+     * `try? … .atomic` drops it: what was fetched is still returned, and
+     * the next load asks again.
      */
     private fun writeQuietly(target: File, bytes: ByteArray) {
-        val temp = File(directory, "${target.name}$TEMP_SUFFIX")
+        val temp = tempFile(target)
         try {
             directory.mkdirs()
             temp.writeBytes(bytes)
@@ -328,8 +338,16 @@ class PilgrimageCatalogService internal constructor(
         /**
          * iOS's ephemeral catalog session (`PilgrimageCatalogService.swift:110-115@7c200bf`):
          * a stalled request times out after 15 s and the whole fetch after
-         * 30 s, nothing is retried, and OkHttp keeps no cache unless one is
-         * set. A redirect is followed only on [cdn]'s scheme, host and port.
+         * 30 s, a failed connection isn't retried, and OkHttp keeps no cache
+         * unless one is set. A redirect is followed only on [cdn]'s scheme,
+         * host and port.
+         *
+         * OkHttp still repeats a request once, whatever
+         * `retryOnConnectionFailure` says, when a 503 carries
+         * `Retry-After: 0` (and a 421 on a coalesced HTTP/2 connection). So
+         * such a 503 followed by a 200 lists the catalog, where iOS's one
+         * request reads the 503 as out of reach. A recorded platform
+         * difference, not fought: the CDN isn't known to send one.
          */
         fun httpClient(cdn: HttpUrl): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
@@ -339,6 +357,14 @@ class PilgrimageCatalogService internal constructor(
             .retryOnConnectionFailure(false)
             .stayingOnTheHost(cdn)
             .build()
+
+        /** A name no other write shares, beside [target] so the rename stays in one folder (`WayStore`'s temp names). */
+        internal fun tempFile(target: File): File = File(target.parentFile, ".${target.name}.${UUID.randomUUID()}$TEMP_SUFFIX")
+
+        private fun deleteTempFiles(directory: File) {
+            directory.listFiles { file -> file.isFile && file.name.startsWith(".") && file.name.endsWith(TEMP_SUFFIX) }
+                ?.forEach { it.delete() }
+        }
 
         /** A plain GET, as iOS's `session.bytes(from:)` sends. */
         internal fun request(url: HttpUrl): Request = Request.Builder().url(url).build()
@@ -363,10 +389,20 @@ class PilgrimageCatalogService internal constructor(
          * dropped. A repeated id keeps its first valid row. With no
          * `pilgrimages` key, every route sits in one group under no header.
          *
-         * kotlinx refuses `1e400` as it reads, as Foundation does, so a
-         * `1e400` anywhere fails the whole index on both platforms; an
-         * integer written `2.0` fails it on Android only, and a quoted number
-         * reads on Android only (P1 A9, not emulated).
+         * kotlinx and Foundation differ on inputs no live file holds; these
+         * are recorded platform differences, not emulated (P1 A9):
+         * - an integer written `2.0` fails the whole index, where iOS reads it;
+         * - a quoted number, or a quoted Boolean (`"sparse": "true"`), reads,
+         *   where iOS fails the whole index;
+         * - a lone surrogate escape (`"\ud800"`) in a name or label reads,
+         *   so its row is listed, where iOS fails the whole index (the cache
+         *   then writes the unpaired half, which UTF-8 can't encode, as `?`);
+         * - a repeated key keeps its last value, where iOS keeps its first;
+         * - a leading byte order mark fails the whole catalog, where iOS
+         *   reads past it.
+         *
+         * `1e400` is no difference: kotlinx refuses it as it reads, as
+         * Foundation does, so it fails the whole index on both.
          *
          * @throws PilgrimageException [PilgrimageError.CATALOG_UNREACHABLE].
          */

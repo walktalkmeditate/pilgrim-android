@@ -7,7 +7,9 @@ import androidx.test.core.app.ApplicationProvider
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -25,6 +27,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -60,9 +63,10 @@ import org.walktalkmeditate.pilgrim.domain.Clock
  * After iOS's tests come the spec's additions: the URL rules' exact strings
  * (Stage 5-G's lesson), the 24 h rule's edges and the signed clock, Retry,
  * the fallback, single flight and cancellation (A3, A4), the caps at their
- * edge on both paths, status and redirects (A2), each row rule at its edge,
- * the decoding rules and kotlinx's differences (A7, A9), grouping's corners,
- * the preview's file and failures, and the cache file. Robolectric for the
+ * edge on both paths, status, OkHttp's own 503 repeat and redirects (A2),
+ * each row rule at its edge, the decoding rules and kotlinx's differences
+ * (A7, A9), grouping's corners, the preview's file and failures, and the
+ * cache file and the temp files beside it. Robolectric for the
  * production constructor and client (the builder-test rule).
  */
 @RunWith(RobolectricTestRunner::class)
@@ -345,6 +349,7 @@ class PilgrimageCatalogServiceTest {
         stubs.stub(routePath("v1.7.0")) { declared(fixture("route.json")) }
 
         assertRefused(PilgrimageError.NOT_WALKABLE) { makeService().previewBlocking(entry(stageCount = 5), "v1.7.0") }
+        assertFalse("nothing written: a cached preview is served with no second check", directory.exists())
     }
 
     @Test
@@ -571,6 +576,18 @@ class PilgrimageCatalogServiceTest {
         assertOutOfReach("status 304") { makeService().loadBlocking() }
     }
 
+    /** A platform difference, recorded: OkHttp repeats this 503 whatever `retryOnConnectionFailure` says; iOS asks once. */
+    @Test
+    fun `a 503 with Retry-After 0 is asked for twice, and a plain 503 once`() {
+        stubIndex { MockResponse().setResponseCode(503).setHeader("Retry-After", "0") }
+        assertOutOfReach { makeService().loadBlocking() }
+        assertEquals("OkHttp's own repeat", 2, server.requestCount)
+
+        stubIndex { MockResponse().setResponseCode(503) }
+        assertOutOfReach { makeService().loadBlocking() }
+        assertEquals("one request more", 3, server.requestCount)
+    }
+
     /** A2, owner decision 6: iOS follows a redirect to any HTTPS host. */
     @Test
     fun `a redirect off the CDN host is refused before anything connects to it, and one on it is followed`() {
@@ -708,6 +725,29 @@ class PilgrimageCatalogServiceTest {
         assertNotEquals(base, json)
 
         assertEquals("iOS would read main and refuse the index", "v1.7.0", parse(json).release)
+    }
+
+    @Test
+    fun `A9 - a quoted Boolean reads, where iOS refuses the whole index`() {
+        val base = fixtureText("index.json")
+        val json = base.replace("\"sparse\": true", "\"sparse\": \"true\"")
+        assertNotEquals(base, json)
+
+        assertTrue(parse(json).routes.single().sparse)
+    }
+
+    @Test
+    fun `A9 - a lone surrogate escape in a name lists the row, where iOS refuses the whole index`() {
+        val base = fixtureText("index.json")
+        val json = base.replace("\"en\": \"Camino de Santiago (Frances)\"", "\"en\": \"\\ud800\"")
+        assertNotEquals(base, json)
+
+        assertEquals("\uD800", parse(json).routes.single().name)
+    }
+
+    @Test
+    fun `A9 - a leading byte order mark fails the whole index, where iOS reads past it`() {
+        assertParseRefused("BOM", "\uFEFF" + fixtureText("index.json"))
     }
 
     @Test
@@ -851,6 +891,31 @@ class PilgrimageCatalogServiceTest {
         assertEquals(fetched, offline.catalog.value)
     }
 
+    /** The first load of a process finds them, before any write of its own can be in flight. */
+    @Test
+    fun `the temp files a killed write left are deleted at the first load, and nothing else is`() {
+        stubIndex(fixture("index.json"))
+        makeService().loadBlocking()
+        val preview = File(directory, "route-camino-frances-v1.7.0.json").apply { writeBytes(fixture("route.json")) }
+        listOf(File(directory, "catalog.json"), preview).forEach { PilgrimageCatalogService.tempFile(it).writeText("{ half") }
+        assertEquals(4, directory.list()?.size)
+
+        makeService().loadBlocking()
+
+        assertEquals("a fresh cache, so nothing was written", 1, server.requestCount)
+        assertEquals(listOf("catalog.json", "route-camino-frances-v1.7.0.json"), directory.list()?.sorted())
+    }
+
+    @Test
+    fun `no two writes share a temp file, and each sits beside its target`() {
+        val target = File(directory, "route-camino-frances-v1.7.0.json")
+
+        val temps = List(100) { PilgrimageCatalogService.tempFile(target) }
+
+        assertEquals(100, temps.toSet().size)
+        temps.forEach { assertEquals(directory, it.parentFile) }
+    }
+
     @Test
     fun `a corrupt cache, or one not exactly this format, is no cache at all`() {
         stubIndex(fixture("index.json"))
@@ -874,14 +939,25 @@ class PilgrimageCatalogServiceTest {
 
     // ---- Production wiring (Robolectric) ----------------------------------
 
+    /** Flow gap 14. The production constructor sends every fetch to the real CDN, so only the client itself can count one. */
     @Test
     fun `nothing happens at construction, and the cache's home is the files dir's Pilgrimages folder`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
+        val calls = AtomicInteger()
+        val firstCall = CountDownLatch(1)
+        val client = PilgrimageCatalogService.httpClient(server.url("/")).newBuilder()
+            .addInterceptor {
+                calls.incrementAndGet()
+                firstCall.countDown()
+                throw IOException("a call at construction")
+            }
+            .build()
 
-        val service = PilgrimageCatalogService(context, PilgrimageCatalogService.httpClient(server.url("/")), Clock { clockMillis })
+        val service = PilgrimageCatalogService(context, client, Clock { clockMillis })
+        firstCall.await(500, TimeUnit.MILLISECONDS)
 
+        assertEquals("no call, to any host", 0, calls.get())
         assertNull(service.catalog.value)
-        assertEquals(0, server.requestCount)
         val home = File(context.filesDir, "Pilgrimages")
         assertEquals("owner decision 5: filesDir, which a device transfer carries", home, service.directory)
         assertFalse("iOS creates it at init; Android waits for a write", home.exists())
@@ -889,7 +965,7 @@ class PilgrimageCatalogServiceTest {
 
     /** The builder-test rule: the client Hilt hands the service, built for real. */
     @Test
-    fun `the production client is the catalog's own - 15 s idle, 30 s in all, no retry, no cache`() {
+    fun `the production client is the catalog's own - 15 s idle, 30 s in all, no connection retry, no cache`() {
         val client = NetworkModule.providePilgrimageCatalogHttpClient()
 
         assertEquals(15_000, client.connectTimeoutMillis)
@@ -903,7 +979,7 @@ class PilgrimageCatalogServiceTest {
     }
 
     @Test
-    fun `the production client sends the request the service builds, answered by the network`() {
+    fun `the production client sends the request the service builds`() {
         val request = PilgrimageCatalogService.request(PilgrimageCatalogService.INDEX_URL.toHttpUrl())
         assertEquals("GET", request.method)
         assertEquals(PilgrimageCatalogService.INDEX_URL, request.url.toString())
@@ -911,9 +987,18 @@ class PilgrimageCatalogServiceTest {
 
         NetworkModule.providePilgrimageCatalogHttpClient().newCall(PilgrimageCatalogService.request(server.url(INDEX_PATH))).execute().use { response ->
             assertEquals(200, response.code)
-            assertNull("no cache answered it", response.cacheResponse)
-            assertNotNull(response.networkResponse)
         }
+    }
+
+    /** A1: under the CDN's own 7-day `max-age`, iOS's ephemeral session would answer the second from memory. */
+    @Test
+    fun `with the production client, two forced loads under a 7-day max-age are two requests`() {
+        stubIndex { declared(fixture("index.json")).setHeader("Cache-Control", "public, max-age=604800") }
+        val service = makeService(client = NetworkModule.providePilgrimageCatalogHttpClient())
+
+        repeat(2) { service.loadBlocking(force = true) }
+
+        assertEquals("no HTTP cache answered the second", 2, server.requestCount)
     }
 
     /** Its host rule is the CDN's, so even a hop back to the same test server is off the host. */
@@ -928,8 +1013,11 @@ class PilgrimageCatalogServiceTest {
 
     // ---- Helpers -----------------------------------------------------------
 
-    private fun makeService(cdn: HttpUrl = server.url("/")) = PilgrimageCatalogService(
-        client = PilgrimageCatalogService.httpClient(cdn),
+    private fun makeService(
+        cdn: HttpUrl = server.url("/"),
+        client: OkHttpClient = PilgrimageCatalogService.httpClient(cdn),
+    ) = PilgrimageCatalogService(
+        client = client,
         cdn = cdn,
         resolveDirectory = { directory },
         clock = Clock { clockMillis },
