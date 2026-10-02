@@ -6,8 +6,14 @@ import java.io.File
 import java.io.IOException
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
+import javax.inject.Provider
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -21,6 +27,7 @@ import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.data.honor.HonorCardStateEntity
@@ -32,6 +39,10 @@ import org.walktalkmeditate.pilgrim.data.honor.HonorWalkMarkerEntity
 import org.walktalkmeditate.pilgrim.data.honor.WayArrival
 import org.walktalkmeditate.pilgrim.data.honor.WayLink
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.FakeWalkSignals
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageCatalogService
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageLedgerStore
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPhase
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
@@ -412,6 +423,106 @@ class HonorFinalizerTest {
         assertTrue(shareMedia().exists())
         assertNotNull(h.store.load(SHARE_ID))
         assertTrue(swept.isEmpty())
+    }
+
+    // The pilgrimage packages' launch work (pilgrimage-stage spec P2 §12, gaps 9 and 14)
+
+    @Test
+    fun `the launch runs the package work after the pending steps, so their records land before any stage retires`() =
+        runBlocking {
+            val walk = finishedHonorWalk(HonorFinishKind.CLEAN)
+            val liveRowsAtPackages = mutableListOf<Int>()
+            val finalizer = HonorFinalizer(
+                h.db,
+                h.store,
+                h.clock,
+                Dispatchers.IO,
+                packageLaunchWork = { liveRowsAtPackages += dao.liveSessionWayIds().size },
+            )
+
+            finalizer.runAtLaunch()
+
+            assertEquals("the package work ran once the step had cleared the live rows", listOf(0), liveRowsAtPackages)
+            assertNotNull(dao.getMarker(walk.uuid))
+        }
+
+    @Test
+    fun `the launch's package work runs even when the steps before it fail, and its own failure is deferred`() = runBlocking {
+        val ran = mutableListOf<String>()
+        val unreadable = WayStore({ throw IOException("the store's folder is unreadable") })
+        val finalizer = HonorFinalizer(
+            h.db,
+            unreadable,
+            h.clock,
+            Dispatchers.IO,
+            expirySweep = { ran += "expiry sweep" },
+            packageLaunchWork = {
+                ran += "packages"
+                error("the package folder is unreadable")
+            },
+        )
+
+        finalizer.runAtLaunch()
+
+        assertEquals(listOf("packages", "expiry sweep"), ran)
+    }
+
+    /** UI process only: `:tracker` finalizes but never launches, and with the flag off nothing builds the manager. */
+    @Test
+    fun `the package manager is built only by a launch with the release flag on, never by the tracker's finalize`() =
+        runBlocking {
+            val tempRoot = File(folder.root, "pilgrimage-tmp")
+            val killedDownload = File(tempRoot, "pilgrimage-killed").apply { mkdirs() }
+            val built = AtomicInteger()
+            val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            fun finalizer(honor: Boolean) = HonorFinalizer(
+                h.db,
+                h.store,
+                h.clock,
+                waySweeper = Provider { noSweep() },
+                releaseFlags = FixedReleaseFlags(honor),
+                packageManager = Provider {
+                    built.incrementAndGet()
+                    packageManager(tempRoot, managerScope)
+                },
+            )
+
+            finalizer(honor = false).runAtLaunch()
+            assertEquals("flag off", 0, built.get())
+            assertTrue(killedDownload.exists())
+
+            val withTheFlag = finalizer(honor = true)
+            val walk = finishedHonorWalk(HonorFinishKind.CLEAN)
+            withTheFlag.finalize(walk.id)
+            withTheFlag.finalizePending()
+            assertEquals("the tracker's path", 0, built.get())
+
+            withTheFlag.runAtLaunch()
+            assertEquals(1, built.get())
+            assertFalse("the launch swept the temp set a kill left", killedDownload.exists())
+            managerScope.cancel()
+        }
+
+    private fun noSweep() = WaySweeper(
+        store = h.store,
+        heldWayIds = { emptySet() },
+        cancelGather = {},
+        clock = h.clock,
+        ioDispatcher = Dispatchers.IO,
+    )
+
+    private fun packageManager(tempRoot: File, scope: CoroutineScope): PilgrimagePackageManager {
+        val cdn = PilgrimageCatalogService.CDN_ORIGIN.toHttpUrl()
+        return PilgrimagePackageManager(
+            store = h.store,
+            ledgers = PilgrimageLedgerStore(h.store),
+            client = PilgrimagePackageManager.httpClient(cdn),
+            cdn = cdn,
+            signals = FakeWalkSignals(),
+            resolveTempRoot = { tempRoot },
+            scope = scope,
+            ioDispatcher = Dispatchers.IO,
+        )
     }
 
     private companion object {

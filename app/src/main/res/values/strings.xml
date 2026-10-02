@@ -1419,4 +1419,10 @@
     <string name="pilgrimage_stage_count" tools:ignore="PluralsCandidate">%1$s stages</string>
     <string name="pilgrimage_progress_stage_of">stage %1$s of %2$s · %3$s walked</string>
     <string name="pilgrimage_progress_whole_way">you have walked the whole way · %1$s</string>
+
+    <!-- Phase 21 U34: the package manager's two confirmations (pilgrimage-stage spec P2
+         Strings), Swift literals on iOS. Replace names the installed route.json's name,
+         Remove the catalog entry's; each asks with its own verb. -->
+    <string name="pilgrimage_replace_confirmation">Replace the %1$s? Its stages leave your phone; what you\'ve walked of it is remembered if it comes back. Walks in your journal stay.</string>
+    <string name="pilgrimage_remove_confirmation">Remove the %1$s? Its stages leave your phone; what you\'ve walked of it is remembered if it comes back. Walks in your journal stay.</string>
 </resources>

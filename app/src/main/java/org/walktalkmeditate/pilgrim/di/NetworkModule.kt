@@ -18,6 +18,7 @@ import org.walktalkmeditate.pilgrim.data.audio.AudioConfig
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestScope
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestUrl
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageCatalogService
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeBaseUrl
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideConfig
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideManifestScope
@@ -174,6 +175,18 @@ object NetworkModule {
     fun providePilgrimageCatalogHttpClient(): OkHttpClient =
         PilgrimageCatalogService.httpClient(PilgrimageCatalogService.CDN_ORIGIN.toHttpUrl())
 
+    /**
+     * Phase 21 U34: the package download's own client, iOS's ephemeral
+     * package session (30 s idle, 300 s a file, no retry; P1 C2), with no
+     * HTTP cache and redirects kept on the CDN, as the catalog's. Built only
+     * with the package manager, in the UI process.
+     */
+    @Provides
+    @Singleton
+    @PilgrimagePackageHttpClient
+    fun providePilgrimagePackageHttpClient(): OkHttpClient =
+        PilgrimagePackageManager.httpClient(PilgrimageCatalogService.CDN_ORIGIN.toHttpUrl())
+
     private const val CONNECT_TIMEOUT_SEC = 10L
     private const val READ_TIMEOUT_SEC = 30L
     private const val CALL_TIMEOUT_SEC = 45L
@@ -224,3 +237,12 @@ annotation class ModelDownloadHttpClient
 @Qualifier
 @Retention(AnnotationRetention.BINARY)
 annotation class PilgrimageCatalogHttpClient
+
+/**
+ * Phase 21 U34 qualifier for the pilgrimage package download's
+ * OkHttpClient, shared between [NetworkModule.providePilgrimagePackageHttpClient]
+ * and [PilgrimagePackageManager].
+ */
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class PilgrimagePackageHttpClient
