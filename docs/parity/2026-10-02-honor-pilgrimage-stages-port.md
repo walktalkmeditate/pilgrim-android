@@ -1721,7 +1721,7 @@ Android tests to add beyond iOS's (each pins a fact above that iOS's tests leave
 
 | # | Difference | Reason |
 |---|---|---|
-| A1 | No HTTP cache on the catalog and package clients; every load past 24 h and every Retry reaches the network | iOS's ephemeral session keeps a memory `URLCache` that honours the CDN's 7-day `max-age` within a process (§3.5, D2); OkHttp has none unless configured, and none is wanted |
+| A1 | No HTTP cache on the catalog and package clients; every load past 24 h and every Retry reaches the network. OkHttp still repeats a request once for a `503` carrying `Retry-After: 0`, which `retryOnConnectionFailure(false)` doesn't stop; iOS never repeats one (pinned in U32; jsDelivr doesn't send it) | iOS's ephemeral session keeps a memory `URLCache` that honours the CDN's 7-day `max-age` within a process (§3.5, D2); OkHttp has none unless configured, and none is wanted |
 | A2 | (If O2 is accepted) redirects followed only within `cdn.jsdelivr.net` | Same posture as the share importer's R6 addition; iOS follows any HTTPS host |
 | A3 | Cancellation is rethrown by the catalog fetch, not mapped to `catalogUnreachable` | Structured concurrency; the cancelled load's screen has gone, so nothing visible changes |
 | A4 | `load` runs under a mutex (single-flight with the TTL check inside) | Android's ViewModels can overlap loads across configuration changes; iOS interleaves two loads that both fetch. No visible change |
@@ -1729,7 +1729,7 @@ Android tests to add beyond iOS's (each pins a fact above that iOS's tests leave
 | A6 | Catalog list items keyed by entry id and position, never by group id alone | Compose's `LazyColumn` throws on a repeated key where SwiftUI's `ForEach` tolerates a duplicate pilgrimage id |
 | A7 | Wire integers decoded as `Long`, narrowed after the range check | Kotlin's `Int` is 32-bit; without this an out-of-range `bytes` would fail the whole index instead of one row (parity-preserving) |
 | A8 | Disk reads, decodes and the parse run on `Dispatchers.IO` | iOS does them on the main actor; a platform equivalent |
-| A9 | Decoding differences kept, not emulated: a quoted number reads, an integer written `1.0` fails, a repeated key keeps its last value, a leading BOM fails where iOS accepts it (`1e400` fails on both, so it isn't a difference) | kotlinx versus Foundation, as recorded in S1 §2.4; no live file triggers any (§12) |
+| A9 | Decoding differences kept, not emulated: a quoted number reads, an integer written `1.0` fails, a repeated key keeps its last value, a leading BOM fails where iOS accepts it (`1e400` fails on both, so it isn't a difference); a quoted Boolean (`"sparse": "true"`) reads where iOS fails the whole index; a lone surrogate escape (`"\ud800"`) in a name or label reads and its row is listed, where iOS fails the whole index (Android's cache then holds `?` for it); a leading byte order mark on the index fails the whole catalog, where iOS reads past it (all measured in U31 and U32) | kotlinx versus Foundation, as recorded in S1 §2.4; no live file triggers any (§12) |
 | A10 | Stage-name comparisons NFC-normalized | Swift's `String ==` is canonical equivalence; this is its Kotlin equivalent, not a change |
 | A11 | (If O1 goes the plan's way) the catalog cache under `noBackupFilesDir` | iOS's is backed up and transferred |
 
