@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.data.honor.pilgrimage
 
+import androidx.annotation.VisibleForTesting
 import android.content.Context
 import android.content.res.Resources
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -388,7 +389,14 @@ class PilgrimagePackageManager internal constructor(
             store.writePilgrimageFile(routeFile, File(temp, ROUTE_FILE).readBytes())
             store.writePilgrimageFile(releaseFile, plan.release.toByteArray(Charsets.UTF_8))
         } catch (e: Exception) {
-            withContext(NonCancellable) { retireStagesAndPackage(plan.routeId, maxOf(plan.previousStageCount, plan.stageCount)) }
+            withContext(NonCancellable) {
+                // The commit's error is the one the walker hears; a rollback that also fails rides along.
+                try {
+                    retireStagesAndPackage(plan.routeId, maxOf(plan.previousStageCount, plan.stageCount))
+                } catch (rollback: Exception) {
+                    e.addSuppressed(rollback)
+                }
+            }
             if (e is PilgrimageException) throw e
             throw failureOf(e)
         }
@@ -402,9 +410,15 @@ class PilgrimagePackageManager internal constructor(
      * link, and counts a live session's stage as walked (P2 A-1).
      */
     private suspend fun retireStagesAndPackage(routeId: String, stageCount: Int) {
-        store.retireMany(stageIds(routeId, 0 until stageCount), signals.liveSessionWayIds())
-        store.routeFile(routeId)?.delete()
-        store.releaseFile(routeId)?.delete()
+        try {
+            store.retireMany(stageIds(routeId, 0 until stageCount), signals.liveSessionWayIds())
+        } finally {
+            // The two files [installed] keys on go even when the live-session read
+            // (an Android addition) fails, so a rolled-back route never reads as
+            // installed; iOS's rollback can't fail.
+            store.routeFile(routeId)?.delete()
+            store.releaseFile(routeId)?.delete()
+        }
     }
 
     // ---- Replace, update, remove ------------------------------------------------
@@ -585,7 +599,8 @@ class PilgrimagePackageManager internal constructor(
             if (bytes > cap) throw refusal(PilgrimageError.INCOMPLETE)
         }
 
-        private fun readCapped(response: Response, cap: Long): ByteArray {
+        @VisibleForTesting
+        internal fun readCapped(response: Response, cap: Long): ByteArray {
             if (response.code != HTTP_OK) throw refusal(PilgrimageError.INCOMPLETE)
             val body = response.body
             // Before draining: an oversized declared length mustn't cost a whole download first.

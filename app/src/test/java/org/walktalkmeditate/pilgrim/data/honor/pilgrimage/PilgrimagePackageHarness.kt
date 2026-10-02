@@ -334,7 +334,13 @@ internal class FakeWalkSignals : PilgrimageWalkSignals {
 
     override suspend fun walkActive(): Boolean = active
 
-    override suspend fun liveSessionWayIds(): Set<String> = liveWayIds
+    /** When set, the live-session read throws it, as a failed Room read would. */
+    @Volatile var liveIdsFailure: Exception? = null
+
+    override suspend fun liveSessionWayIds(): Set<String> {
+        liveIdsFailure?.let { throw it }
+        return liveWayIds
+    }
 
     override fun beginInFlight(): Boolean = beginInFlight
 

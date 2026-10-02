@@ -23,6 +23,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.mockwebserver.MockResponse
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -207,6 +208,53 @@ class PilgrimagePackageManagerTest {
         assertFalse(routeFile().exists())
         assertFalse(releaseFile().exists())
         assertEquals(Phase.Failed(PilgrimageError.DISK_FULL), manager.phase.value)
+    }
+
+    /**
+     * The rollback reads the live sessions (an Android addition) before it
+     * retires anything; a failed read must still leave no install behind,
+     * and the walker still hears the commit's own error.
+     */
+    @Test
+    fun `a rollback whose live-session read fails still takes the route off the phone`() {
+        val manager = h.makeManager()
+        manager.download(h.entry, RELEASE).awaitBlocking()
+        assertNotNull(manager.installedBlocking())
+        val saves = AtomicInteger()
+        manager.saveStage = { way ->
+            if (saves.incrementAndGet() == 2) {
+                h.signals.liveIdsFailure = IOException("database closed")
+                throw IOException("write failed: ENOSPC (No space left on device)")
+            }
+            h.wayStore.save(way)
+        }
+
+        assertRefused(PilgrimageError.DISK_FULL) { manager.download(h.entry, RELEASE).awaitBlocking() }
+
+        h.signals.liveIdsFailure = null
+        assertNull("a failed update never reads as installed", manager.installedBlocking())
+        assertFalse(routeFile().exists())
+        assertFalse(releaseFile().exists())
+    }
+
+    /** Only the declared length can refuse this: reading the body at all fails the test. */
+    @Test
+    fun `a declared length over the cap is refused before a byte of the body is read`() {
+        val cap = 1_000L
+        val body = object : okhttp3.ResponseBody() {
+            override fun contentType(): okhttp3.MediaType? = null
+            override fun contentLength(): Long = cap + 1
+            override fun source(): okio.BufferedSource = throw AssertionError("the body was read")
+        }
+        val response = okhttp3.Response.Builder()
+            .request(PilgrimagePackageManager.request("https://cdn.jsdelivr.net/x".toHttpUrl()))
+            .protocol(okhttp3.Protocol.HTTP_1_1)
+            .code(200)
+            .message("OK")
+            .body(body)
+            .build()
+
+        assertRefused(PilgrimageError.INCOMPLETE) { PilgrimagePackageManager.readCapped(response, cap) }
     }
 
     /** The index's `bytes` is a hint the dataset wrote, not a promise the CDN keeps. */
