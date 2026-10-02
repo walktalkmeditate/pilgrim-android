@@ -592,7 +592,7 @@ Where each piece lives:
 
 **Approach:**
 - Runtime gates read one injected accessor: the mode slot and mode derivation, Honor surfaces, "walk this again", the Ways row, link routing, the referrer read, the audio gates, and Seek's `:tracker` placement. Placement decisions are pure functions over the flag.
-- The release-variant job asserts the merged manifest (no mock-location permission, no DUMP-protected or honor-filtered component, only allow-listed permissions — the referrer library adds one), that compiled code carries no debug-only Honor classes or mock-mode calls, and runs the release unit tests.
+- The release-variant job asserts the merged manifest (no mock-location permission, no DUMP-protected or honor-filtered component, only allow-listed permissions — the referrer library adds one), that compiled code carries no debug-only Honor classes or mock-mode calls, and compiles the release unit tests. It runs only the release-contents checks (`core.flags`): Compose UI tests cannot run on release, because Robolectric reads the manifest from the test resource APK, which AGP packages without `ui-test-manifest`'s host activity, and shipping that activity is not an option. Flag-off behavior is tested in the debug suite with an injected flag.
 - The build-time half (the App Links filter only in `D/AndroidManifest.xml`) lands with U27.
 - Tests of debug-only code live in `TD/`, which only the debug variant compiles; `testDebugUnitTest` still runs them.
 

@@ -21,8 +21,8 @@ concurrency:
 permissions:
   contents: read
 
-# Three jobs run in parallel (assemble / lint / test) to cut wall-clock
-# time roughly in half vs the original single-job pipeline. Each one
+# Four jobs run in parallel (assemble / lint / test / release-variant) to
+# cut wall-clock time roughly in half vs the original single-job pipeline. Each one
 # warm-loads the same Gradle dependency cache via setup-gradle's
 # read-write contract — the first job to finish populates the cache
 # for the next pipeline run. Gradle's own configuration cache (in
@@ -134,4 +134,43 @@ jobs:
         with:
           name: unit-test-report
           path: app/build/reports/tests/testDebugUnitTest
+          retention-days: 7
+
+  # The flag-off release build (release flag, Phase 21 U12). Compiling the
+  # whole unit suite against release proves no main or test code reaches a
+  # debug-only class; the core.flags tests check what release ships. The
+  # rest of the suite runs in unit-tests: its Compose UI tests can't run on
+  # release, because Robolectric reads the manifest from the test resource
+  # APK, which AGP packages without ui-test-manifest's host activity.
+  release-variant:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Release unit tests compile, and release contents check
+        run: ./gradlew compileReleaseUnitTestKotlin testReleaseUnitTest --tests 'org.walktalkmeditate.pilgrim.core.flags.*'
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-variant-test-report
+          path: app/build/reports/tests/testReleaseUnitTest
           retention-days: 7
