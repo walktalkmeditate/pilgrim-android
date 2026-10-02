@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.IosShare
@@ -28,7 +29,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
+import java.time.Instant
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.share.CachedShare
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimCornerRadius
@@ -46,16 +50,13 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
  *     ring, plain (button-style-less) Button wrapping the VStack
  *   - Caption-sized label, micro-sized fog subtitle below each
  *   - 0.5pt fog/15 horizontal divider
- *   - Below the divider: iOS `journeySection` branches on the cached
- *     share (`WalkSharingButtons.swift:148-159@2ee1185`) — a
- *     non-expired [activeCachedShare] renders [WalkSharingBlock]
- *     (issue #222); everything else (no cache, or expired) falls back
- *     to the plain text "Share Journey" button + two micro fog footer
- *     rows ("Create a web page" / "walk.pilgrimapp.org"). Per the
- *     issue #222 scope, Android does NOT port Swift's separate
- *     "returned to the trail" expired-state layout
- *     (`returnedSection(_:)`, `:310-344@2ee1185`) — an expired cached
- *     share is treated the same as never-shared.
+ *   - Below the divider: iOS `journeySection` branches three ways on
+ *     the cached share (`WalkSharingButtons.swift:148-159@7c200bf`).
+ *     No cache renders the plain text "Share Journey" button + two
+ *     micro fog footer rows ("Create a web page" /
+ *     "walk.pilgrimapp.org"); an expired one (checked against
+ *     [nowEpochMs] with iOS's `<=`) renders [WalkSharingReturnedBlock]
+ *     (issue #225); a live one renders [WalkSharingBlock] (issue #222).
  */
 @Composable
 internal fun WalkSharingButtons(
@@ -65,9 +66,10 @@ internal fun WalkSharingButtons(
     onGoshuinShare: () -> Unit,
     onEtegamiShare: () -> Unit,
     onWalkJourneyShare: () -> Unit,
-    activeCachedShare: CachedShare?,
+    cachedShare: CachedShare?,
     onCachedShareEngaged: () -> Unit,
     modifier: Modifier = Modifier,
+    nowEpochMs: Long = Instant.now().toEpochMilli(),
 ) {
     if (!hasRoute) return
 
@@ -109,21 +111,89 @@ internal fun WalkSharingButtons(
             thickness = 0.5.dp,
             modifier = Modifier.padding(horizontal = PilgrimSpacing.big),
         )
-        if (activeCachedShare != null) {
-            WalkSharingBlock(
-                cachedShare = activeCachedShare,
-                onOpenJourney = onWalkJourneyShare,
-                onEngaged = onCachedShareEngaged,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        } else {
-            JourneyFooter(
+        when {
+            cachedShare == null -> JourneyFooter(
                 onClick = onWalkJourneyShare,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("share-button-walk-journey"),
             )
+            cachedShare.isExpiredAt(nowEpochMs) -> WalkSharingReturnedBlock(
+                cachedShare = cachedShare,
+                onShareAgain = onWalkJourneyShare,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            else -> WalkSharingBlock(
+                cachedShare = cachedShare,
+                onOpenJourney = onWalkJourneyShare,
+                onEngaged = onCachedShareEngaged,
+                modifier = Modifier.fillMaxWidth(),
+                nowEpochMs = nowEpochMs,
+            )
         }
+    }
+}
+
+/**
+ * iOS parity `returnedSection(_:)`
+ * (`WalkSharingButtons.swift:310-344@7c200bf`), issue #225: the share
+ * page has returned to the trail. The expiry label stays lowercase
+ * ("Shared for 1 moon"), unlike [WalkSharingBlock]'s uppercased one.
+ * [onShareAgain] opens the same sheet as "Share Journey", which starts
+ * on a fresh form because the Share modal treats an expired cache as no
+ * share. The icon approximates SF Symbol `arrow.uturn.backward.circle`:
+ * an undo arrow inside a thin fog ring.
+ */
+@Composable
+private fun WalkSharingReturnedBlock(
+    cachedShare: CachedShare,
+    onShareAgain: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.testTag("share-returned-block"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(24.dp)
+                .border(1.dp, pilgrimColors.fog, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Outlined.Undo,
+                contentDescription = null,
+                tint = pilgrimColors.fog,
+                modifier = Modifier.size(14.dp),
+            )
+        }
+        Text(
+            text = stringResource(R.string.share_journey_returned),
+            style = pilgrimType.caption,
+            color = pilgrimColors.fog,
+            fontStyle = FontStyle.Italic,
+        )
+        Text(
+            text = cachedShare.expiryOption
+                ?.let { stringResource(R.string.share_journey_shared_for, it.label) }
+                ?: stringResource(R.string.share_journey_was_shared),
+            style = pilgrimType.micro,
+            color = pilgrimColors.fog,
+        )
+        HorizontalDivider(
+            color = pilgrimColors.fog.copy(alpha = 0.15f),
+            thickness = 0.5.dp,
+            modifier = Modifier.padding(horizontal = PilgrimSpacing.big),
+        )
+        Text(
+            text = stringResource(R.string.share_journey_share_again),
+            style = pilgrimType.caption,
+            color = pilgrimColors.stone,
+            modifier = Modifier
+                .clickable(role = Role.Button, onClick = onShareAgain)
+                .testTag("share-returned-share-again"),
+        )
     }
 }
 

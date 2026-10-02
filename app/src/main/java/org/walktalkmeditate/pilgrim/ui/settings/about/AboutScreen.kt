@@ -35,6 +35,8 @@ import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.rounded.Signpost
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.Map
+import androidx.compose.material.icons.outlined.Route
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -334,10 +336,12 @@ private fun FootprintTrailSection() {
  * iOS parity v1.6.0 — About section listing the third-party data
  * sources backing per-walk telemetry. iOS uses WeatherKit and
  * attributes Apple Weather; Android uses Open-Meteo (CC-BY 4.0) and
- * surfaces a link to their attribution terms.
+ * surfaces a link to their attribution terms. The Mapbox and
+ * OpenStreetMap credits follow the weather row, as on iOS
+ * (`AboutView.swift:306-363@7c200bf`).
  */
 @Composable
-private fun DataSourcesSection() {
+internal fun DataSourcesSection() {
     val context = LocalContext.current
     Column(
         modifier = Modifier
@@ -366,6 +370,29 @@ private fun DataSourcesSection() {
                     context,
                     Uri.parse("https://open-meteo.com/en/license"),
                 )
+            },
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = stringResource(R.string.about_data_sources_maps_body),
+            style = pilgrimType.body,
+            color = pilgrimColors.ink,
+        )
+        Spacer(Modifier.height(8.dp))
+        OpenSourceLinkRow(
+            icon = Icons.Outlined.Map,
+            label = stringResource(R.string.about_data_sources_mapbox_link),
+            external = false,
+            onClick = {
+                CustomTabs.launch(context, Uri.parse("https://www.mapbox.com/about/maps/"))
+            },
+        )
+        OpenSourceLinkRow(
+            icon = Icons.Outlined.Route,
+            label = stringResource(R.string.about_data_sources_osm_link),
+            external = false,
+            onClick = {
+                CustomTabs.launch(context, Uri.parse("https://www.openstreetmap.org/copyright"))
             },
         )
         Spacer(Modifier.height(8.dp))

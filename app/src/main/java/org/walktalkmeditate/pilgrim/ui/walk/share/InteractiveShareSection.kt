@@ -264,6 +264,15 @@ internal fun InteractiveShareSection(
         )
 
         if (state.interactiveEnabled) {
+            // A non-interactive share carries no tour.json, so the promise
+            // only applies once Interactive is on
+            // (`InteractiveShareSection.swift:26-31@7c200bf`).
+            Text(
+                text = stringResource(R.string.share_interactive_walk_it_there),
+                style = pilgrimType.caption,
+                color = pilgrimColors.fog,
+            )
+
             if (state.rows.isNotEmpty()) {
                 Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs)) {
                     state.rows.forEach { row ->

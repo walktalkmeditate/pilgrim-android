@@ -438,6 +438,7 @@
     <string name="share_journey_returns_on">Returns to the trail on %1$s</string>
     <string name="share_journey_returned">This walk has returned to the trail</string>
     <string name="share_journey_shared_for">Shared for %1$s</string>
+    <string name="share_journey_was_shared">This walk was shared</string>
     <string name="share_journey_share_again">Share again</string>
     <string name="share_journey_copy">Copy</string>
     <string name="share_journey_copied">Copied</string>
@@ -484,6 +485,7 @@
     <string name="share_interactive_toggle_subtitle">Viewers walk your route on a living map — your recordings play where you made them, photos appear where you took them. Recordings and full-size photos upload over your connection.</string>
     <string name="share_interactive_no_recordings">No recordings on this walk — the page will carry your route, photos, and moments.</string>
     <string name="share_interactive_voices_warning">Voices will be audible to anyone with the link.</string>
+    <string name="share_interactive_walk_it_there">Anyone with the link can walk it there.</string>
     <string name="share_interactive_trim_title">Trim start &amp; end</string>
     <string name="share_interactive_trim_subtitle_can_trim">Keeps the first and last %1$d m off the shared map — including photos and waymarkers there.</string>
     <string name="share_interactive_trim_subtitle_too_short">This walk is too short to trim.</string>
@@ -1131,6 +1133,10 @@
     <string name="about_data_sources_header">DATA SOURCES</string>
     <string name="about_data_sources_body">Weather conditions and temperature recorded with each walk are fetched at the start of the walk from Open-Meteo, a free open-data weather service.</string>
     <string name="about_data_sources_weather_link">Open-Meteo — Attribution &amp; terms</string>
+    <string name="about_data_sources_maps_body">The maps you walk on are drawn by Mapbox from OpenStreetMap, whose roads and paths are surveyed and kept current by people who walk them.</string>
+    <string name="about_data_sources_mapbox_link" translatable="false">© Mapbox</string>
+    <!-- OSM's terms ask for this credit word for word; the copyright is the contributors'. -->
+    <string name="about_data_sources_osm_link" translatable="false">© OpenStreetMap contributors</string>
     <string name="about_data_sources_routes_body">The pilgrimage routes named alongside the collective\'s distance — their lengths, their seasons, and how many people walk them each year — come from the open-pilgrimages dataset, shared under the Open Database License.</string>
     <string name="about_data_sources_routes_link">Pilgrimage routes — open-pilgrimages</string>
     <string name="about_data_sources_odbl_link">Open Database License (ODbL 1.0)</string>

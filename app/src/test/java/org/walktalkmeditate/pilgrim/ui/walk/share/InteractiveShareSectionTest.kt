@@ -107,6 +107,28 @@ class InteractiveShareSectionTest {
         ).assertDoesNotExist()
     }
 
+    // ---- Stage 21-0 U5: the "walk it there" caption (InteractiveShareSection.swift:26-31@7c200bf) ----
+
+    private val walkItThere = "Anyone with the link can walk it there."
+
+    @Test
+    fun `walk-it-there caption shows with Interactive on and no recordings`() {
+        setSection(InteractiveShareSectionState(interactiveEnabled = true, rows = emptyList()))
+        composeRule.onNodeWithText(walkItThere).assertIsDisplayed()
+    }
+
+    @Test
+    fun `walk-it-there caption shows with Interactive on and recordings`() {
+        setSection(InteractiveShareSectionState(interactiveEnabled = true, rows = listOf(row())))
+        composeRule.onNodeWithText(walkItThere).assertIsDisplayed()
+    }
+
+    @Test
+    fun `walk-it-there caption is absent with Interactive off`() {
+        setSection(InteractiveShareSectionState(interactiveEnabled = false, rows = listOf(row())))
+        composeRule.onNodeWithText(walkItThere).assertDoesNotExist()
+    }
+
     @Test
     fun `toggling the interactive switch fires the callback`() {
         var fired: Boolean? = null
@@ -262,6 +284,7 @@ class InteractiveShareSectionTest {
         id = id,
         recordingUuid = "rec-$id",
         startTs = 0L,
+        startMillis = 0L,
         endTs = durationSeconds.toLong(),
         duration = durationSeconds,
         sizeBytes = sizeBytes,

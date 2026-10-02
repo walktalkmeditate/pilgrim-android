@@ -210,6 +210,53 @@ class SettingsViewModelPracticeTest {
         assertEquals(true, practiceRepo.walkReliquaryEnabled.first())
     }
 
+    // -- issue #221: the photo-permission result (PracticeCard.swift:78-116@7c200bf) --
+
+    @Test
+    fun `onPhotoPermissionResult denied reverts walkReliquaryEnabled to false`() = runBlocking {
+        val practiceRepo = FakePracticePreferencesRepository(initialWalkReliquaryEnabled = false)
+        val vm = buildVm(practiceRepo = practiceRepo)
+        vm.setWalkReliquaryEnabled(true)
+
+        vm.onPhotoPermissionResult(granted = false)
+
+        assertEquals(false, vm.walkReliquaryEnabled.first())
+        assertEquals(false, practiceRepo.walkReliquaryEnabled.first())
+    }
+
+    @Test
+    fun `onPhotoPermissionResult granted leaves walkReliquaryEnabled on`() = runBlocking {
+        val practiceRepo = FakePracticePreferencesRepository(initialWalkReliquaryEnabled = false)
+        val vm = buildVm(practiceRepo = practiceRepo)
+        vm.setWalkReliquaryEnabled(true)
+
+        vm.onPhotoPermissionResult(granted = true)
+
+        assertEquals(true, practiceRepo.walkReliquaryEnabled.first())
+    }
+
+    @Test
+    fun `onPhotoPermissionResult granted after toggling off does not resurrect the switch`() = runBlocking {
+        val practiceRepo = FakePracticePreferencesRepository(initialWalkReliquaryEnabled = false)
+        val vm = buildVm(practiceRepo = practiceRepo)
+        vm.setWalkReliquaryEnabled(true)
+        vm.setWalkReliquaryEnabled(false)
+
+        vm.onPhotoPermissionResult(granted = true)
+
+        assertEquals(false, practiceRepo.walkReliquaryEnabled.first())
+    }
+
+    @Test
+    fun `onPhotoPermissionResult granted writes nothing`() = runBlocking {
+        val throwingRepo = ThrowingPracticeRepository()
+        val vm = buildVm(practiceRepo = throwingRepo)
+
+        vm.onPhotoPermissionResult(granted = true)
+
+        assertEquals(0, throwingRepo.reliquaryAttempts)
+    }
+
     @Test
     fun `autoPlayWhisperOnProximity reflects repo value`() = runBlocking {
         val practiceRepo = FakePracticePreferencesRepository(initialAutoPlayWhisperOnProximity = false)

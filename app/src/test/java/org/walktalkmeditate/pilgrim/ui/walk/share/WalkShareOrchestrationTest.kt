@@ -61,6 +61,7 @@ class WalkShareOrchestrationTest {
         id = id,
         recordingUuid = uuid,
         startTs = 1_000L + id,
+        startMillis = (1_000L + id) * 1_000L,
         endTs = 1_060L + id,
         duration = 60.0,
         sizeBytes = 1_000L,
