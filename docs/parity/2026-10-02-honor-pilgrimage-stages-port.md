@@ -529,20 +529,20 @@ All three files go through a default `JSONDecoder()` into synthesized `Decodable
 | `Int` given `1e2` | `100` | `100` (measured in U28) | same |
 | `Int` given `1.5` | fails | fails | same |
 | `Int` or `Double` given `"5"` | fails | **reads 5** (S1, measured) | every number |
-| `Double` given `1e400` | **fails the decode** | reads `Infinity`; the range checks then refuse it | every `Double` |
+| `Double` given `1e400` | **fails the decode** | **fails the decode** too: kotlinx refuses it while reading the number (measured in U31, pinned in `PilgrimageWayImporterTest`) | every `Double` |
 | `Int` given `99999999999999999999` | fails | fails | every `Int` |
 | `Int` given `3000000000` | `3000000000` (Swift `Int` is 64-bit) | **fails for a Kotlin `Int`**; reads for `Long` | see 4.3 |
 | `String` given `5`, `true`, `null` | fails | fails | every `String` |
 | `[String: String]` with a `null` or numeric value | fails | fails | `names`, index `name` |
 | `[String]` with a `null` element | fails | fails | `warnings`, `sections` |
 | repeated key | **first** value wins (measured: `{"a":1,"a":2}` → 1) | **last** wins (`WayImporterTest` "a repeated key keeps its last value") | any |
-| leading BOM | accepted | expected to fail (the strict UTF-8 decode yields U+FEFF, which kotlinx's lexer doesn't skip; not measured) | whole file |
+| leading BOM | accepted | **fails the decode**: the strict UTF-8 decode yields U+FEFF, which kotlinx's lexer doesn't skip (measured in U31) | whole file |
 | `"\ud800"` (lone surrogate escape) | fails | expected to be accepted (not measured) | any string |
 | trailing text after the object | fails | fails | whole file |
 | `NaN` | fails | fails | any |
 
 What reaches the app in practice: the dataset is written by `JSON.stringify`, so no integral number is written with a fraction, no number is quoted, no key repeats, no BOM. The probe confirms it for every live file: 0 float literals in `Int` fields, 0 repeated keys (§12). The differing rows matter only for hand-written fixtures and hostile files. Two of them change an outcome:
-- **The index:** a decode failure anywhere fails the whole catalog (`catalogUnreachable`, then the cache), while a range failure drops one row. `"distanceKm": 1e400` fails iOS's whole index but only drops the row on Android (`Infinity` fails `isFinite`). `"stageCount": 33.0` passes iOS and fails Android's whole index. Hostile-only; pin both in tests as S1 did, don't emulate.
+- **The index:** a decode failure anywhere fails the whole catalog (`catalogUnreachable`, then the cache), while a range failure drops one row. `"distanceKm": 1e400` fails the whole index on both platforms (measured in U31; an earlier draft of this spec said Android drops only the row). `"stageCount": 33.0` passes iOS and fails Android's whole index. Hostile-only; pin both in tests as S1 did, don't emulate.
 - **The stage and route files:** every failure is `notWalkable` either way, so the rows above change nothing there.
 
 #### 4.2 Required and optional, per struct (the Kotlin wire models must match: no defaults on required fields)
@@ -1641,7 +1641,7 @@ The string-replacement tests depend on the fixtures' exact whitespace (`"\"frac\
 | 36 | `testTheButtonSaysWhatItWillDo` | Download / Update / On your phone | U37 |
 | 37 | `testTheRedrawNoticeIsTheSpecsWords` | the redraw notice string | U37 |
 
-Android tests to add beyond iOS's (each pins a fact above that iOS's tests leave open): exactly-cap bodies pass and cap + 1 fail (index 262,144; route 524,288; stage 2,097,152); a cache exactly 24 h old refetches; a clock moved back 48 h after a fetch makes no request; a forced load with a stale cache, offline, returns the cache without an error; a parse with zero routes is cached; `"stageCount": 33.0` and `"distanceKm": 1e400` in one row (the pinned kotlinx differences); `ways.bytes` of 3,000,000,000 drops one row, not the catalog (the `Long` rule); two pilgrimages sharing an id; the Guernica 30-name cut (sort, cut to 20, filter); `marks` is `[]` for `stage-01.json`; the `Way`'s `totalDistanceMeters` is the haversine length, not the file's; a point list whose first `t` isn't 0 is kept as written; the preview file name and that a cached preview makes no request; no `Log` call anywhere under `data/honor/pilgrimage/` (a review check, or a source-scan test if the team wants it enforced).
+Android tests to add beyond iOS's (each pins a fact above that iOS's tests leave open): exactly-cap bodies pass and cap + 1 fail (index 262,144; route 524,288; stage 2,097,152); a cache exactly 24 h old refetches; a clock moved back 48 h after a fetch makes no request; a forced load with a stale cache, offline, returns the cache without an error; a parse with zero routes is cached; `"stageCount": 33.0` in one row (a pinned kotlinx difference: it fails the whole index on Android) and `"distanceKm": 1e400` (fails the whole index on both); `ways.bytes` of 3,000,000,000 drops one row, not the catalog (the `Long` rule); two pilgrimages sharing an id; the Guernica 30-name cut (sort, cut to 20, filter); `marks` is `[]` for `stage-01.json`; the `Way`'s `totalDistanceMeters` is the haversine length, not the file's; a point list whose first `t` isn't 0 is kept as written; the preview file name and that a cached preview makes no request; no `Log` call anywhere under `data/honor/pilgrimage/` (a review check, or a source-scan test if the team wants it enforced).
 
 ### Corrections to the Android plan
 
@@ -1729,7 +1729,7 @@ Android tests to add beyond iOS's (each pins a fact above that iOS's tests leave
 | A6 | Catalog list items keyed by entry id and position, never by group id alone | Compose's `LazyColumn` throws on a repeated key where SwiftUI's `ForEach` tolerates a duplicate pilgrimage id |
 | A7 | Wire integers decoded as `Long`, narrowed after the range check | Kotlin's `Int` is 32-bit; without this an out-of-range `bytes` would fail the whole index instead of one row (parity-preserving) |
 | A8 | Disk reads, decodes and the parse run on `Dispatchers.IO` | iOS does them on the main actor; a platform equivalent |
-| A9 | Decoding differences kept, not emulated: a quoted number reads, an integer written `1.0` fails, a repeated key keeps its last value, `1e400` in an index row drops the row instead of failing the index | kotlinx versus Foundation, as recorded in S1 §2.4; no live file triggers any (§12) |
+| A9 | Decoding differences kept, not emulated: a quoted number reads, an integer written `1.0` fails, a repeated key keeps its last value, a leading BOM fails where iOS accepts it (`1e400` fails on both, so it isn't a difference) | kotlinx versus Foundation, as recorded in S1 §2.4; no live file triggers any (§12) |
 | A10 | Stage-name comparisons NFC-normalized | Swift's `String ==` is canonical equivalence; this is its Kotlin equivalent, not a change |
 | A11 | (If O1 goes the plan's way) the catalog cache under `noBackupFilesDir` | iOS's is backed up and transferred |
 
