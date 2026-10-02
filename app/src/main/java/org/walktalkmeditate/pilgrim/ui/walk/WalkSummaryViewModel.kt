@@ -271,6 +271,14 @@ data class WalkSummary(
      * [WalkSummaryViewModel.honorSummary], which follows the Honor step.
      */
     val isHonorWalk: Boolean = false,
+    /**
+     * U23: the Honor section and ghost line as the summary first read
+     * them, so they draw with the summary's first frame, as iOS computes
+     * them in `init` (`WalkSummaryView.swift:35-37@7c200bf`). Null on
+     * every walk that isn't an honor. The screen draws this until
+     * [WalkSummaryViewModel.honorSummary] has read.
+     */
+    val honorSummary: HonorSummaryState? = null,
 )
 
 @HiltViewModel
@@ -445,9 +453,9 @@ class WalkSummaryViewModel @Inject constructor(
      * once from the walk's live session row and the Way while the Honor
      * step is still to run (or failed and waits for the next launch), then
      * from the link, when the delta line appears: the record re-reads as
-     * the marker lands and the live rows go. The model and the ghost's
-     * slicing run off Main; a failed read drops the section, never the
-     * summary.
+     * the marker lands and the live rows go. Until it first reads, and
+     * after a failed read, the screen keeps [WalkSummary.honorSummary].
+     * The model and the ghost's slicing run off Main.
      */
     @kotlin.OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val honorSummary: StateFlow<HonorSummaryState?> = state
@@ -1864,9 +1872,12 @@ class WalkSummaryViewModel @Inject constructor(
         // The seal's Way line reads the summary's own record, live session
         // row included: iOS renders a seal first at the reveal, after the
         // link is written, so a fresh honor seal carries the line. It goes
-        // when the link does (owner decision 3).
-        val honoredWay = if (isHonorWalk) honorWalkRecords.record(walkId, walk.uuid).way else null
-        val watermark = withContext(Dispatchers.Default) { sealWatermark(points, honoredWay) }
+        // when the link does (owner decision 3). The same read gives the
+        // Honor section its first frame.
+        val honorRecord = if (isHonorWalk) honorWalkRecords.record(walkId, walk.uuid) else null
+        val (watermark, honorSummary) = withContext(Dispatchers.Default) {
+            sealWatermark(points, honorRecord?.way) to honorRecord?.let { HonorSummaryModel.summaryState(it) }
+        }
         val sealSpec = walk.toSealSpec(
             // Reuse the haversine sum computed above — `toSealSpec`
             // takes the distance directly so both the seal's center
@@ -2125,6 +2136,7 @@ class WalkSummaryViewModel @Inject constructor(
                 calloutInputs = calloutInputs,
                 seekSummary = seekSummary,
                 isHonorWalk = isHonorWalk,
+                honorSummary = honorSummary,
             ),
         )
     }

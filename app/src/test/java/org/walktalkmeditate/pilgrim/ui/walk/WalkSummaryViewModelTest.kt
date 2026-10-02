@@ -1729,6 +1729,19 @@ class WalkSummaryViewModelTest {
     }
 
     @Test
+    fun `a revisited honor summary carries its section in its first state, before the live read`() = runTest(dispatcher) {
+        val store = newWayStore()
+        val walkId = linkedHonorWalk(store)
+
+        val loaded = awaitLoaded(newViewModel(walkId = walkId, honorEnabled = true, wayStore = store))
+
+        val first = loaded.summary.honorSummary!!
+        assertEquals("Morning loop", first.data.wayTitle)
+        assertEquals(300.0, first.data.arrivedBeforeTheirsSeconds!!, 1e-9)
+        assertNotNull("the map's ghost with the first frame too", first.ghost)
+    }
+
+    @Test
     fun `honor walk with the flag off is a plain walk with its own seal line only`() = runTest(dispatcher) {
         val store = newWayStore()
         val walkId = linkedHonorWalk(store)
@@ -1737,6 +1750,7 @@ class WalkSummaryViewModelTest {
         val loaded = awaitLoaded(vm)
 
         assertFalse(loaded.summary.isHonorWalk)
+        assertNull(loaded.summary.honorSummary)
         assertNotNull("every walk with a route keeps its own line", loaded.summary.sealSpec.watermark)
         assertNull(loaded.summary.sealSpec.watermark?.wayLine)
         assertNotEquals(GoshuinMilestone.FirstHonor, loaded.summary.milestone)

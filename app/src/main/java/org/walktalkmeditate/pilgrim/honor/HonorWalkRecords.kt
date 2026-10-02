@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.honor
 
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -10,11 +11,13 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
+import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.honor.HonorDao
 import org.walktalkmeditate.pilgrim.data.honor.HonorFinishKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
 import org.walktalkmeditate.pilgrim.data.honor.WayArrival
+import org.walktalkmeditate.pilgrim.data.honor.WayFileStamp
 import org.walktalkmeditate.pilgrim.data.honor.WayLink
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.domain.honor.Way
@@ -43,8 +46,9 @@ data class HonorWalkRecord(
  * Honor step is still to run, or after it failed and waits for the next
  * launch (plan U17). Until then the walk's live session row names the
  * Way, so the surfaces render from it at once, with no arrival numbers:
- * those reach the record through the link. Once the step has run, the
- * link is the record, as on iOS.
+ * those reach the record through the link. Once the step's marker has
+ * landed, the link is the record, as on iOS, even while a session row
+ * whose delete failed waits for the next launch's retry.
  *
  * Files raise no invalidation, so [observe] re-reads when the session
  * row or the walk's marker changes: the step writes the link, then the
@@ -58,18 +62,62 @@ class HonorWalkRecords internal constructor(
     @Inject
     constructor(honorDao: HonorDao, wayStore: WayStore) : this(honorDao, wayStore, Dispatchers.IO)
 
+    /** Listed Ways [honoredWays] decoded, each kept until its `way.json` changes. */
+    private val listedWays = ConcurrentHashMap<String, StampedWay>()
+
+    /** Ticks when this process deletes a Way, whose line a seal then loses (owner decision 3). */
+    val wayDeletions: Flow<Long> get() = wayStore.deletions
+
     suspend fun record(walkId: Long, walkUuid: String): HonorWalkRecord = withContext(ioDispatcher) {
-        read(walkUuid, honorDao.getSession(walkId))
+        read(walkUuid, sessionUntilMarked(walkId, walkUuid))
     }
 
     fun observe(walkId: Long, walkUuid: String): Flow<HonorWalkRecord> =
         combine(
             honorDao.observeSession(walkId).distinctUntilChanged(),
             honorDao.observeMarker(walkUuid).distinctUntilChanged(),
-        ) { session, _ -> session }
+        ) { session, marker -> session.takeIf { marker == null } }
             .map { session -> read(walkUuid, session) }
             .flowOn(ioDispatcher)
             .distinctUntilChanged()
+
+    /**
+     * The Way each of the finished [walks] honored, by walk id, for the
+     * seals' Way lines: [record]'s rule without the replies, one query
+     * for the live sessions of the whole set, and one `way.json` decode
+     * per listed Way, which later calls reuse until the file changes.
+     */
+    suspend fun honoredWays(walks: Collection<Walk>): Map<Long, Way?> = withContext(ioDispatcher) {
+        if (walks.isEmpty()) return@withContext emptyMap()
+        val withLiveSession = honorDao.finishedWalkIdsWithLiveSessions().toHashSet()
+        walks.associate { walk ->
+            val session = if (walk.id in withLiveSession) sessionUntilMarked(walk.id, walk.uuid) else null
+            val way = if (session != null) {
+                wayThePendingStepLinks(walk.uuid, session)
+            } else {
+                wayStore.wayId(walk.uuid)?.let(::listedWay)
+            }
+            walk.id to way
+        }
+    }
+
+    /** The live session row, until the step's marker says the link holds the record. */
+    private suspend fun sessionUntilMarked(walkId: Long, walkUuid: String): HonorSessionEntity? =
+        if (honorDao.getMarker(walkUuid) != null) null else honorDao.getSession(walkId)
+
+    private fun listedWay(id: String): Way? {
+        val stamp = wayStore.wayFileStamp(id)
+        if (stamp == null) {
+            listedWays.remove(id)
+            return null
+        }
+        listedWays[id]?.takeIf { it.stamp == stamp }?.let { return it.way }
+        val way = wayStore.load(id)
+        listedWays[id] = StampedWay(stamp, way)
+        return way
+    }
+
+    private class StampedWay(val stamp: WayFileStamp, val way: Way?)
 
     private fun read(walkUuid: String, session: HonorSessionEntity?): HonorWalkRecord {
         if (session != null) {

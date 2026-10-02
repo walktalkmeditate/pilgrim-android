@@ -17,6 +17,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -29,6 +30,7 @@ import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.data.honor.HonorFinishKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
+import org.walktalkmeditate.pilgrim.data.honor.HonorWalkMarkerEntity
 import org.walktalkmeditate.pilgrim.data.honor.WayArrival
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
@@ -241,6 +243,54 @@ class HonorSummaryModelTest {
         blocker.delete()
         assertEquals(1, h.finalizer.finalizePending())
         assertEquals("they arrived 5 minutes after you", stateFor(walk)!!.delta())
+    }
+
+    @Test
+    fun `once the marker lands the link is the record, though the live rows' delete failed`() = runBlocking {
+        h.store.save(way)
+        val walk = honorWalk()
+        finishedSession(walk)
+        // The step wrote its link and its marker, then the delete threw.
+        h.store.link(walk.uuid, way.id, arrival)
+        h.db.honorDao().insertMarker(
+            HonorWalkMarkerEntity(walk.uuid, finishedAt = 9_000L, finishKind = HonorFinishKind.CLEAN),
+        )
+
+        assertEquals("they arrived 5 minutes after you", stateFor(walk)!!.delta())
+        records.observe(walk.id, walk.uuid).test(timeout = 10.seconds) {
+            assertEquals(arrival, awaitItem().arrival)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `the seals read each walk's Way by the record's rule, decoding a Way once until its file changes`() = runBlocking {
+        h.store.save(way)
+        val first = honorWalk()
+        finishedSession(first)
+        h.finalizer.finalize(first.id)
+        val repeat = honorWalk()
+        finishedSession(repeat)
+        h.finalizer.finalize(repeat.id)
+        val pending = honorWalk()
+        finishedSession(pending)
+        h.store.stage(pending.uuid, HonorHarness.way(title = "Staged loop"))
+        val plain = h.db.walkDao().getById(
+            h.db.walkDao().insert(Walk(uuid = UUID.randomUUID().toString(), startTimestamp = 1_000L, endTimestamp = 9_000L)),
+        )!!
+
+        val ways = records.honoredWays(listOf(first, repeat, pending, plain))
+
+        assertEquals("Morning loop", ways[first.id]?.title)
+        assertSame("two walks of one Way share one decode", ways[first.id], ways[repeat.id])
+        assertEquals("a pending clean finish reads its staged build", "Staged loop", ways[pending.id]?.title)
+        assertNull(ways[plain.id])
+        assertSame("an unchanged file is not decoded again", ways[first.id], records.honoredWays(listOf(first))[first.id])
+
+        h.store.save(HonorHarness.way(title = "The long evening loop"))
+        assertEquals("a rewritten Way is read again", "The long evening loop", records.honoredWays(listOf(first))[first.id]?.title)
+        h.store.delete(way.id)
+        assertNull("a deleted Way's line goes", records.honoredWays(listOf(first))[first.id])
     }
 
     @Test

@@ -48,7 +48,7 @@ class WalkThresholdTest {
 
     @Test
     fun `an honor threshold stands at the seeking gate, counted apart from seek arrivals`() {
-        // iOS HomeViewModel.swift:279-296@7c200bf: the first Way walked to
+        // iOS HomeViewModel.swift:108-128@7c200bf: the first Way walked to
         // its end, and the walk crossing 10, earn the same gate a seek does.
         val walks = (1L..14L).map { ref(it) }
         val honorArrivals = (3L..12L).associateWith { 1 }

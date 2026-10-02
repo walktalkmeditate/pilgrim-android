@@ -22,7 +22,10 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -139,6 +142,8 @@ private fun HonorFootprints() {
  * A walking staff: one leaning stroke with a short crossbar near the top
  * (iOS `StaffGlyph`, `WalkStartView.swift:416-427@7c200bf`). The crossbar's
  * tilt is [crossbarTilt] at every size, as iOS's `± 2` points are absolute.
+ * Both strokes are one path stroked once, as SwiftUI strokes the shape, so
+ * a translucent [color] doesn't darken where they cross.
  */
 @Composable
 internal fun StaffGlyph(
@@ -149,12 +154,17 @@ internal fun StaffGlyph(
     crossbarTilt: Dp = 2.dp,
 ) {
     Canvas(modifier = modifier) {
-        val lines = staffGlyphLines(size.width, size.height, crossbarTilt.toPx())
-        val cap = if (roundCap) StrokeCap.Round else StrokeCap.Butt
-        lines.forEach { (start, end) ->
-            drawLine(color = color, start = start, end = end, strokeWidth = strokeWidth.toPx(), cap = cap)
-        }
+        drawStaffGlyph(color, strokeWidth.toPx(), if (roundCap) StrokeCap.Round else StrokeCap.Butt, crossbarTilt.toPx())
     }
+}
+
+internal fun DrawScope.drawStaffGlyph(color: Color, strokeWidthPx: Float, cap: StrokeCap, tiltPx: Float) {
+    val path = Path()
+    staffGlyphLines(size.width, size.height, tiltPx).forEach { (start, end) ->
+        path.moveTo(start.x, start.y)
+        path.lineTo(end.x, end.y)
+    }
+    drawPath(path = path, color = color, style = Stroke(width = strokeWidthPx, cap = cap))
 }
 
 /** The staff's two strokes in a [width] × [height] box: the leaning shaft, then the crossbar. */

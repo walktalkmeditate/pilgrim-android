@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.design.seals
 
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -89,6 +91,57 @@ class SealWatermarkTest {
         assertEquals(SealWatermark.of(walk, way), SealWatermark.of(walk.toList(), way.toList()))
         assertEquals(SealWatermark.of(walk, way).hashCode(), SealWatermark.of(walk, way).hashCode())
         assertNotEquals(SealWatermark.of(walk, way), SealWatermark.of(walk, null))
+    }
+
+    /** The distance from (x, y) to the nearest segment of [line], in unit-square widths. */
+    private fun distanceToLine(line: FloatArray, x: Float, y: Float): Double =
+        (0 until line.size / 2 - 1).minOf { i ->
+            val (ax, ay) = line.point(i)
+            val (bx, by) = line.point(i + 1)
+            val dx = (bx - ax).toDouble()
+            val dy = (by - ay).toDouble()
+            val lengthSquared = dx * dx + dy * dy
+            val t = if (lengthSquared == 0.0) 0.0 else (((x - ax) * dx + (y - ay) * dy) / lengthSquared).coerceIn(0.0, 1.0)
+            kotlin.math.hypot(x - (ax + t * dx), y - (ay + t * dy))
+        }
+
+    @Test
+    fun `an hour of samples keeps a short line that never strays past the tolerance`() {
+        // 3,600 fixes once round a loop, wobbling ten centimetres: the fit
+        // is over every one, the kept line a few dozen vertices.
+        val samples = (0 until 3_600).map { i ->
+            val angle = 2 * Math.PI * i / 3_600
+            val wobble = 0.000_001 * kotlin.math.sin(i * 1.7)
+            p(lat = 51.0 + (0.01 + wobble) * kotlin.math.sin(angle), lon = -1.0 + (0.01 + wobble) * kotlin.math.cos(angle))
+        }
+        val kept = SealWatermark.of(walk = samples, way = null)!!.walkLine
+        assertTrue("kept ${kept.size / 2} of 3,600", kept.size / 2 < 200)
+
+        val minLat = samples.minOf { it.latitude }
+        val maxLat = samples.maxOf { it.latitude }
+        val minLon = samples.minOf { it.longitude }
+        val maxLon = samples.maxOf { it.longitude }
+        val scale = longerSide / maxOf(maxLat - minLat, maxLon - minLon)
+        samples.forEach { sample ->
+            val x = 0.5 + (sample.longitude - (minLon + maxLon) / 2) * scale
+            val y = 0.5 - (sample.latitude - (minLat + maxLat) / 2) * scale
+            val d = distanceToLine(kept, x.toFloat(), y.toFloat())
+            assertTrue("a sample $d from the kept line", d <= SealWatermark.SIMPLIFY_TOLERANCE + 1e-6)
+        }
+    }
+
+    @Test
+    fun `simplifying keeps both ends and every corner, and drops the points between`() {
+        val straight = floatArrayOf(0.1f, 0.5f, 0.3f, 0.5f, 0.5f, 0.5f, 0.7f, 0.5f, 0.9f, 0.5f)
+        assertArrayEquals(floatArrayOf(0.1f, 0.5f, 0.9f, 0.5f), SealWatermark.simplified(straight), 0f)
+
+        val corner = floatArrayOf(0.1f, 0.1f, 0.5f, 0.1f, 0.9f, 0.1f, 0.9f, 0.5f, 0.9f, 0.9f)
+        assertArrayEquals(floatArrayOf(0.1f, 0.1f, 0.9f, 0.1f, 0.9f, 0.9f), SealWatermark.simplified(corner), 0f)
+
+        // Out and back along one line: the turn is far from the chord's
+        // ends but on the chord's own line, so it must stay.
+        val outAndBack = floatArrayOf(0.1f, 0.5f, 0.9f, 0.5f, 0.5f, 0.5f)
+        assertArrayEquals(outAndBack, SealWatermark.simplified(outAndBack), 0f)
     }
 
     @Test

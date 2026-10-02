@@ -12,6 +12,10 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.time.Instant
 import java.util.UUID
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.builtins.MapSerializer
@@ -35,6 +39,9 @@ data class WayLink(
 
 /** The engine's arrival numbers: the companion's timeline and the walker's own, in seconds. */
 data class WayArrival(val theirSeconds: Double, val yourSeconds: Double)
+
+/** A Way's `way.json` as a reader's cache sees it: the file changed when either differs. */
+data class WayFileStamp(val lastModifiedMillis: Long, val length: Long)
 
 /** A staged own-walk Way, by the uuid of the walk that is honoring it. */
 data class StagedWay(val walkUuid: String, val stagedAtMillis: Long)
@@ -83,6 +90,14 @@ class WayStore(
 
     val baseDirectory: File by lazy(resolveBaseDirectory)
 
+    private val deletionCount = MutableStateFlow(0L)
+
+    /**
+     * How many Ways this process has [delete]d. Files raise no
+     * invalidation, so a surface holding a Way's line re-reads on it.
+     */
+    val deletions: StateFlow<Long> = deletionCount.asStateFlow()
+
     fun save(way: Way) {
         val dir = directory(way.id)
         ensureDirectory(dir)
@@ -97,6 +112,13 @@ class WayStore(
     fun load(id: String): Way? {
         if (!isValidId(id)) return null
         return readWay(File(directory(id), WAY_FILE))
+    }
+
+    /** Null when the Way has no `way.json`. */
+    fun wayFileStamp(id: String): WayFileStamp? {
+        if (!isValidId(id)) return null
+        val file = File(directory(id), WAY_FILE)
+        return if (file.isFile) WayFileStamp(file.lastModified(), file.length()) else null
     }
 
     fun acceptedAt(id: String): Instant? {
@@ -119,6 +141,7 @@ class WayStore(
         linkFiles().forEach { file ->
             if (readLink(file)?.wayId == id) file.delete()
         }
+        deletionCount.update { it + 1 }
     }
 
     /**

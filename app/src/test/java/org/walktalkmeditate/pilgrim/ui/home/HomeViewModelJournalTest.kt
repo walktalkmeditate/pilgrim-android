@@ -26,6 +26,7 @@ import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -228,6 +229,33 @@ class HomeViewModelJournalTest {
     }
 
     @Test
+    fun `the FAB seal loses the Way's line when the Way is deleted`() = runTest(dispatcher) {
+        val store = org.walktalkmeditate.pilgrim.data.honor.WayStore({
+            java.io.File(context.cacheDir, "home-ways-${java.util.UUID.randomUUID()}")
+        })
+        val walkId = arrivedHonorWalk(2_000_000L)
+        val walk = runBlocking {
+            repo.recordLocation(org.walktalkmeditate.pilgrim.data.entity.RouteDataSample(walkId = walkId, timestamp = 2_000_001L, latitude = 0.0, longitude = 0.0))
+            repo.recordLocation(org.walktalkmeditate.pilgrim.data.entity.RouteDataSample(walkId = walkId, timestamp = 2_300_000L, latitude = 0.0, longitude = 0.004))
+            repo.getWalk(walkId)!!
+        }
+        val way = org.walktalkmeditate.pilgrim.data.honor.HonorWalkState(db, store).way()
+        store.save(way)
+        store.link(walk.uuid, way.id, arrival = null)
+        val v = newVm(honorEnabled = true, wayStore = store)
+        vm = v
+
+        v.latestSealSpec.test(timeout = 10.seconds) {
+            var spec = awaitItem()
+            while (spec?.watermark?.wayLine == null) spec = awaitItem()
+            store.delete(way.id)
+            while (spec?.watermark?.wayLine != null) spec = awaitItem()
+            assertNotNull("the walk keeps its own line", spec?.watermark)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
     fun `with the flag off an honor walk is a plain walk in the journal`() = runTest(dispatcher) {
         val honor = arrivedHonorWalk(2_000_000L)
         val v = newVm(honorEnabled = false)
@@ -417,7 +445,11 @@ class HomeViewModelJournalTest {
         icon = SeekPersistence.ARRIVAL_WAYPOINT_ICON,
     )
 
-    private fun newVm(repository: WalkRepository = repo, honorEnabled: Boolean = false): HomeViewModel {
+    private fun newVm(
+        repository: WalkRepository = repo,
+        honorEnabled: Boolean = false,
+        wayStore: org.walktalkmeditate.pilgrim.data.honor.WayStore? = null,
+    ): HomeViewModel {
         val clock = object : Clock {
             override fun now(): Long = 10_000_000L
         }
@@ -435,10 +467,11 @@ class HomeViewModelJournalTest {
             practicePreferences = FakePracticePreferencesRepository(),
             archivedRegistry = org.walktalkmeditate.pilgrim.data.pilgrim.FakeArchivedWalkRegistry(),
             releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = honorEnabled),
-            honorWalkRecords = org.walktalkmeditate.pilgrim.honor.honorWalkRecordsForTests(
-                db,
-                ApplicationProvider.getApplicationContext(),
-            ),
+            honorWalkRecords = if (wayStore != null) {
+                org.walktalkmeditate.pilgrim.honor.honorWalkRecordsForTests(db, context, wayStore)
+            } else {
+                org.walktalkmeditate.pilgrim.honor.honorWalkRecordsForTests(db, context)
+            },
             defaultDispatcher = dispatcher,
             ioDispatcher = dispatcher,
         )

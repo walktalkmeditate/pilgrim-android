@@ -10,8 +10,12 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import javax.inject.Inject
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
@@ -48,17 +52,34 @@ import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
  * is an N+1 query per collection load; for current walk counts it is
  * a non-issue. If device QA flags jank at scale, a focused
  * `Walk.distanceMeters` cache is a separate schema-migration stage.
+ * The per-walk distance and watermark fit run on [defaultDispatcher],
+ * never on Main.
  */
 @HiltViewModel
-class GoshuinViewModel @Inject constructor(
+class GoshuinViewModel internal constructor(
     private val repository: WalkRepository,
     unitsPreferences: UnitsPreferencesRepository,
     private val archivedRegistry: ArchivedWalkRegistry,
     private val releaseFlags: ReleaseFlags,
     private val honorWalkRecords: HonorWalkRecords,
+    private val defaultDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
 
-    val uiState: StateFlow<GoshuinUiState> = repository.observeAllWalks()
+    @Inject
+    constructor(
+        repository: WalkRepository,
+        unitsPreferences: UnitsPreferencesRepository,
+        archivedRegistry: ArchivedWalkRegistry,
+        releaseFlags: ReleaseFlags,
+        honorWalkRecords: HonorWalkRecords,
+    ) : this(repository, unitsPreferences, archivedRegistry, releaseFlags, honorWalkRecords, Dispatchers.Default)
+
+    // A Way deleted in Settings rebuilds the book too, so its seals lose
+    // the Way's line with the link (owner decision 3).
+    val uiState: StateFlow<GoshuinUiState> = combine(
+        repository.observeAllWalks(),
+        honorWalkRecords.wayDeletions,
+    ) { walks, _ -> walks }
         .map { walks ->
             // iOS parity v1.6.0: archived walks are filtered from
             // `selectSeals` candidates so they don't receive individual
@@ -79,6 +100,7 @@ class GoshuinViewModel @Inject constructor(
             } else {
                 // With the flag off an honor walk is a plain walk (AE12).
                 val honorWalkIds = if (releaseFlags.honor) repository.honorWalkIds() else emptySet()
+                val honoredWays = honorWalkRecords.honoredWays(finished.filter { it.id in honorWalkIds })
                 // Load each finished walk's GPS samples once, derive its
                 // distance, first-coordinate latitude, and fitted watermark,
                 // and drop the sample list (don't retain every walk's samples
@@ -92,12 +114,7 @@ class GoshuinViewModel @Inject constructor(
                     val samples = samplesFor(walk.id)
                     distances[walk.id] = walkDistanceMeters(samples)
                     firstLats[walk.id] = samples.firstOrNull()?.latitude ?: 0.0
-                    val honoredWay = if (walk.id in honorWalkIds) {
-                        honorWalkRecords.record(walk.id, walk.uuid).way
-                    } else {
-                        null
-                    }
-                    watermarks[walk.id] = sealWatermark(samples, honoredWay)
+                    watermarks[walk.id] = sealWatermark(samples, honoredWays[walk.id])
                 }
                 // One waypoint pass for the whole book (iOS GoshuinView
                 // computes arrivalCounts once at construction; seal
@@ -150,6 +167,7 @@ class GoshuinViewModel @Inject constructor(
                 )
             }
         }
+        .flowOn(defaultDispatcher)
         .stateIn(
             scope = viewModelScope,
             // WhileSubscribed matches HomeViewModel — stops the Room

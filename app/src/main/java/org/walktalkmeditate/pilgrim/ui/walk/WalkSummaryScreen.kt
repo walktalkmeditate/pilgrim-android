@@ -204,7 +204,7 @@ fun WalkSummaryScreen(
     // persist, as on iOS, so the returned block keeps rendering.
     val cachedShare by viewModel.cachedShareFlow.collectAsStateWithLifecycle()
     // U23: the Honor section and the map's ghost line (parity spec G §2–§3).
-    val honorSummary by viewModel.honorSummary.collectAsStateWithLifecycle()
+    val liveHonorSummary by viewModel.honorSummary.collectAsStateWithLifecycle()
     // Stage 13-XZ: AI Prompts surface state. Sheet stays Closed until
     // the user taps the section-17 row; transitions through Loading →
     // Listing → Detail / Editor.
@@ -429,6 +429,10 @@ fun WalkSummaryScreen(
                         // (was drifting via pilgrimColors.*).
                         val segmentColors = RouteSegmentColors.Fixed
                         val walkAnnotationColors = WalkAnnotationColors.Fixed
+                        // The summary's own first read draws the Honor section
+                        // with the first frame (iOS computes it in `init`);
+                        // the live flow then follows the Honor step.
+                        val honorSummary = liveHonorSummary ?: s.summary.honorSummary
 
                         // 1. Map — Stage 13-B bumps height to 320dp + adds the
                         // radial-gradient circular mask + plumbs the reveal

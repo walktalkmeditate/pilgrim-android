@@ -83,6 +83,7 @@ import com.mapbox.maps.plugin.viewport.data.FollowPuckViewportStateBearing
 import com.mapbox.maps.plugin.viewport.data.FollowPuckViewportStateOptions
 import com.mapbox.maps.plugin.viewport.viewport
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import org.walktalkmeditate.pilgrim.data.walk.RouteActivity
 import org.walktalkmeditate.pilgrim.data.walk.UNRESOLVED_WHISPER_ARGB
 import org.walktalkmeditate.pilgrim.data.walk.RouteSegment
@@ -1517,11 +1518,14 @@ internal fun PilgrimMap(
  * known [iconKeyToVector] key — keyed into a map; an unknown / null
  * `Waypoint.iconKey` falls back to the "mappin" glyph at the call
  * site. With [honorArrival] the honor arrival's reserved icon joins the
- * map (iOS draws it through the same branch, `PilgrimMapView.swift:510-526@7c200bf`).
- * Rebuilt only when the resolved [stoneColor] or [honorArrival] changes.
+ * map (iOS draws it through the same branch, `PilgrimMapView.swift:510-526@7c200bf`),
+ * rasterized at [HONOR_ARRIVAL_GLYPH_SIZE_DP] × density as the whisper and
+ * cairn glyphs are, so it shows at iOS's 18 pt on every screen. Rebuilt
+ * only when the resolved [stoneColor], [honorArrival], or the density changes.
  */
 @Composable
 internal fun rememberWaypointBitmaps(stoneColor: Color, honorArrival: Boolean = false): Map<String, Bitmap> {
+    val density = LocalDensity.current.density
     val leaf = rememberVectorPainter(iconKeyToVector("leaf"))
     val eye = rememberVectorPainter(iconKeyToVector("eye"))
     val heart = rememberVectorPainter(iconKeyToVector("heart"))
@@ -1530,7 +1534,7 @@ internal fun rememberWaypointBitmaps(stoneColor: Color, honorArrival: Boolean = 
     val flag = rememberVectorPainter(iconKeyToVector("flag.fill"))
     val pin = rememberVectorPainter(iconKeyToVector("mappin"))
     val signpost = rememberVectorPainter(iconKeyToVector(HonorPersistence.ARRIVAL_WAYPOINT_ICON))
-    return remember(stoneColor, honorArrival, leaf, eye, heart, seated, sparkles, flag, pin, signpost) {
+    return remember(stoneColor, honorArrival, density, leaf, eye, heart, seated, sparkles, flag, pin, signpost) {
         val painters = mapOf(
             "leaf" to leaf,
             "eye" to eye,
@@ -1540,19 +1544,26 @@ internal fun rememberWaypointBitmaps(stoneColor: Color, honorArrival: Boolean = 
             "flag.fill" to flag,
             "mappin" to pin,
         )
-        val withHonor = if (honorArrival) painters + (HonorPersistence.ARRIVAL_WAYPOINT_ICON to signpost) else painters
-        withHonor.mapValues { (_, painter) -> renderWaypointGlyphBitmap(painter, stoneColor) }
+        val glyphs = painters.mapValues { (_, painter) ->
+            renderWaypointGlyphBitmap(painter, stoneColor, WAYPOINT_GLYPH_SIZE_PX)
+        }
+        if (!honorArrival) return@remember glyphs
+        val signpostPx = honorArrivalGlyphSizePx(density)
+        glyphs + (HonorPersistence.ARRIVAL_WAYPOINT_ICON to renderWaypointGlyphBitmap(signpost, stoneColor, signpostPx))
     }
 }
 
+/** The honor arrival's raster edge at [density]: iOS's 18 pt as dp, at least one pixel. */
+internal fun honorArrivalGlyphSizePx(density: Float): Int =
+    (HONOR_ARRIVAL_GLYPH_SIZE_DP * density).roundToInt().coerceAtLeast(1)
+
 /**
  * iOS `renderSFSymbol(icon, size: 18, color: .stone)` — the glyph
- * alone, [tint]-colored, filling the bitmap (no circle / stroke
- * background). Rendered larger than the on-screen size so it stays
- * crisp after Mapbox scales the icon image down.
+ * alone, [tint]-colored, filling a [size]-pixel square (no circle /
+ * stroke background). Mapbox shows the bitmap at [size] ÷ the screen
+ * density in dp.
  */
-private fun renderWaypointGlyphBitmap(painter: Painter, tint: Color): Bitmap {
-    val size = WAYPOINT_GLYPH_SIZE_PX
+private fun renderWaypointGlyphBitmap(painter: Painter, tint: Color, size: Int): Bitmap {
     val image = ImageBitmap(size, size)
     val canvas = androidx.compose.ui.graphics.Canvas(image)
     CanvasDrawScope().draw(
@@ -1571,6 +1582,9 @@ private fun renderWaypointGlyphBitmap(painter: Painter, tint: Color): Bitmap {
 // ~18dp glyph rendered at 4x for crispness; iOS uses SF-symbol
 // pointSize 18 with iconSize 1.0.
 private const val WAYPOINT_GLYPH_SIZE_PX = 72
+
+/** iOS `cachedSymbolImage(icon, size: 18, …)` for the honor arrival, `iconSize` 1.0 (correction 23). */
+internal const val HONOR_ARRIVAL_GLYPH_SIZE_DP = 18f
 
 /**
  * iOS parity `MapGlyphImageBuilder.image(for: .whisper(tint:), size: 28)`

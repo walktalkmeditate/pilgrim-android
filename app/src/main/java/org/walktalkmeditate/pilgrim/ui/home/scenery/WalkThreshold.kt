@@ -53,7 +53,7 @@ object WalkThresholds {
      * only after its threshold is decided), or its Way arrivals any
      * honor milestone the same way ([honorArrivalsByWalkId], the
      * [GoshuinMilestones.honorArrivalCounts] output): an honor threshold
-     * stands at the same gate (`HomeViewModel.swift:279-296@7c200bf`).
+     * stands at the same gate (`HomeViewModel.swift:108-128@7c200bf`).
      * Else `Practice` for walk #1 and every 10th. Mystery outranks
      * routine: a tenth walk that also found its first unknown stands at
      * a seeking gate.

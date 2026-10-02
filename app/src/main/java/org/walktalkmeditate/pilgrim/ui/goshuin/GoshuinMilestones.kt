@@ -235,7 +235,7 @@ object GoshuinMilestones {
 
     /**
      * The same pass over the honor reserved icon (iOS
-     * `honorArrivalCounts(for:)`, `GoshuinMilestones.swift:79-91@7c200bf`):
+     * `honorArrivalCounts(for:)`, `GoshuinMilestones.swift:86-94@7c200bf`):
      * Way arrivals are counted from their waypoints, whatever the walk's
      * events say.
      */

@@ -34,6 +34,7 @@ import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimSchema
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWalk
 import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsCaching
 import org.walktalkmeditate.pilgrim.di.PilgrimJson
+import org.walktalkmeditate.pilgrim.walk.honor.HonorFinalizeOutcome
 
 /**
  * Read a `.pilgrim` archive from a content URI and restore its
@@ -291,8 +292,12 @@ class PilgrimPackageImporter @Inject constructor(
             }
             val isReplacement = alreadyPresent && overwriteByUuid
             // The delete below cascades the walk's live Honor rows, so a
-            // finished walk's pending Honor step writes its link and marker first.
-            if (isReplacement) walkDao.getByUuid(pilgrimWalk.id)?.let { walkRepository.runHonorFinalize(it.id) }
+            // finished walk's pending Honor step writes its link and marker
+            // first. A step that fails again keeps its session row: the row
+            // moves to the re-inserted walk, for the next launch to retry.
+            val honorStepPending = isReplacement &&
+                walkDao.getByUuid(pilgrimWalk.id)
+                    ?.let { walkRepository.runHonorFinalize(it.id) } == HonorFinalizeOutcome.PENDING
             val didInsert = try {
                 // Each walk is its OWN top-level transaction. Framework SQLite
                 // does NOT turn nested withTransaction blocks into savepoints —
@@ -308,6 +313,11 @@ class PilgrimPackageImporter @Inject constructor(
                 // the partial state (incl. the delete). Hence `check()`, not a
                 // false return, on the degenerate insert.
                 database.withTransaction {
+                    val pendingHonorSession = if (honorStepPending) {
+                        walkDao.getByUuid(pilgrimWalk.id)?.let { database.honorDao().getSession(it.id) }
+                    } else {
+                        null
+                    }
                     if (isReplacement) {
                         // Editor applied edits to the JSON payload; delete the
                         // stale Room row(s) so child entities cascade away, then
@@ -315,7 +325,8 @@ class PilgrimPackageImporter @Inject constructor(
                         // Not the one walk-delete path on purpose: the walk
                         // lives on under the same uuid, so its link file, its
                         // Honor marker, and any staged Way (all keyed by uuid)
-                        // stay; only its live Honor rows cascade with the row.
+                        // stay; only its live Honor rows cascade with the row,
+                        // and a pending step's session row comes back below.
                         walkDao.deleteByUuids(listOf(pilgrimWalk.id))
                     }
                     val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
@@ -340,6 +351,7 @@ class PilgrimPackageImporter @Inject constructor(
                         voiceDao = voiceDao,
                         photoDao = photoDao,
                     )
+                    pendingHonorSession?.let { database.honorDao().insertSession(it.copy(walkId = newWalkId)) }
                     true
                 }
             } catch (e: CancellationException) {
@@ -366,7 +378,9 @@ class PilgrimPackageImporter @Inject constructor(
      *    [WalkRepository.stripArchivedWalk], keeping the surface stats,
      *    the link file, and the Honor marker. The strip happens inside
      *    the transaction so partial failure rolls back cleanly; the
-     *    walk's staged Way, a file, goes only after it commits.
+     *    walk's staged Way, a file, goes only after it commits. A walk
+     *    whose Honor step is still pending keeps both its live rows and
+     *    its staging, for the next launch's retry.
      *  - The cached `distance_meters` / `meditation_seconds` are the only
      *    stats a stripped walk keeps. A finished walk with either still
      *    NULL (a legacy row the backfill hasn't reached, or one
@@ -389,12 +403,15 @@ class PilgrimPackageImporter @Inject constructor(
     private suspend fun applyArchivedEntries(entries: List<PilgrimArchivedWalk>): Int {
         if (entries.isEmpty()) return 0
         val toMark = mutableListOf<Pair<String, Double>>()
-        val stripped = mutableListOf<String>()
+        val stagingToDiscard = mutableListOf<String>()
         // The strip drops the live Honor rows and the staged Way, so a
         // finished walk's pending Honor step writes its link, promotion,
-        // and marker first. Outside the batch: the step writes files.
+        // and marker first. Outside the batch: the step writes files. A
+        // step that fails again keeps both, for the next launch to retry.
+        val honorStepPending = HashSet<String>()
         for (entry in entries) {
-            database.walkDao().getByUuid(entry.id)?.let { walkRepository.runHonorFinalize(it.id) }
+            val walk = database.walkDao().getByUuid(entry.id) ?: continue
+            if (walkRepository.runHonorFinalize(walk.id) == HonorFinalizeOutcome.PENDING) honorStepPending += walk.uuid
         }
         database.withTransaction {
             val walkDao = database.walkDao()
@@ -406,13 +423,14 @@ class PilgrimPackageImporter @Inject constructor(
                     // destroys the children they come from. The cache's DAO
                     // calls join this open transaction.
                     walkMetricsCache.computeAndPersist(existing.id)
-                    walkRepository.stripArchivedWalk(existing.id)
-                    stripped += existing.uuid
+                    val stepPending = existing.uuid in honorStepPending
+                    walkRepository.stripArchivedWalk(existing.id, keepLiveHonorRows = stepPending)
+                    if (!stepPending) stagingToDiscard += existing.uuid
                 }
                 toMark += entry.id to entry.archivedAt
             }
         }
-        for (uuid in stripped) {
+        for (uuid in stagingToDiscard) {
             walkRepository.discardHonorStaging(uuid)
         }
         // Registry mutations after the transaction commits — a mid-

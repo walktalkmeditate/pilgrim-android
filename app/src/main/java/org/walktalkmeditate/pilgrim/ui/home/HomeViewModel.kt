@@ -178,13 +178,16 @@ class HomeViewModel internal constructor(
     // it doesn't affect any per-walk numbers, and re-running the full
     // per-walk DAO fan-out on every pref toggle was wasteful. The
     // expand-sheet path reads it via `practicePreferences.value`
-    // directly at the moment of expansion.
+    // directly at the moment of expansion. A Way deleted in Settings
+    // rebuilds too, so the FAB seal loses the Way's line with the link
+    // (owner decision 3); the bottom-nav tabs keep this VM alive.
     val journalState: StateFlow<JournalUiState> = combine(
         repository.observeAllWalks(),
         unitsPreferences.distanceUnits,
         cachedShareStore.observeAll(),
         archivedRegistry.archivedRegistry,
-    ) { walks, units, shareCache, archivedMap ->
+        honorWalkRecords.wayDeletions,
+    ) { walks, units, shareCache, archivedMap, _ ->
         val finished = walks.filter { it.endTimestamp != null }
         if (finished.isEmpty()) {
             JournalUiState.Empty
@@ -415,7 +418,7 @@ class HomeViewModel internal constructor(
             LocationPoint(timestamp = it.timestamp, latitude = it.latitude, longitude = it.longitude)
         }
         val honoredWay = if (newest.id in honorWalkIds) {
-            honorWalkRecords.record(newest.id, newest.uuid).way
+            honorWalkRecords.honoredWays(listOf(newest))[newest.id]
         } else {
             null
         }

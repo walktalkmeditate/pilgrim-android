@@ -187,6 +187,8 @@ These are iOS defects. Android ports each one exactly as iOS ships it, the parit
 
 The two stage-only defects (E-15, E-16) are left for the Stage 21-2 spec.
 
+Android differs on two items, each recorded: #111's G-D3 by owner decision 3, where a deleted Way's line goes from the seal with its link; and #112's G-D6 at the gate (2026-10-01, U23), where the journal gate keeps the goshuin's uuid tie-break, so the two never disagree.
+
 ---
 
 ## Owner decisions (decided 2026-09-30)
@@ -236,8 +238,9 @@ None of these has iOS behavior to match, or iOS's behavior can't carry over to A
 - **2026-10-01, U21. Drift fixes that ship regardless of the flag** (F §3.6, iOS `cbd24fc`). The unselected mode label is at 0.55, and the start button reads "Begin your journey".
 - **2026-10-01, U21. One iPhone check for the final pass: whether the Ways sheet's section headers render in uppercase** (F §4). Android shows them as the source literals are written.
 - **2026-10-01, U23. Drift fix that ships regardless of the flag: the walk's own ghost-route line on every seal** (G §6). It closes a Stage 4-A deferral rather than adding an Honor surface; only the Way's line beneath it waits on the flag, with the honor section, staffs, staff glyph, honor milestones, the lexicon, and the arrival signpost on the maps.
-- **2026-10-01, U23. R5 window with no iOS counterpart: before the Honor step has run, or after it failed** (G §1, plan U17). The summary section, its ghost line, and the seal's Way line render from the live session row and the Way it names (the staged build on a clean own-walk finish, else the listed Way); the delta joins once the link lands. iOS writes its link before any surface opens.
+- **2026-10-01, U23. R5 window with no iOS counterpart: before the Honor step has run, or after it failed** (G §1, plan U17). The summary section, its ghost line, the Way's line on every seal (the summary's, the goshuin's, and the journal button's), and the prompt's ` The Way: <title>.` render from the live session row and the Way it names (the staged build on a clean own-walk finish, else the listed Way); the delta joins once the link lands. Once the step's marker lands, every surface reads the link, even while a live row whose delete failed waits for the next launch. iOS writes its link before any surface opens.
 - **2026-10-01, U23. The journal gate keeps the uuid tie-break the goshuin uses** (G §4, G-D6, pilgrim-ios #112). iOS's journal counts "before" in Core Data fetch order, which leaves walks with the same start date in no defined order; Android's journal already shared the goshuin's order for Seek, and Honor follows it, so the two never disagree.
+- **2026-10-01, U23. The seal watermark draws a simplified line** (G §6). The fit spans every route sample, as iOS's does. Each drawn line keeps only the vertices it needs to stay within 1/2048 of the seal of every sample (Douglas-Peucker): under half a pixel at 1,024 px, past the largest seal Android draws. The stroke renders as iOS's full line does, and a thousand-walk goshuin book stays small in memory.
 
 ---
 
