@@ -80,14 +80,14 @@ class ExoPlayerVoiceGuidePlayerTest {
     @Test fun `play constructs ExoPlayer + focus request without crashing`() {
         player.play(tempFile) { }
         runMainQueueUntilIdle()
-        // If the builders validated + granted, state transitioned
-        // past Idle. Robolectric may fire STATE_ENDED immediately for
-        // a zero-media-duration stub, so accept either Playing or
-        // post-completion Idle.
+        // The placeholder bytes aren't audio, so ExoPlayer's playback
+        // thread may report a decode error before or after the drain.
+        // Only the player's own synchronous refusals mean the builders
+        // or the focus request failed.
         val state = player.state.value
         assertTrue(
-            "expected Playing or Idle, got $state",
-            state is VoiceGuidePlayer.State.Playing || state is VoiceGuidePlayer.State.Idle,
+            "expected play to go ahead, got $state",
+            state !is VoiceGuidePlayer.State.Error || state.reason !in setOf("file missing", "audio focus denied"),
         )
     }
 
