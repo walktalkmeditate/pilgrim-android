@@ -8,9 +8,11 @@ import java.time.format.DateTimeParseException
 import java.time.format.ResolverStyle
 import java.time.temporal.ChronoUnit
 import java.util.Locale
+import kotlinx.serialization.DeserializationStrategy
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationStrategy
 import kotlinx.serialization.descriptors.PrimitiveKind
 import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.descriptors.SerialDescriptor
@@ -43,10 +45,17 @@ object WayJson {
         explicitNulls = false
     }
 
-    fun encode(way: Way): String = sortedKeys(json.encodeToJsonElement(Way.serializer(), way)).toString()
+    fun encode(way: Way): String = encode(Way.serializer(), way)
 
     /** Throws [SerializationException] on anything iOS's decoder would refuse. */
-    fun decode(text: String): Way = json.decodeFromString(Way.serializer(), text)
+    fun decode(text: String): Way = decode(Way.serializer(), text)
+
+    /** The same rules for the store's other iOS-shaped files (`accepted.json`, `replies.json`). */
+    internal fun <T> encode(serializer: SerializationStrategy<T>, value: T): String =
+        sortedKeys(json.encodeToJsonElement(serializer, value)).toString()
+
+    internal fun <T> decode(deserializer: DeserializationStrategy<T>, text: String): T =
+        json.decodeFromString(deserializer, text)
 
     private fun sortedKeys(element: JsonElement): JsonElement = when (element) {
         is JsonObject -> JsonObject(element.toSortedMap().mapValues { (_, value) -> sortedKeys(value) })

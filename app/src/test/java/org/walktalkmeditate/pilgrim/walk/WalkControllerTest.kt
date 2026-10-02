@@ -18,6 +18,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import android.database.sqlite.SQLiteException
+import org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.dao.WalkEventDao
@@ -57,7 +58,7 @@ class WalkControllerTest {
             walkPhotoDao = db.walkPhotoDao(),
         )
         clock = FakeClock(initial = 1_000L)
-        controller = WalkControllerImpl(repository, clock, fakeStepCounter())
+        controller = WalkControllerImpl(repository, clock, fakeStepCounter(), FixedReleaseFlags(honor = true))
     }
 
     @After
@@ -259,7 +260,7 @@ class WalkControllerTest {
         repository.recordLocation(
             RouteDataSample(walkId = walk.id, timestamp = 1_200L, latitude = 0.0, longitude = 0.001),
         )
-        val fresh = WalkControllerImpl(repository, clock, fakeStepCounter())
+        val fresh = WalkControllerImpl(repository, clock, fakeStepCounter(), FixedReleaseFlags(honor = true))
 
         val restored = fresh.restoreActiveWalk()
 
@@ -278,7 +279,7 @@ class WalkControllerTest {
         repository.recordEvent(
             WalkEvent(walkId = walk.id, timestamp = 1_200L, eventType = WalkEventType.PAUSED),
         )
-        val fresh = WalkControllerImpl(repository, clock, fakeStepCounter())
+        val fresh = WalkControllerImpl(repository, clock, fakeStepCounter(), FixedReleaseFlags(honor = true))
 
         fresh.restoreActiveWalk()
 
@@ -295,7 +296,7 @@ class WalkControllerTest {
         repository.recordEvent(
             WalkEvent(walkId = walk.id, timestamp = 1_500L, eventType = WalkEventType.RESUMED),
         )
-        val fresh = WalkControllerImpl(repository, clock, fakeStepCounter())
+        val fresh = WalkControllerImpl(repository, clock, fakeStepCounter(), FixedReleaseFlags(honor = true))
 
         fresh.restoreActiveWalk()
 
@@ -356,7 +357,7 @@ class WalkControllerTest {
         runTest {
             val walk = controller.startWalk(mode = WalkMode.Seek)
             // Simulate process death: fresh controller over the same Room.
-            val revived = WalkControllerImpl(repository, clock, fakeStepCounter())
+            val revived = WalkControllerImpl(repository, clock, fakeStepCounter(), FixedReleaseFlags(honor = true))
 
             val restored = revived.restoreActiveWalk()
 
@@ -373,10 +374,26 @@ class WalkControllerTest {
     @Test
     fun `restoreActiveWalk derives Wander mode for an ordinary walk`() = runTest {
         controller.startWalk()
-        val revived = WalkControllerImpl(repository, clock, fakeStepCounter())
+        val revived = WalkControllerImpl(repository, clock, fakeStepCounter(), FixedReleaseFlags(honor = true))
 
         assertNotNull(revived.restoreActiveWalk())
         assertEquals(WalkMode.Wander, (revived.state.value as WalkState.Active).walk.mode)
+    }
+
+    @Test
+    fun `restoreActiveWalk re-derives Honor from its marker only with the release flag on`() = runTest {
+        val walk = controller.startWalk()
+        repository.recordEvent(
+            WalkEvent(walkId = walk.id, timestamp = walk.startTimestamp, eventType = WalkEventType.HONOR_MODE),
+        )
+
+        val flagOn = WalkControllerImpl(repository, clock, fakeStepCounter(), FixedReleaseFlags(honor = true))
+        assertNotNull(flagOn.restoreActiveWalk())
+        assertEquals(WalkMode.Honor, (flagOn.state.value as WalkState.Active).walk.mode)
+
+        val flagOff = WalkControllerImpl(repository, clock, fakeStepCounter(), FixedReleaseFlags(honor = false))
+        assertNotNull(flagOff.restoreActiveWalk())
+        assertEquals(WalkMode.Wander, (flagOff.state.value as WalkState.Active).walk.mode)
     }
 
     @Test
@@ -398,7 +415,7 @@ class WalkControllerTest {
             voiceRecordingDao = db.voiceRecordingDao(),
             walkPhotoDao = db.walkPhotoDao(),
         )
-        val fragile = WalkControllerImpl(fragileRepository, clock, fakeStepCounter())
+        val fragile = WalkControllerImpl(fragileRepository, clock, fakeStepCounter(), FixedReleaseFlags(honor = true))
         throwingDao.throwOnInsert = true
 
         val walk = fragile.startWalk(intention = "find the river", mode = WalkMode.Seek)

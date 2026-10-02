@@ -1172,6 +1172,13 @@
     <string name="seek_arrival_label_third">Third clearing</string>
     <string name="seek_arrival_label_nth">Clearing %1$d</string>
 
+    <!-- Honor persistence vocabulary (iOS parity HonorPersistence.swift:26-45@7c200bf).
+         iOS ships only the English value: its keys are not in Localizable.strings.
+         The label is resolved at arrival and persisted into the waypoint row, as
+         Seek's are. The event names ("Honor", "Way walked") are dropped for the
+         same reason Seek's were: no surface renders EventType.description. -->
+    <string name="honor_arrival_label">Walked their way: %1$s</string>
+
     <!-- Seek section of the in-walk options sheet (iOS parity
          WalkOptionsSheet.swift:107-137 + LS.swift:141-183@c1745e8, commit
          85373c1). "Sonar"/"Sonar Volume"/"Seek" are shared with the U13

@@ -126,7 +126,7 @@ internal fun PathBackgroundLayers(
         // Per-mode atmosphere overlay (very subtle).
         val atmosphere = when (selectedMode) {
             WalkMode.Wander -> Color.Transparent
-            WalkMode.Together -> pilgrimColors.dawn.copy(alpha = 0.01f)
+            WalkMode.Honor -> pilgrimColors.dawn.copy(alpha = 0.01f)
             WalkMode.Seek -> pilgrimColors.fog.copy(alpha = 0.01f)
         }
         Box(

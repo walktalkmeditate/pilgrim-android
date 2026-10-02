@@ -19,12 +19,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Signpost
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Chair
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Spa
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.WbTwilight
+import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPersistence
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -64,8 +66,8 @@ internal data class WaypointPresetChip(
     val iconKey: String,
 )
 
-// Internal (not private) so SeekPersistenceTest can prove the reserved
-// arrival icon never collides with a user-pickable key.
+// Internal (not private) so SeekPersistenceTest and HonorPersistenceTest
+// can prove the reserved arrival icons never collide with a user-pickable key.
 internal val PRESET_CHIPS: List<WaypointPresetChip> = listOf(
     WaypointPresetChip(R.string.walk_waypoint_chip_peaceful, "leaf"),
     WaypointPresetChip(R.string.walk_waypoint_chip_beautiful, "eye"),
@@ -93,6 +95,9 @@ internal fun iconKeyToVector(key: String): ImageVector = when (key) {
     // renders its "sun.haze" SF symbol on the live-map pin; WbTwilight is
     // the same mark the summary header uses for this glyph (U11).
     SeekPersistence.ARRIVAL_WAYPOINT_ICON -> Icons.Outlined.WbTwilight
+    // Reserved honor-arrival marker: drawn, never offered as a chip, as
+    // Seek's is. Filled, like iOS's "signpost.right.fill".
+    HonorPersistence.ARRIVAL_WAYPOINT_ICON -> Icons.Filled.Signpost
     else -> {
         // Unknown SF Symbol key — likely from a future iOS-introduced
         // chip imported via .pilgrim ZIP into a stale Android build.

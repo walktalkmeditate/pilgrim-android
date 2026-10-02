@@ -20,6 +20,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowSensor
 import org.robolectric.shadows.ShadowSensorManager
+import org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.domain.Clock
@@ -70,7 +71,7 @@ class WalkControllerStepCounterTest {
             ShadowSensor.newInstance(Sensor.TYPE_STEP_COUNTER),
         )
         stepCounter = StepCounter(context)
-        controller = WalkControllerImpl(repository, clock, stepCounter)
+        controller = WalkControllerImpl(repository, clock, stepCounter, FixedReleaseFlags(honor = true))
     }
 
     @After

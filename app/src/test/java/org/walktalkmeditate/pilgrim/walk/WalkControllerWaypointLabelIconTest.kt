@@ -13,6 +13,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.domain.Clock
@@ -46,7 +47,7 @@ class WalkControllerWaypointLabelIconTest {
         )
         controller = WalkControllerImpl(repository = repository, clock = object : Clock {
             override fun now(): Long = 1_000L
-        }, stepCounter = fakeStepCounter())
+        }, stepCounter = fakeStepCounter(), releaseFlags = FixedReleaseFlags(honor = true))
     }
 
     @After fun tearDown() = db.close()

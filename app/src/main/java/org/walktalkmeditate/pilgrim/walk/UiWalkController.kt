@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.Walk
@@ -88,6 +89,7 @@ class UiWalkController @Inject constructor(
     private val actionPublisher: WalkActionPublisher,
     private val watchdog: WalkTrackingWatchdog,
     @WalkFinalizationScope private val scope: CoroutineScope,
+    private val releaseFlags: ReleaseFlags,
 ) : WalkController {
 
     /**
@@ -247,7 +249,7 @@ class UiWalkController @Inject constructor(
             distanceMeters = distance,
             totalPausedMillis = totals.totalPausedMillis,
             totalMeditatedMillis = totals.totalMeditatedMillis,
-            mode = walkModeFromEvents(events),
+            mode = walkModeFromEvents(events, honorEnabled = releaseFlags.honor),
         )
         return WalkState.Finished(
             accumulator,
@@ -357,13 +359,13 @@ class UiWalkController @Inject constructor(
             totalPausedMillis = totals.totalPausedMillis,
             totalMeditatedMillis = totals.totalMeditatedMillis,
             // Cross-process mode carriage: the tracker persisted the
-            // SEEK_MODE marker at start; the UI process re-derives the
+            // SEEK_MODE or HONOR_MODE marker at start; the UI process re-derives the
             // mode from that event row. The first combine emission can
             // briefly predate the event row (mode reads Wander for a
             // frame) — acceptable because no mode consumer renders
             // within that window (the weather greeting arrives seconds
             // later at the earliest).
-            mode = walkModeFromEvents(events),
+            mode = walkModeFromEvents(events, honorEnabled = releaseFlags.honor),
         )
         return when {
             totals.pendingPauseAt != null ->

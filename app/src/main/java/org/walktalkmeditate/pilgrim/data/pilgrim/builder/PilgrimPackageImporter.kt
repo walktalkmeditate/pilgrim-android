@@ -19,6 +19,7 @@ import kotlinx.serialization.json.Json
 import org.walktalkmeditate.pilgrim.core.threads.ThreadsPreferencesRepository
 import org.walktalkmeditate.pilgrim.core.threads.TranscriptContextStore
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
+import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.dao.ActivityIntervalDao
 import org.walktalkmeditate.pilgrim.data.dao.RouteDataSampleDao
 import org.walktalkmeditate.pilgrim.data.dao.VoiceRecordingDao
@@ -60,6 +61,7 @@ class PilgrimPackageImporter @Inject constructor(
     private val transcriptContextStore: TranscriptContextStore,
     private val threadsPreferences: ThreadsPreferencesRepository,
     private val walkMetricsCache: WalkMetricsCaching,
+    private val walkRepository: WalkRepository,
 ) {
 
     /**
@@ -307,6 +309,10 @@ class PilgrimPackageImporter @Inject constructor(
                         // Editor applied edits to the JSON payload; delete the
                         // stale Room row(s) so child entities cascade away, then
                         // re-insert the edited version (atomic with the delete).
+                        // Not the one walk-delete path on purpose: the walk
+                        // lives on under the same uuid, so its link file, its
+                        // Honor marker, and any staged Way (all keyed by uuid)
+                        // stay; only its live Honor rows cascade with the row.
                         walkDao.deleteByUuids(listOf(pilgrimWalk.id))
                     }
                     val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
@@ -353,8 +359,11 @@ class PilgrimPackageImporter @Inject constructor(
      * For each archived entry:
      *  - If a Walk row with this UUID exists, strip its heavy children
      *    (route, photos, recordings, waypoints, events, activity
-     *    intervals) and keep the surface stats. The strip happens
-     *    inside the transaction so partial failure rolls back cleanly.
+     *    intervals) and its live Honor rows through
+     *    [WalkRepository.stripArchivedWalk], keeping the surface stats,
+     *    the link file, and the Honor marker. The strip happens inside
+     *    the transaction so partial failure rolls back cleanly; the
+     *    walk's staged Way, a file, goes only after it commits.
      *  - The cached `distance_meters` / `meditation_seconds` are the only
      *    stats a stripped walk keeps. A finished walk with either still
      *    NULL (a legacy row the backfill hasn't reached, or one
@@ -377,14 +386,9 @@ class PilgrimPackageImporter @Inject constructor(
     private suspend fun applyArchivedEntries(entries: List<PilgrimArchivedWalk>): Int {
         if (entries.isEmpty()) return 0
         val toMark = mutableListOf<Pair<String, Double>>()
+        val stripped = mutableListOf<String>()
         database.withTransaction {
             val walkDao = database.walkDao()
-            val routeDao = database.routeDataSampleDao()
-            val waypointDao = database.waypointDao()
-            val eventDao = database.walkEventDao()
-            val activityDao = database.activityIntervalDao()
-            val voiceDao = database.voiceRecordingDao()
-            val photoDao = database.walkPhotoDao()
             for (entry in entries) {
                 val existing = walkDao.getByUuid(entry.id)
                 if (existing != null) {
@@ -393,18 +397,14 @@ class PilgrimPackageImporter @Inject constructor(
                     // destroys the children they come from. The cache's DAO
                     // calls join this open transaction.
                     walkMetricsCache.computeAndPersist(existing.id)
-                    // Strip heavy children. DAOs each expose a per-walkId
-                    // delete; chain them inside the same transaction so
-                    // partial failures roll back together.
-                    runCatching { routeDao.deleteByWalkId(existing.id) }
-                    runCatching { waypointDao.deleteByWalkId(existing.id) }
-                    runCatching { eventDao.deleteByWalkId(existing.id) }
-                    runCatching { activityDao.deleteByWalkId(existing.id) }
-                    runCatching { voiceDao.deleteByWalkId(existing.id) }
-                    runCatching { photoDao.deleteByWalkId(existing.id) }
+                    walkRepository.stripArchivedWalk(existing.id)
+                    stripped += existing.uuid
                 }
                 toMark += entry.id to entry.archivedAt
             }
+        }
+        for (uuid in stripped) {
+            walkRepository.discardHonorStaging(uuid)
         }
         // Registry mutations after the transaction commits — a mid-
         // transaction abort must not leak archived flags. Per-UUID

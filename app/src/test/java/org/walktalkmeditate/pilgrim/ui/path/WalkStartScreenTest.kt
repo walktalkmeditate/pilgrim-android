@@ -88,9 +88,9 @@ class WalkStartScreenTest {
     }
 
     @Test
-    fun `pickRandomQuote returns a together quote for Together mode`() {
+    fun `pickRandomQuote keeps the flag-off together quotes for the Honor slot`() {
         val all = context.resources.getStringArray(R.array.path_quotes_together).toList()
-        val quote = pickRandomQuote(context, WalkMode.Together, Random(42))
+        val quote = pickRandomQuote(context, WalkMode.Honor, Random(42))
         assertTrue("$quote should be one of the together quotes", quote in all)
     }
 

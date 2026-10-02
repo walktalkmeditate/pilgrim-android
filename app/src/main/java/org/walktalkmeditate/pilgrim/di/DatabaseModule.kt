@@ -20,6 +20,7 @@ import org.walktalkmeditate.pilgrim.data.dao.WalkDao
 import org.walktalkmeditate.pilgrim.data.dao.WalkEventDao
 import org.walktalkmeditate.pilgrim.data.dao.WalkPhotoDao
 import org.walktalkmeditate.pilgrim.data.dao.WaypointDao
+import org.walktalkmeditate.pilgrim.data.honor.HonorDao
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -69,4 +70,7 @@ object DatabaseModule {
 
     @Provides
     fun provideWalkPhotoDao(db: PilgrimDatabase): WalkPhotoDao = db.walkPhotoDao()
+
+    @Provides
+    fun provideHonorDao(db: PilgrimDatabase): HonorDao = db.honorDao()
 }

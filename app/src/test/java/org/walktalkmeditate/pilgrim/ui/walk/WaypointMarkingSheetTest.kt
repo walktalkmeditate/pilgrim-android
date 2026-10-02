@@ -4,6 +4,7 @@ package org.walktalkmeditate.pilgrim.ui.walk
 import android.app.Application
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Signpost
 import androidx.compose.material.icons.outlined.WbTwilight
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
@@ -23,6 +24,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPersistence
 
 @RunWith(RobolectricTestRunner::class)
@@ -148,5 +150,11 @@ class WaypointMarkingSheetTest {
             Icons.Outlined.WbTwilight,
             iconKeyToVector(SeekPersistence.ARRIVAL_WAYPOINT_ICON),
         )
+    }
+
+    @Test fun `iconKeyToVector draws the honor arrival icon as a signpost`() {
+        // Drawn on the map, never offered: HonorPersistenceTest proves no
+        // chip carries this key.
+        assertEquals(Icons.Filled.Signpost, iconKeyToVector(HonorPersistence.ARRIVAL_WAYPOINT_ICON))
     }
 }
