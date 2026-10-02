@@ -25,4 +25,9 @@ class ArrivalDebounce(
     fun reset() {
         consecutiveInside = 0
     }
+
+    /** A revived session picks the run up where the killed process left it. */
+    fun restore(consecutiveInside: Int) {
+        this.consecutiveInside = consecutiveInside.coerceAtLeast(0)
+    }
 }

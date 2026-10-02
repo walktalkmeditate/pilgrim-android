@@ -12,6 +12,10 @@ import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
+import java.io.File
+import java.time.ZoneId
+import java.util.Locale
+import javax.inject.Provider
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -72,10 +76,15 @@ import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
+import org.walktalkmeditate.pilgrim.data.entity.Walk
+import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
+import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.honor.BeginHonorWalk
 import org.walktalkmeditate.pilgrim.location.LocationSource
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
@@ -207,6 +216,8 @@ class WalkViewModelTest {
             intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
             voiceGuidePauseController = fakeVoiceGuidePauseController,
             soundscapeUiController = FakeWalkSoundscapeUiController(),
+            releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
+            beginHonorWalk = { error("no honor start in this test") },
         )
     }
 
@@ -268,6 +279,113 @@ class WalkViewModelTest {
             }
             assertTrue(controller.state.value is WalkState.Idle)
         }
+
+    // U17: the Honor entry point rides the same start path.
+
+    @Test
+    fun `startHonorWalk starts an honor walk through Begin, with the start path's greeting`() = runTest(dispatcher) {
+        val waysDir = File(context.cacheDir, "ways-${java.util.UUID.randomUUID()}")
+        val store = WayStore({ waysDir }, clock)
+        val honorRepository = WalkRepository(
+            database = db,
+            walkDao = db.walkDao(),
+            routeDao = db.routeDataSampleDao(),
+            altitudeDao = db.altitudeSampleDao(),
+            walkEventDao = db.walkEventDao(),
+            activityIntervalDao = db.activityIntervalDao(),
+            waypointDao = db.waypointDao(),
+            voiceRecordingDao = db.voiceRecordingDao(),
+            walkPhotoDao = db.walkPhotoDao(),
+            wayStore = store,
+        )
+        val honorController = WalkControllerImpl(honorRepository, clock, fakeStepCounter(), FixedReleaseFlags(honor = true))
+        val sourceId = db.walkDao().insert(
+            Walk(uuid = "0e8d6f8a-5b1c-4f1e-9a53-2f1d8c7b6a50", startTimestamp = 100L, endTimestamp = 700_000L),
+        )
+        (0..10).forEach { i ->
+            db.routeDataSampleDao().insert(
+                RouteDataSample(walkId = sourceId, timestamp = 100L + i * 60_000L, latitude = 0.0, longitude = i * 0.001),
+            )
+        }
+        val mintedUuid = "11111111-2222-4333-8444-555555555555"
+        val begin = BeginHonorWalk(
+            repository = honorRepository,
+            wayStore = store,
+            walkController = honorController,
+            recordingFiles = VoiceRecordingFileSystem(context),
+            releaseFlags = FixedReleaseFlags(honor = true),
+            ioDispatcher = Dispatchers.IO,
+            mintWalkUuid = { mintedUuid },
+            zone = { ZoneId.of("UTC") },
+            locale = { Locale.US },
+        )
+        val vm = newHonorViewModel(honorController, honorEnabled = true) { begin }
+
+        try {
+            honorController.state.test(timeout = 10.seconds) {
+                assertTrue(awaitItem() is WalkState.Idle)
+                vm.startHonorWalk(sourceId, intention = "for her")
+                val active = awaitItem() as WalkState.Active
+                assertEquals(WalkMode.Honor, active.walk.mode)
+                assertEquals(mintedUuid, repository.getWalk(active.walk.walkId)!!.uuid)
+                assertTrue(db.honorDao().getSession(active.walk.walkId)!!.voicesEnabled)
+                cancelAndIgnoreRemainingEvents()
+            }
+            assertTrue("the start path's greeting ran", vm.activeCelestialGreeting.value != null)
+        } finally {
+            waysDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a refused honor start ends like a refused start, with no walk`() = runTest(dispatcher) {
+        var resolved = 0
+        val begin = BeginHonorWalk(
+            repository = repository,
+            wayStore = WayStore({ File(context.cacheDir, "ways-unused") }, clock),
+            walkController = controller,
+            recordingFiles = VoiceRecordingFileSystem(context),
+            releaseFlags = FixedReleaseFlags(honor = true),
+            ioDispatcher = Dispatchers.IO,
+            mintWalkUuid = { "11111111-2222-4333-8444-555555555555" },
+            zone = { ZoneId.of("UTC") },
+            locale = { Locale.US },
+        )
+        val vm = newHonorViewModel(controller, honorEnabled = true) {
+            resolved++
+            begin
+        }
+
+        vm.startHonorWalk(sourceWalkId = 999L)
+        runCurrent()
+
+        assertEquals(1, resolved)
+        assertTrue(controller.state.value is WalkState.Idle)
+        assertTrue(repository.allWalks().isEmpty())
+        assertNull(vm.activeCelestialGreeting.value)
+    }
+
+    @Test
+    fun `with the release flag off startHonorWalk touches nothing Honor`() = runTest(dispatcher) {
+        val vm = newHonorViewModel(controller, honorEnabled = false) { error("Begin resolved with the flag off") }
+
+        vm.startHonorWalk(sourceWalkId = 1L)
+        runCurrent()
+
+        assertTrue(controller.state.value is WalkState.Idle)
+    }
+
+    @Test
+    fun `an honor start without location permission asks for it, and Begin never runs`() = runTest(dispatcher) {
+        shadowOf(context as Application).denyPermissions(Manifest.permission.ACCESS_FINE_LOCATION)
+        val vm = newHonorViewModel(controller, honorEnabled = true) { error("Begin ran without permission") }
+
+        vm.locationPermissionRequired.test(timeout = 10.seconds) {
+            vm.startHonorWalk(sourceWalkId = 1L, intention = "for her")
+            assertEquals("for her", awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
 
     @Test
     fun `pauseWalk and resumeWalk transition controller state correctly`() = runTest(dispatcher) {
@@ -584,6 +702,8 @@ class WalkViewModelTest {
             intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
             voiceGuidePauseController = org.walktalkmeditate.pilgrim.audio.voiceguide.FakeVoiceGuidePauseController(),
             soundscapeUiController = FakeWalkSoundscapeUiController(),
+            releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
+            beginHonorWalk = { error("no honor start in this test") },
         )
 
         controller.startWalk(intention = null)
@@ -631,6 +751,8 @@ class WalkViewModelTest {
             intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
             voiceGuidePauseController = org.walktalkmeditate.pilgrim.audio.voiceguide.FakeVoiceGuidePauseController(),
             soundscapeUiController = FakeWalkSoundscapeUiController(),
+            releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
+            beginHonorWalk = { error("no honor start in this test") },
         )
 
         controller.startWalk(intention = null)
@@ -751,6 +873,8 @@ class WalkViewModelTest {
             intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
             voiceGuidePauseController = org.walktalkmeditate.pilgrim.audio.voiceguide.FakeVoiceGuidePauseController(),
             soundscapeUiController = FakeWalkSoundscapeUiController(),
+            releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
+            beginHonorWalk = { error("no honor start in this test") },
         )
 
         // iOS MapCameraSeed.forActiveWalk@7c200bf: a current fix → zoom 16.
@@ -794,6 +918,8 @@ class WalkViewModelTest {
             intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
             voiceGuidePauseController = org.walktalkmeditate.pilgrim.audio.voiceguide.FakeVoiceGuidePauseController(),
             soundscapeUiController = FakeWalkSoundscapeUiController(),
+            releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
+            beginHonorWalk = { error("no honor start in this test") },
         )
 
         val seen = vm.initialCameraSeed.first { it != null }
@@ -866,6 +992,8 @@ class WalkViewModelTest {
             intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
             voiceGuidePauseController = org.walktalkmeditate.pilgrim.audio.voiceguide.FakeVoiceGuidePauseController(),
             soundscapeUiController = FakeWalkSoundscapeUiController(),
+            releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
+            beginHonorWalk = { error("no honor start in this test") },
         )
         controller.startWalk(intention = null)
         // Must not propagate the SecurityException. The repository's
@@ -1057,8 +1185,36 @@ class WalkViewModelTest {
             intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
             voiceGuidePauseController = org.walktalkmeditate.pilgrim.audio.voiceguide.FakeVoiceGuidePauseController(),
             soundscapeUiController = FakeWalkSoundscapeUiController(),
+            releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
+            beginHonorWalk = { error("no honor start in this test") },
         )
     }
+
+    private fun newHonorViewModel(
+        walkController: WalkController,
+        honorEnabled: Boolean,
+        beginHonorWalk: Provider<BeginHonorWalk>,
+    ): WalkViewModel = WalkViewModel(
+        context, walkController, repository, clock, voiceRecorder, FakeLocationSource(),
+        org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
+        org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+        org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
+        FakeWeatherFetching(),
+        collectiveStats = org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource.of(),
+        soundsPreferences = org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository(),
+        whisperService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperService(),
+        cairnService = org.walktalkmeditate.pilgrim.data.cairn.FakeCairnService(),
+        whisperManifestService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperManifestService(),
+        geoCacheService = org.walktalkmeditate.pilgrim.data.proximity.FakeGeoCacheService(),
+        proximityService = org.walktalkmeditate.pilgrim.data.proximity.FakeProximityDetectionService(),
+        whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
+        stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
+        intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
+        voiceGuidePauseController = org.walktalkmeditate.pilgrim.audio.voiceguide.FakeVoiceGuidePauseController(),
+        soundscapeUiController = FakeWalkSoundscapeUiController(),
+        releaseFlags = FixedReleaseFlags(honor = honorEnabled),
+        beginHonorWalk = beginHonorWalk,
+    )
 
     private fun newViewModelWithSoundscape(
         soundscape: FakeWalkSoundscapeUiController,
@@ -1080,6 +1236,8 @@ class WalkViewModelTest {
         intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
         voiceGuidePauseController = org.walktalkmeditate.pilgrim.audio.voiceguide.FakeVoiceGuidePauseController(),
         soundscapeUiController = soundscape,
+        releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
+        beginHonorWalk = { error("no honor start in this test") },
     )
 
     @Test
@@ -1146,6 +1304,8 @@ class WalkViewModelTest {
             intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
             voiceGuidePauseController = org.walktalkmeditate.pilgrim.audio.voiceguide.FakeVoiceGuidePauseController(),
             soundscapeUiController = FakeWalkSoundscapeUiController(),
+            releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
+            beginHonorWalk = { error("no honor start in this test") },
         )
         assertTrue(vm.beginWithIntention.value)
         prefs.setBeginWithIntention(false)

@@ -30,6 +30,7 @@ import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
+import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
@@ -90,6 +91,7 @@ class UiWalkController @Inject constructor(
     private val watchdog: WalkTrackingWatchdog,
     @WalkFinalizationScope private val scope: CoroutineScope,
     private val releaseFlags: ReleaseFlags,
+    private val unitsPreferences: UnitsPreferencesRepository,
 ) : WalkController {
 
     /**
@@ -388,8 +390,20 @@ class UiWalkController @Inject constructor(
 
     // --- Mutations: fire intent to tracker, optionally await Room ---
 
-    override suspend fun startWalk(intention: String?, mode: WalkMode): Walk {
-        actionPublisher.start(intention, mode)
+    override suspend fun startWalk(intention: String?, mode: WalkMode): Walk =
+        startWalk(WalkStartRequest(intention = intention, mode = mode))
+
+    /**
+     * An honor start rides ACTION_START with the Begin-minted uuid, the
+     * Way id, the frozen settings, and the glance's units read now, at
+     * Start (spec D §11). The await then resolves to the walk under that
+     * uuid, never another unfinished walk.
+     */
+    override suspend fun startWalk(request: WalkStartRequest): Walk {
+        check(releaseFlags.honor || (request.walkUuid == null && request.honor == null)) {
+            "an Honor start with the release flag off"
+        }
+        actionPublisher.start(request, honorGlanceUnits = request.honor?.let { unitsPreferences.distanceUnits.value })
         // Wait for the tracker to insert the walk row. 5 s timeout
         // covers worst-case tracker spin-up. Any later timeout
         // bubbles as TimeoutCancellationException, which
@@ -397,7 +411,8 @@ class UiWalkController @Inject constructor(
         // (matches the existing IllegalStateException path).
         val walk = try {
             withTimeout(START_AWAIT_TIMEOUT_MS) {
-                repository.observeActiveWalk().filterNotNull().first()
+                repository.observeActiveWalk().filterNotNull()
+                    .first { request.walkUuid == null || it.uuid == request.walkUuid }
             }
         } catch (ce: CancellationException) {
             throw ce
@@ -466,6 +481,12 @@ class UiWalkController @Inject constructor(
      * irrelevant in UI (UI's state derives from Room). Returns the
      * most-recently recovered walkId so MainActivity can show the
      * "recovered" banner.
+     *
+     * A recovered honor walk then takes its Honor step (a link only to a
+     * Way already listed, no arrival numbers; spec correction 4) on the
+     * finalization scope, so the launch's blocking recovery never waits
+     * on its file writes. A step that fails is left for the launch's
+     * [org.walktalkmeditate.pilgrim.walk.honor.HonorFinalizer.runAtLaunch].
      */
     override suspend fun recoverStaleWalks(): Long? {
         val all = repository.allWalks()
@@ -477,6 +498,7 @@ class UiWalkController @Inject constructor(
             val lastSample = repository.lastLocationSampleFor(walk.id)
             val endTs = lastSample?.timestamp ?: (walk.startTimestamp + 1L)
             val finalized = repository.finishWalkAtomic(walkId = walk.id, endTimestamp = endTs)
+            if (finalized && releaseFlags.honor) scope.launch { repository.runHonorFinalize(walk.id) }
             if (finalized && walk.startTimestamp > mostRecentStart) {
                 mostRecentStart = walk.startTimestamp
                 mostRecentlyRecovered = walk.id

@@ -33,7 +33,8 @@ internal class HonorWalkState(
             ),
         )
         dao.upsertMomentState(HonorMomentStateEntity(walkId = walkId, momentId = "voice-1", reachedAt = 5_000L))
-        dao.markCardTouched(walkId, "voice-1")
+        // Unguarded, so a finished walk can be seeded with the rows a pending finalize would find.
+        dao.insertCardStateIfAbsent(HonorCardStateEntity(walkId = walkId, momentId = "voice-1", touched = true))
         dao.insertMarker(HonorWalkMarkerEntity(walkUuid, finishedAt = 9_000L, finishKind = HonorFinishKind.CLEAN))
         store.stage(walkUuid, way())
         store.link(walkUuid, WAY_ID, WayArrival(theirSeconds = 2_400.0, yourSeconds = 2_100.0))

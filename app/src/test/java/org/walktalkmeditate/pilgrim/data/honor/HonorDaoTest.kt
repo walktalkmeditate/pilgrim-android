@@ -161,6 +161,7 @@ class HonorDaoTest {
 
     @Test
     fun `a card's flags only turn on, whichever is set first`() = runTest {
+        dao.insertSession(session())
         dao.markCardDismissed(walkId, "voice-1")
         dao.markCardTouched(walkId, "voice-1")
         dao.markCardDismissed(walkId, "voice-1")
@@ -169,7 +170,33 @@ class HonorDaoTest {
     }
 
     @Test
+    fun `a card tap on a finished or vanished walk writes nothing and does not throw`() = runTest {
+        dao.insertSession(session())
+        db.walkDao().getById(walkId)!!.let { db.walkDao().update(it.copy(endTimestamp = 2_000L)) }
+
+        assertEquals(false, dao.markCardTouched(walkId, "voice-1"))
+        assertTrue(dao.getCardStates(walkId).isEmpty())
+
+        db.walkDao().deleteById(walkId)
+        assertEquals(false, dao.markCardDismissed(walkId, "voice-1"))
+    }
+
+    @Test
+    fun `the live-session guard counts only a session on an unfinished walk`() = runTest {
+        assertEquals(0, dao.countLiveSessionOnUnfinishedWalk(walkId))
+        dao.insertSession(session())
+        assertEquals(1, dao.countLiveSessionOnUnfinishedWalk(walkId))
+        assertTrue(dao.finishedWalkIdsWithLiveSessions().isEmpty())
+
+        db.walkDao().getById(walkId)!!.let { db.walkDao().update(it.copy(endTimestamp = 2_000L)) }
+
+        assertEquals(0, dao.countLiveSessionOnUnfinishedWalk(walkId))
+        assertEquals(listOf(walkId), dao.finishedWalkIdsWithLiveSessions())
+    }
+
+    @Test
     fun `moment and card rows upsert in place`() = runTest {
+        dao.insertSession(session())
         dao.upsertMomentState(HonorMomentStateEntity(walkId, "voice-1", reachedAt = 5_000L, queuePosition = 0))
         dao.upsertMomentState(
             HonorMomentStateEntity(walkId, "voice-1", reachedAt = 5_000L, voiceStartedAt = 6_000L, heard = true),

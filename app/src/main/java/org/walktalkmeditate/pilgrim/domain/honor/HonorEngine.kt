@@ -144,6 +144,69 @@ class HonorEngine(
 
     fun voiceDidFinish(): List<HonorEngineEvent> = moments.voiceDidFinish(gates).map { it.toEvent() }
 
+    /**
+     * The engine's private state (parity spec B §2.2), for the `:tracker`
+     * session to persist and revive. iOS persists none of it and never
+     * resumes a walk; the published `isOnWay`, `offWayMeters`, and
+     * `companionFrac` are left out because the next fix or tick recomputes them.
+     */
+    data class Snapshot(
+        val phase: HonorPhase,
+        val startFrac: Double?,
+        val anchoredByFallback: Boolean,
+        val anchorActiveSeconds: Double,
+        val companionT0: Double,
+        val progressFrac: Double,
+        val progressHighWater: Double,
+        val walkedFrac: Double,
+        val offWaySinceMillis: Long?,
+        val offWayActiveSeconds: Double,
+        val lastReacquireAttemptMillis: Long?,
+        val softTapSinceMillis: Long?,
+        val softTapArmed: Boolean,
+        val arrivalInsideFixes: Int,
+        val tracker: HonorMomentTracker.Snapshot,
+    )
+
+    fun snapshot(): Snapshot = Snapshot(
+        phase = phase,
+        startFrac = startFrac,
+        anchoredByFallback = anchoredByFallback,
+        anchorActiveSeconds = anchorActiveDuration,
+        companionT0 = companionT0,
+        progressFrac = progressFrac,
+        progressHighWater = progressHighWater,
+        walkedFrac = walkedFrac,
+        offWaySinceMillis = offWaySinceMillis,
+        offWayActiveSeconds = offWayActiveDuration,
+        lastReacquireAttemptMillis = lastReacquireAttemptMillis,
+        softTapSinceMillis = softTapSinceMillis,
+        softTapArmed = softTapArmed,
+        arrivalInsideFixes = arrival.consecutiveInside,
+        tracker = moments.snapshot(),
+    )
+
+    /** Picks up where [snapshot] left off, with no voice playing; call [updateActiveDuration] next. */
+    fun restore(snapshot: Snapshot) {
+        phase = snapshot.phase
+        startFrac = snapshot.startFrac
+        anchoredByFallback = snapshot.anchoredByFallback
+        anchorActiveDuration = snapshot.anchorActiveSeconds
+        companionT0 = snapshot.companionT0
+        progressFrac = snapshot.progressFrac
+        progressHighWater = snapshot.progressHighWater
+        walkedFrac = snapshot.walkedFrac
+        offWaySinceMillis = snapshot.offWaySinceMillis
+        offWayActiveDuration = snapshot.offWayActiveSeconds
+        lastReacquireAttemptMillis = snapshot.lastReacquireAttemptMillis
+        softTapSinceMillis = snapshot.softTapSinceMillis
+        softTapArmed = snapshot.softTapArmed
+        arrival.restore(snapshot.arrivalInsideFixes)
+        moments.restore(snapshot.tracker)
+        distanceRemainingMeters = (1 - progressFrac) * geometry.totalMeters
+        companionFrac = if (startFrac == null) 0.0 else geometry.frac(atElapsed = companionT0)
+    }
+
     fun processLocation(point: LocationPoint): List<HonorEngineEvent> {
         val accuracy = point.horizontalAccuracyMeters?.toDouble() ?: return emptyList()
         if (!(accuracy >= 0 && accuracy <= HonorTuning.FIX_ACCURACY_METERS)) return emptyList()

@@ -83,7 +83,12 @@ data class HonorSessionEntity(
     /** The arrival debounce's run of consecutive fixes inside the radius. */
     @ColumnInfo(name = "arrival_inside_fixes")
     val arrivalInsideFixes: Int = 0,
-    /** The tracker's `playing` voice, by moment id; null when none is. */
+    /**
+     * The voice the player holds, by moment id, as iOS's `activeVoice`: a
+     * replayed voice while the engine still counts its own, and null while
+     * a reply plays. The engine's own voice isn't kept: a revival never
+     * replays it, so the tracker revives with nothing playing.
+     */
     @ColumnInfo(name = "playing_moment_id")
     val playingMomentId: String? = null,
     @ColumnInfo(name = "voice_paused")

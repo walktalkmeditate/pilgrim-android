@@ -283,6 +283,29 @@ class WalkReducerTest {
     }
 
     @Test
+    fun `honor start from either resettable state emits exactly one HONOR_MODE at the start instant`() {
+        val (fromIdle, idleEffect) = WalkReducer.reduce(
+            WalkState.Idle,
+            WalkAction.Start(walkId = 7L, at = 300L, mode = WalkMode.Honor),
+        )
+        assertEquals(WalkMode.Honor, (fromIdle as WalkState.Active).walk.mode)
+        assertEquals(
+            WalkEffect.PersistEvent(walkId = 7L, eventType = WalkEventType.HONOR_MODE, timestamp = 300L),
+            idleEffect,
+        )
+
+        val finished = WalkState.Finished(walk = WalkAccumulator(walkId = 7L, startedAt = 0L), endedAt = 1_000L)
+        val (_, finishedEffect) = WalkReducer.reduce(
+            finished,
+            WalkAction.Start(walkId = 8L, at = 2_000L, mode = WalkMode.Honor),
+        )
+        assertEquals(
+            WalkEffect.PersistEvent(walkId = 8L, eventType = WalkEventType.HONOR_MODE, timestamp = 2_000L),
+            finishedEffect,
+        )
+    }
+
+    @Test
     fun `wander start never emits a SEEK_MODE event from either resettable state`() {
         val (_, fromIdle) = WalkReducer.reduce(
             WalkState.Idle,

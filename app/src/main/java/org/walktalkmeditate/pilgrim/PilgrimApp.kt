@@ -14,6 +14,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.audio.MeditationBellObserver
 import org.walktalkmeditate.pilgrim.audio.OrphanSweeperScheduler
+import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesSeeder
 import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuideOrchestrator
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepoScope
@@ -26,7 +27,9 @@ import org.walktalkmeditate.pilgrim.data.recovery.WalkRecoveryRepository
 import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsBackfillCoordinator
 import org.walktalkmeditate.pilgrim.walk.WalkController
 import org.walktalkmeditate.pilgrim.walk.WalkFinalizationObserver
+import org.walktalkmeditate.pilgrim.walk.WalkFinalizationScope
 import org.walktalkmeditate.pilgrim.walk.WalkLifecycleObserver
+import org.walktalkmeditate.pilgrim.walk.honor.HonorFinalizer
 import org.walktalkmeditate.pilgrim.walk.seek.SeekOrchestrator
 
 @HiltAndroidApp
@@ -199,6 +202,15 @@ class PilgrimApp : Application(), Configuration.Provider {
     @Inject lateinit var walkRepositoryProvider: Provider<org.walktalkmeditate.pilgrim.data.WalkRepository>
     @Inject lateinit var walkRecoveryRepositoryProvider: Provider<WalkRecoveryRepository>
     @Inject lateinit var walkTrackingWatchdogProvider: Provider<org.walktalkmeditate.pilgrim.walk.WalkTrackingWatchdog>
+
+    /**
+     * U17: after recovery, the launch retries every Honor step still
+     * pending and sweeps staging no walk needs. Flag-gated, and off the
+     * launch path on the finalization scope.
+     */
+    @Inject lateinit var releaseFlagsProvider: Provider<ReleaseFlags>
+    @Inject lateinit var honorFinalizerProvider: Provider<HonorFinalizer>
+    @Inject @WalkFinalizationScope lateinit var walkFinalizationScopeProvider: Provider<CoroutineScope>
 
     /**
      * Stage 11-A: drains stale walk-metrics cache columns for legacy
@@ -395,6 +407,14 @@ class PilgrimApp : Application(), Configuration.Provider {
             } catch (t: Throwable) {
                 Log.w(TAG, "recoverStaleWalks failed", t)
             }
+        }
+
+        // After recovery, whether it ran or a live :tracker walk skipped
+        // it: runAtLaunch only finishes walks already finished and keeps
+        // the staging of any walk still on.
+        if (releaseFlagsProvider.get().honor) {
+            val honorFinalizer = honorFinalizerProvider.get()
+            walkFinalizationScopeProvider.get().launch { honorFinalizer.runAtLaunch() }
         }
 
         // E2: reap any launcher alias left enabled by an in-place icon

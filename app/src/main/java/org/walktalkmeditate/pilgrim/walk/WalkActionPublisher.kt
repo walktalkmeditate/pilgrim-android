@@ -4,12 +4,15 @@ package org.walktalkmeditate.pilgrim.walk
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.seek.SeekGlanceState
 import org.walktalkmeditate.pilgrim.service.WalkTrackingService
+import org.walktalkmeditate.pilgrim.walk.honor.HonorCommand
 
 /**
  * Cross-process bridge: every user-initiated walk action in the UI
@@ -27,21 +30,72 @@ import org.walktalkmeditate.pilgrim.service.WalkTrackingService
  * same channel to UI code.
  */
 @Singleton
-class WalkActionPublisher @Inject constructor(
-    @ApplicationContext private val context: Context,
+class WalkActionPublisher internal constructor(
+    private val context: Context,
+    private val honorCommandSequence: HonorCommandSequence,
 ) {
+    @Inject
+    constructor(@ApplicationContext context: Context) : this(context, HonorCommandSequence(context))
+
     /**
      * Begin a new walk. Uses `startForegroundService` because the
      * service is not running yet on the first start; the service's
      * onStartCommand promotes to FG before the API 31+ deadline.
      */
-    fun start(intention: String?, mode: WalkMode = WalkMode.Wander) {
+    fun start(intention: String?, mode: WalkMode = WalkMode.Wander) =
+        start(WalkStartRequest(intention = intention, mode = mode))
+
+    /**
+     * An honor start also carries the Begin-minted walk uuid, the Way id,
+     * the settings frozen at Start, and the units its glance keeps for the
+     * walk ([honorGlanceUnits]), so `:tracker` rebuilds the session from
+     * the intent and Room alone.
+     */
+    fun start(request: WalkStartRequest, honorGlanceUnits: UnitSystem? = null) {
         val intent = baseIntent(WalkTrackingService.ACTION_START).apply {
             putExtra(WalkTrackingService.EXTRA_FRESH_START, true)
-            putExtra(WalkTrackingService.EXTRA_WALK_MODE, mode.name)
-            if (intention != null) putExtra(WalkTrackingService.EXTRA_INTENTION, intention)
+            putExtra(WalkTrackingService.EXTRA_WALK_MODE, request.mode.name)
+            request.intention?.let { putExtra(WalkTrackingService.EXTRA_INTENTION, it) }
+            request.walkUuid?.let { putExtra(WalkTrackingService.EXTRA_WALK_UUID, it) }
+            request.honor?.let { honor ->
+                putExtra(WalkTrackingService.EXTRA_HONOR_WAY_ID, honor.wayId)
+                putExtra(WalkTrackingService.EXTRA_HONOR_VOICES_ENABLED, honor.settings.voicesEnabled)
+                putExtra(WalkTrackingService.EXTRA_HONOR_SOFT_TAP_ENABLED, honor.settings.softTapEnabled)
+                honorGlanceUnits?.let { putExtra(WalkTrackingService.EXTRA_HONOR_GLANCE_UNITS, it.name) }
+            }
         }
         ContextCompat.startForegroundService(context, intent)
+    }
+
+    /**
+     * A card's or the chip's command to the honor walk's session in
+     * `:tracker`. Fire-and-forget, like every other walk action: the
+     * service drops it with no live pipeline, or when the OS redelivers it.
+     */
+    fun sendHonorCommand(command: HonorCommand) {
+        val intent = baseIntent(WalkTrackingService.ACTION_HONOR_COMMAND).apply {
+            putExtra(WalkTrackingService.EXTRA_HONOR_COMMAND_SEQ, honorCommandSequence.next())
+            when (command) {
+                is HonorCommand.TogglePlayback -> {
+                    putExtra(WalkTrackingService.EXTRA_HONOR_COMMAND, WalkTrackingService.HONOR_COMMAND_TOGGLE_PLAYBACK)
+                    putExtra(WalkTrackingService.EXTRA_HONOR_MOMENT_ID, command.momentId)
+                }
+                is HonorCommand.Scrub -> {
+                    putExtra(WalkTrackingService.EXTRA_HONOR_COMMAND, WalkTrackingService.HONOR_COMMAND_SCRUB)
+                    putExtra(WalkTrackingService.EXTRA_HONOR_MOMENT_ID, command.momentId)
+                    putExtra(WalkTrackingService.EXTRA_HONOR_SCRUB_FRACTION, command.fraction)
+                }
+                HonorCommand.Skip ->
+                    putExtra(WalkTrackingService.EXTRA_HONOR_COMMAND, WalkTrackingService.HONOR_COMMAND_SKIP)
+                HonorCommand.CycleRate ->
+                    putExtra(WalkTrackingService.EXTRA_HONOR_COMMAND, WalkTrackingService.HONOR_COMMAND_CYCLE_RATE)
+                is HonorCommand.PlayReply -> {
+                    putExtra(WalkTrackingService.EXTRA_HONOR_COMMAND, WalkTrackingService.HONOR_COMMAND_PLAY_REPLY)
+                    putExtra(WalkTrackingService.EXTRA_HONOR_MOMENT_ID, command.momentId)
+                }
+            }
+        }
+        safeStartService(intent, WalkTrackingService.ACTION_HONOR_COMMAND)
     }
 
     fun pause() = fireService(WalkTrackingService.ACTION_PAUSE)
@@ -179,4 +233,34 @@ class WalkActionPublisher @Inject constructor(
 
     private fun baseIntent(action: String): Intent =
         Intent(context, WalkTrackingService::class.java).apply { this.action = action }
+}
+
+/**
+ * The Honor commands' sequence numbers, which must keep rising across UI
+ * restarts: the session applies a number only past the last one it applied,
+ * so a number reused after a restart would drop a real tap. Kept in the UI
+ * process's own preferences file; `:tracker` never reads it.
+ */
+internal class HonorCommandSequence(
+    private val context: Context,
+    private val nowMillis: () -> Long = System::currentTimeMillis,
+) {
+    private val prefs by lazy { context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
+
+    /**
+     * The wall clock is a floor under the stored number, so a write that an
+     * `apply()` never flushed before a kill still can't hand out a number
+     * already used: the clock has moved past it by the next launch.
+     */
+    @Synchronized
+    fun next(): Long {
+        val next = maxOf(prefs.getLong(KEY_LAST, 0L) + 1, nowMillis())
+        prefs.edit { putLong(KEY_LAST, next) }
+        return next
+    }
+
+    private companion object {
+        const val PREFS_NAME = "honor_commands"
+        const val KEY_LAST = "last_seq"
+    }
 }
