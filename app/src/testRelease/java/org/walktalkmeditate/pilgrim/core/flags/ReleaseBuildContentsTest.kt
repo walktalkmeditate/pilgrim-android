@@ -40,6 +40,15 @@ class ReleaseBuildContentsTest {
     }
 
     @Test
+    fun `release requests no debug-only permission`() {
+        val requested = context.packageManager
+            .getPackageInfo(context.packageName, PackageManager.GET_PERMISSIONS)
+            .requestedPermissions.orEmpty().toSet()
+
+        assertEquals(emptyList<String>(), BuildContents.DEBUG_ONLY_PERMISSIONS.filter(requested::contains))
+    }
+
+    @Test
     fun `release has none of the app's DUMP-protected debug triggers`() {
         assertEquals(emptyList<String>(), BuildContents.ownDumpProtectedComponents(context))
     }

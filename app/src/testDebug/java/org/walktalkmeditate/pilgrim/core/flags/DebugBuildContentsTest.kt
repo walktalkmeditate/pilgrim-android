@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.core.flags
 
 import android.app.Application
 import android.content.Context
+import android.content.pm.PackageManager
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -28,10 +29,23 @@ class DebugBuildContentsTest {
     }
 
     @Test
-    fun `the DUMP check finds the debug field-report trigger`() {
+    fun `the DUMP check finds every debug trigger`() {
         assertEquals(
-            listOf("org.walktalkmeditate.pilgrim.core.threads.ThreadsFieldReportReceiver"),
-            BuildContents.ownDumpProtectedComponents(context),
+            listOf(
+                "org.walktalkmeditate.pilgrim.core.threads.ThreadsFieldReportReceiver",
+                "org.walktalkmeditate.pilgrim.debug.honor.HonorDebugReceiver",
+                "org.walktalkmeditate.pilgrim.debug.honor.HonorReplayReceiver",
+            ),
+            BuildContents.ownDumpProtectedComponents(context).sorted(),
         )
+    }
+
+    @Test
+    fun `the permission check sees every debug-only permission`() {
+        val requested = context.packageManager
+            .getPackageInfo(context.packageName, PackageManager.GET_PERMISSIONS)
+            .requestedPermissions.orEmpty().toSet()
+
+        assertEquals(emptyList<String>(), BuildContents.DEBUG_ONLY_PERMISSIONS.filterNot(requested::contains))
     }
 }

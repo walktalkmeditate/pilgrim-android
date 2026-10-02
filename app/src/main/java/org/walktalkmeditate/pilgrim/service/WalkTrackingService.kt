@@ -49,6 +49,7 @@ import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.seek.SeekDirectionHint
 import org.walktalkmeditate.pilgrim.domain.seek.SeekGlanceState
 import org.walktalkmeditate.pilgrim.location.LocationSource
+import org.walktalkmeditate.pilgrim.location.MockLocationReplay
 import org.walktalkmeditate.pilgrim.walk.HonorSettings
 import org.walktalkmeditate.pilgrim.walk.HonorStart
 import org.walktalkmeditate.pilgrim.walk.WalkController
@@ -94,6 +95,9 @@ class WalkTrackingService : Service() {
     /** The UI's audio gates; resolved only with the release flag on. */
     @Inject lateinit var uiAudioGateProvider: Provider<UiAudioGate>
 
+    /** The debug Way replayer's cleanup hook; a no-op in release. */
+    @Inject lateinit var mockLocationReplay: Provider<MockLocationReplay>
+
     /** Resolved only with the release flag on: with it off, nothing Honor is built here. */
     private var honorSession: HonorSession? = null
 
@@ -122,6 +126,7 @@ class WalkTrackingService : Service() {
     override fun onCreate() {
         super.onCreate()
         isRunning.set(true)
+        mockLocationReplay.get().onTrackerStart()
         createNotificationChannel()
         notificationActions = WalkNotificationActions(
             pause = actionPendingIntent(ACTION_PAUSE, REQUEST_CODE_PAUSE),

@@ -17,6 +17,23 @@ internal object BuildContents {
     val DEBUG_ONLY_CLASSES = listOf(
         "org.walktalkmeditate.pilgrim.core.threads.ThreadsFieldReport",
         "org.walktalkmeditate.pilgrim.core.threads.ThreadsFieldReportReceiver",
+        "org.walktalkmeditate.pilgrim.debug.honor.WayGpxExporter",
+        "org.walktalkmeditate.pilgrim.debug.honor.ReplayStep",
+        "org.walktalkmeditate.pilgrim.debug.honor.MockFix",
+        "org.walktalkmeditate.pilgrim.debug.honor.WayReplayTimeline",
+        "org.walktalkmeditate.pilgrim.debug.honor.MockLocationClient",
+        "org.walktalkmeditate.pilgrim.debug.honor.FusedMockLocationClient",
+        "org.walktalkmeditate.pilgrim.debug.honor.WayReplayer",
+        "org.walktalkmeditate.pilgrim.debug.honor.WayReplayerModule",
+        "org.walktalkmeditate.pilgrim.debug.honor.HonorDebugReceiver",
+        "org.walktalkmeditate.pilgrim.debug.honor.HonorReplayReceiver",
+        "org.walktalkmeditate.pilgrim.debug.honor.HonorDebugWays",
+        "org.walktalkmeditate.pilgrim.debug.honor.HonorDebugReceiverKt",
+    )
+
+    /** Permissions only debug builds request; the release allow-list leaves them out. */
+    val DEBUG_ONLY_PERMISSIONS = listOf(
+        "android.permission.ACCESS_MOCK_LOCATION",
     )
 
     fun isOnClasspath(className: String): Boolean =
