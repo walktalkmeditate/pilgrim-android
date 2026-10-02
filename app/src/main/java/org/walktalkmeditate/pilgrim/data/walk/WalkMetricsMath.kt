@@ -8,7 +8,7 @@ import org.walktalkmeditate.pilgrim.domain.WalkEventType
 /**
  * Pure math shared by the cache writer ([WalkMetricsCache]), the
  * cache-fallback reader ([org.walktalkmeditate.pilgrim.data.pilgrim.builder.PilgrimPackageConverter]),
- * and the Walk Summary and share totals.
+ * and the Walk Summary, share, and widget totals.
  *
  * Stage 11-A spec review CRITICAL #2 mandate: live-compute and cached
  * paths must produce byte-identical meditation values so that
@@ -37,15 +37,21 @@ internal object WalkMetricsMath {
         return rawSeconds.coerceAtMost(activeDurationSeconds).coerceAtLeast(0L)
     }
 
+    /** [activeDurationMillis] in whole seconds. */
+    fun computeActiveDurationSeconds(walk: Walk, events: List<WalkEvent>): Long =
+        activeDurationMillis(walk, pauseSpans(walk, events)) / 1_000L
+
     /**
-     * Active duration in seconds = wall-clock duration minus the sum of
-     * paused gaps ([pauseSpans]). Returns 0 for in-progress walks.
+     * iOS's `walk.activeDuration`: wall-clock duration minus [pauses]
+     * (the walk's [pauseSpans]), never negative. Sittings count as active
+     * time. Returns 0 for in-progress walks. Every surface that shows an
+     * active or walking duration derives it here, so each one pairs
+     * pauses the same way the meditation clamp does.
      */
-    fun computeActiveDurationSeconds(walk: Walk, events: List<WalkEvent>): Long {
+    fun activeDurationMillis(walk: Walk, pauses: List<PauseSpan>): Long {
         val end = walk.endTimestamp ?: return 0L
         val wallClockMs = (end - walk.startTimestamp).coerceAtLeast(0L)
-        val pausedTotalMs = pauseSpans(walk, events).sumOf { it.durationMillis }
-        return ((wallClockMs - pausedTotalMs).coerceAtLeast(0L)) / 1_000L
+        return (wallClockMs - pauses.sumOf { it.durationMillis }).coerceAtLeast(0L)
     }
 
     /** One paused stretch, in epoch millis. Negative spans coerce to 0. */
@@ -57,8 +63,8 @@ internal object WalkMetricsMath {
      * ignored, and an unpaired trailing PAUSED closes at the walk's
      * `endTimestamp` — dropped entirely while the walk is still open
      * (closed pairs are still returned for open walks). Shared by
-     * [computeActiveDurationSeconds] and the prompt pipeline's
-     * pause-context builder so the two can never drift.
+     * [activeDurationMillis], the share payload's pauses, and the prompt
+     * pipeline's pause-context builder so they can never drift.
      */
     fun pauseSpans(walk: Walk, events: List<WalkEvent>): List<PauseSpan> {
         val spans = mutableListOf<PauseSpan>()

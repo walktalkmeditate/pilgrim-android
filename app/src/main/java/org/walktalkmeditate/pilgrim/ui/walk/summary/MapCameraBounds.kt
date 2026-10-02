@@ -20,7 +20,7 @@ data class MapCameraBounds(
 /**
  * Compute camera bounds covering all GPS samples whose timestamp falls
  * inside `[startMs, endMs]`. Returns null when no samples land in the
- * range — caller falls back to the full-route fit-bounds. iOS-faithful
+ * range; the caller keeps the current framing. iOS-faithful
  * port of `boundsForTimeRange` (`WalkSummaryView.swift:841-846@7c200bf`),
  * which pads through [boundsForRoute].
  */

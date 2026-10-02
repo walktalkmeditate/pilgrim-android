@@ -94,6 +94,24 @@ class ExoPlayerVoiceGuidePlayerTest {
         assertEquals(1, fires.get())
     }
 
+    @Test fun `focus denied fires onFinished exactly once and ends in Error`() {
+        shadowOf(audioManager).setNextFocusRequestResponse(AudioManager.AUDIOFOCUS_REQUEST_FAILED)
+        val fires = AtomicInteger(0)
+
+        player.play(tempFile) { fires.incrementAndGet() }
+        runMainQueueUntilIdle()
+
+        assertEquals(1, fires.get())
+        assertTrue(
+            "expected Error, got ${player.state.value}",
+            player.state.value is VoiceGuidePlayer.State.Error,
+        )
+
+        player.stop()
+        runMainQueueUntilIdle()
+        assertEquals("a later stop must not fire the denied play's callback again", 1, fires.get())
+    }
+
     @Test fun `stop fires onFinished even without natural completion`() {
         val fires = AtomicInteger(0)
         player.play(tempFile) { fires.incrementAndGet() }

@@ -283,7 +283,6 @@ class InteractiveShareSectionTest {
     private fun candidate(id: Int, sizeBytes: Long = 1_000L, durationSeconds: Double = 60.0) = TourRecordingCandidate(
         id = id,
         recordingUuid = "rec-$id",
-        startTs = 0L,
         startMillis = 0L,
         endTs = durationSeconds.toLong(),
         duration = durationSeconds,

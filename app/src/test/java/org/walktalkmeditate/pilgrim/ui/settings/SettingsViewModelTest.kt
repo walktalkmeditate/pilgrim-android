@@ -18,6 +18,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -165,8 +166,13 @@ class SettingsViewModelTest {
         // active flow and the resulting "connection pool has been
         // closed" exception leaks past tearDown to surface as
         // UncaughtExceptionsBeforeTest in a LATER test in the same
-        // JVM fork — typically PracticeCardTest (Stage 7-A pattern).
-        vm.viewModelScope.coroutineContext[Job]?.cancel()
+        // JVM fork — typically PracticeCardTest (Stage 7-A pattern), and
+        // lately AboutViewModelTest. Cancel is not enough: a query already
+        // running on Dispatchers.IO finishes after it, so join the scope
+        // before closing the database.
+        runBlocking {
+            withTimeout(10_000L) { vm.viewModelScope.coroutineContext[Job]?.cancelAndJoin() }
+        }
         db.close()
         scope.cancel()
         dataStoreScope.cancel()

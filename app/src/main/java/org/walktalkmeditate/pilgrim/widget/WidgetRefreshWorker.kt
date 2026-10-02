@@ -13,7 +13,6 @@ import kotlinx.coroutines.CancellationException
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsMath
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
-import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
 
 /**
@@ -22,11 +21,11 @@ import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
  * re-render of all widget instances.
  *
  * Distance: haversine-summed from RouteDataSamples via the shared
- * `walkDistanceMeters` helper. Active duration: total elapsed minus
- * paused (replayed from WalkEvents via `replayWalkEventTotals`) minus
- * meditated ([WalkMetricsMath.computeMeditationSeconds]: the merged,
- * clamped sittings total every other surface shows) — the same math
- * as `WalkSummaryViewModel.buildState`.
+ * `walkDistanceMeters` helper. Active duration: the walking time
+ * `WalkSummaryViewModel.buildState` shows, derived by the same two
+ * functions: [WalkMetricsMath.activeDurationMillis] (elapsed minus
+ * paused) minus [WalkMetricsMath.computeMeditationSeconds] (the merged,
+ * clamped sittings total).
  */
 @HiltWorker
 class WidgetRefreshWorker @AssistedInject constructor(
@@ -62,7 +61,6 @@ class WidgetRefreshWorker @AssistedInject constructor(
         val nextState: WidgetState = if (reportable?.endTimestamp == null) {
             WidgetState.Empty
         } else {
-            val totalElapsed = (reportable.endTimestamp - reportable.startTimestamp).coerceAtLeast(0)
             val samples = walkRepository.locationSamplesFor(reportable.id)
             val points = samples.map { sample ->
                 LocationPoint(
@@ -73,10 +71,12 @@ class WidgetRefreshWorker @AssistedInject constructor(
             }
             val distance = walkDistanceMeters(points)
             val events = walkRepository.eventsFor(reportable.id)
-            val totals = replayWalkEventTotals(events = events, closeAt = reportable.endTimestamp)
+            val activeMillis = WalkMetricsMath.activeDurationMillis(
+                reportable,
+                WalkMetricsMath.pauseSpans(reportable, events),
+            )
             val meditatedMillis = WalkMetricsMath.computeMeditationSeconds(reportable, events) * 1_000L
-            val activeWalking = (totalElapsed - totals.totalPausedMillis - meditatedMillis)
-                .coerceAtLeast(0)
+            val activeWalking = (activeMillis - meditatedMillis).coerceAtLeast(0)
             WidgetState.LastWalk(
                 walkId = reportable.id,
                 endTimestampMs = reportable.endTimestamp,

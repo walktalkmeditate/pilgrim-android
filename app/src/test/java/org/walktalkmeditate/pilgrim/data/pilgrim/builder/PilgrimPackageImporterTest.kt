@@ -95,6 +95,7 @@ class PilgrimPackageImporterTest {
             FakeArchivedWalkRegistry(),
             threadsStore,
             threadsPreferences,
+            WalkMetricsCache(repository(), db.walkDao(), db.walkEventDao()),
         )
     }
 
@@ -475,6 +476,7 @@ class PilgrimPackageImporterTest {
             FakeArchivedWalkRegistry(),
             spyStore,
             spyPreferences,
+            WalkMetricsCache(repository(), db.walkDao(), db.walkEventDao()),
         )
         val uri = buildArchive(
             tended = false,
@@ -498,6 +500,7 @@ class PilgrimPackageImporterTest {
             FakeArchivedWalkRegistry(),
             TranscriptContextStore(context, json),
             spyPreferences,
+            WalkMetricsCache(repository(), db.walkDao(), db.walkEventDao()),
         )
         val before = spyPreferences.importGeneration.value
         val uri = buildArchive(
@@ -520,6 +523,7 @@ class PilgrimPackageImporterTest {
             FakeArchivedWalkRegistry(),
             TranscriptContextStore(context, json),
             spyPreferences,
+            WalkMetricsCache(repository(), db.walkDao(), db.walkEventDao()),
         )
         val badUri = Uri.parse("content://test/does-not-exist-${UUID.randomUUID()}")
         shadowOf(context.contentResolver).registerInputStream(badUri, ByteArrayInputStream(ByteArray(0)))

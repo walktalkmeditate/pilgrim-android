@@ -25,9 +25,9 @@ import org.walktalkmeditate.pilgrim.ui.settings.data.WalksSource
  * one walk at a time via [WalkMetricsCaching.computeAndPersist].
  *
  * One stale walk per emission keeps the backfill OFF the hot UI path: when
- * a finished walk's row updates (via [WalkDao.updateAggregates]), the Room
- * Flow re-emits, the next stale walk surfaces as the firstOrNull, the
- * coordinator drains it, and so on until the predicate finds nothing.
+ * a finished walk's row updates (via [WalkDao.updateAggregatesIfUncached]),
+ * the Room Flow re-emits, the next stale walk surfaces as the firstOrNull,
+ * the coordinator drains it, and so on until the predicate finds nothing.
  *
  * Dedup invariants:
  * - [start] is idempotent via [AtomicBoolean.compareAndSet] — multiple

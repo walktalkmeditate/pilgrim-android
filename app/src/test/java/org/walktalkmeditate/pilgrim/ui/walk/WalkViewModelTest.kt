@@ -73,6 +73,7 @@ import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
+import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.location.LocationSource
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
@@ -520,6 +521,41 @@ class WalkViewModelTest {
         val recordings = repository.voiceRecordingsFor(walkId)
         assertEquals(1, recordings.size)
         assertEquals(walkId, recordings[0].walkId)
+    }
+
+    @Test
+    fun `startMeditation stops an in-flight recording before the sitting begins`() = runTest(dispatcher) {
+        // iOS `startMeditation()` stops the take first; otherwise talk and
+        // meditation overlap and the walk's share is rejected by the worker.
+        controller.startWalk(intention = null)
+        val walkId = requireActiveWalkId()
+        viewModel.toggleRecording()
+        viewModel.voiceRecorderState.first { it is VoiceRecorderUiState.Recording }
+        viewModel.audioLevel.first { it > 0f }
+
+        clock.advanceTo(3_000L)
+        viewModel.startMeditation()
+        controller.state.first { it is WalkState.Meditating }
+
+        assertEquals(VoiceRecorderUiState.Idle, viewModel.voiceRecorderState.value)
+        val recordings = repository.voiceRecordingsFor(walkId)
+        assertEquals(1, recordings.size)
+        val sittingStart = repository.eventsFor(walkId)
+            .first { it.eventType == WalkEventType.MEDITATION_START }
+            .timestamp
+        assertTrue(recordings[0].endTimestamp <= sittingStart)
+    }
+
+    @Test
+    fun `startMeditation with no recording just starts the sitting`() = runTest(dispatcher) {
+        controller.startWalk(intention = null)
+        val walkId = requireActiveWalkId()
+
+        viewModel.startMeditation()
+        controller.state.first { it is WalkState.Meditating }
+
+        assertEquals(VoiceRecorderUiState.Idle, viewModel.voiceRecorderState.value)
+        assertEquals(0, repository.voiceRecordingsFor(walkId).size)
     }
 
     @Test

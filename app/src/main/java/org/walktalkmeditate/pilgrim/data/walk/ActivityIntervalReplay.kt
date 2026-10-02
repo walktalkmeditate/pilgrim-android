@@ -19,13 +19,9 @@ import org.walktalkmeditate.pilgrim.domain.WalkEventType
  * and imported activities may be unsorted or overlap):
  * - They are sorted by timestamp, with an END before a START in the same
  *   millisecond, so back-to-back sittings `[t0, t1]` and `[t1, t2]` stay
- *   two sittings. (Before normalization such a tie could sort START
- *   first, and the pair collapsed to zero sittings.)
+ *   two sittings.
  * - Overlapping sittings merge into one: a START while a sitting is open
  *   extends it, and it closes only when every START has met an END.
- *   (Before normalization the last START won, so an overlap shrank to
- *   its later half.) Well-formed native walks, which strictly alternate,
- *   derive exactly as before.
  * - A sitting's end must be strictly after its start. A START and an END
  *   in the same millisecond with nothing open are a zero-length sitting
  *   and contribute nothing; an END with nothing open is otherwise ignored.

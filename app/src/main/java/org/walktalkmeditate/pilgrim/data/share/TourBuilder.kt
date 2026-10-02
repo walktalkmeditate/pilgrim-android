@@ -36,10 +36,8 @@ data class RecordingArtifact(
  * `candidates(for:)` (`TourBuilder.swift:71@7c200bf`). Android derives
  * its candidates on every UI emission on Main, and the rows never render
  * a coordinate, so the sample scan waits for [TourBuilder.tourItems],
- * which only [SharePayloadBuilder.build] feeds samples to, off Main. The
- * candidate carries the full-precision start so that scan still picks by
- * milliseconds, as iOS's full-precision `Date`s do; [startTs] is the
- * truncated wire value.
+ * which only [SharePayloadBuilder.build] feeds samples to, off Main, and
+ * picks by milliseconds, as iOS's full-precision `Date`s do.
  *
  * [recordingUuid] has no iOS counterpart: iOS's candidate carries the
  * playable `fileURL` directly and matches a repair slot back to its
@@ -57,7 +55,6 @@ data class RecordingArtifact(
 data class TourRecordingCandidate(
     val id: Int,
     val recordingUuid: String,
-    val startTs: Long,
     val startMillis: Long,
     val endTs: Long,
     val duration: Double,
@@ -70,8 +67,13 @@ data class TourRecordingCandidate(
     val fileRelativePath: String? = null,
     val unavailableReason: String? = null,
 ) {
+    /** The start truncated to epoch seconds: the wire `start_ts`. */
+    val startTs: Long get() = startMillis / MILLIS_PER_SECOND
+
     val effectiveKind: TourRecordingKind get() = kindOverride ?: autoKind
 }
+
+private const val MILLIS_PER_SECOND = 1_000L
 
 data class TourTotals(val count: Int, val bytes: Long, val seconds: Double)
 
@@ -101,8 +103,6 @@ internal object TourBuilder {
      */
     const val REASON_AUDIO_REMOVED = "audio removed"
     const val REASON_TOO_LARGE = "too large to carry"
-
-    private const val MILLIS_PER_SECOND = 1_000L
 
     /**
      * A deliberate recording is presumed to be a voice: only a
@@ -186,7 +186,6 @@ internal object TourBuilder {
             TourRecordingCandidate(
                 id = index,
                 recordingUuid = rec.uuid,
-                startTs = startTs,
                 startMillis = rec.startTimestamp,
                 endTs = endTs,
                 duration = rec.durationMillis / MILLIS_PER_SECOND.toDouble(),

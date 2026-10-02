@@ -18,6 +18,7 @@ import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.domain.Clock
+import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.sensor.fakeStepCounter
 
@@ -65,6 +66,19 @@ class WalkControllerDiscardTest {
 
         assertEquals(WalkState.Idle, controller.state.value)
         assertNull(repository.getWalk(walkId))
+    }
+
+    @Test
+    fun `recordLocation after discardWalk is a no-op and writes no sample`() = runTest {
+        val walkId = controller.startWalk().id
+        controller.recordLocation(LocationPoint(timestamp = 1_100L, latitude = 0.0, longitude = 0.0))
+        assertEquals(1, repository.locationSamplesFor(walkId).size)
+        controller.discardWalk()
+
+        controller.recordLocation(LocationPoint(timestamp = 1_200L, latitude = 0.0, longitude = 0.001))
+
+        assertEquals(WalkState.Idle, controller.state.value)
+        assertTrue(repository.locationSamplesFor(walkId).isEmpty())
     }
 
     @Test

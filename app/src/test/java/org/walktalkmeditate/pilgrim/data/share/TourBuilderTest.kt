@@ -48,7 +48,6 @@ class TourBuilderTest {
     ): TourRecordingCandidate = TourRecordingCandidate(
         id = id,
         recordingUuid = "rec-$id",
-        startTs = startTs,
         startMillis = startTs * 1_000L,
         endTs = startTs + 50L,
         duration = seconds,
@@ -128,7 +127,7 @@ class TourBuilderTest {
     @Test
     fun `tourItems always nulls out transcription`() {
         val withTranscript = TourRecordingCandidate(
-            id = 0, recordingUuid = "rec-0", startTs = 1000L, startMillis = 1_000_000L, endTs = 1060L, duration = 60.0,
+            id = 0, recordingUuid = "rec-0", startMillis = 1_000_000L, endTs = 1060L, duration = 60.0,
             sizeBytes = 1_000_000L,
             transcription = "some real speech", wpm = 120.0, autoKind = TourRecordingKind.SPOKEN,
             includeInShare = true, kindOverride = null, fileRelativePath = "0.m4a", unavailableReason = null,
@@ -157,7 +156,7 @@ class TourBuilderTest {
     @Test
     fun `unavailable candidates never enter the tour`() {
         val removed = TourRecordingCandidate(
-            id = 1, recordingUuid = "rec-1", startTs = 1100L, startMillis = 1_100_000L, endTs = 1150L, duration = 50.0,
+            id = 1, recordingUuid = "rec-1", startMillis = 1_100_000L, endTs = 1150L, duration = 50.0,
             sizeBytes = 0L,
             transcription = "kept transcript", wpm = null, autoKind = TourRecordingKind.SPOKEN,
             includeInShare = false, kindOverride = null, fileRelativePath = null, unavailableReason = "audio removed",

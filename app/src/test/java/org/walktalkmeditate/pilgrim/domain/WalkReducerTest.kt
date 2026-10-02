@@ -198,6 +198,17 @@ class WalkReducerTest {
     }
 
     @Test
+    fun `location sample ignored when idle (after discard)`() {
+        val (next, effect) = WalkReducer.reduce(
+            WalkState.Idle,
+            WalkAction.LocationSampled(LocationPoint(timestamp = 2_000L, latitude = 0.0, longitude = 0.0)),
+        )
+
+        assertSame(WalkState.Idle, next)
+        assertSame(WalkEffect.None, effect)
+    }
+
+    @Test
     fun `start from finished transitions to a fresh active walk`() {
         val finished = WalkState.Finished(
             walk = WalkAccumulator(walkId = 1L, startedAt = 0L, distanceMeters = 1_200.0),

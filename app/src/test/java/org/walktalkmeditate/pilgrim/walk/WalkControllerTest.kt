@@ -125,6 +125,28 @@ class WalkControllerTest {
     }
 
     @Test
+    fun `recordLocation after finishWalk leaves Finished and writes no sample`() = runTest {
+        val walk = controller.startWalk()
+        controller.recordLocation(LocationPoint(timestamp = 1_100L, latitude = 0.0, longitude = 0.0))
+        controller.recordLocation(LocationPoint(timestamp = 1_200L, latitude = 0.0, longitude = 0.001))
+        clock.advanceTo(5_000L)
+        controller.finishWalk()
+        val finished = controller.state.value as WalkState.Finished
+        val samplesAtFinish = repository.locationSamplesFor(walk.id).size
+
+        controller.recordLocation(LocationPoint(timestamp = 5_100L, latitude = 0.0, longitude = 0.002))
+
+        val state = controller.state.value
+        assertTrue("a late sample must not revive the walk, got $state", state is WalkState.Finished)
+        assertEquals(
+            finished.walk.distanceMeters,
+            (state as WalkState.Finished).walk.distanceMeters,
+            0.0,
+        )
+        assertEquals(samplesAtFinish, repository.locationSamplesFor(walk.id).size)
+    }
+
+    @Test
     fun `finishWalk from in-progress emits a WalkEnd bell trigger`() = runTest {
         controller.startWalk()
         clock.advanceTo(5_000L)
