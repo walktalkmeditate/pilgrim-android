@@ -213,6 +213,11 @@ class WayImporterTest {
     }
 
     @Test
+    fun `a route whose length comes out NaN is unavailable, as iOS's greater-or-equal guard refuses it`() {
+        assertRefused(WayError.UNAVAILABLE, minimal(route = route(point(lat = 2.5, lon = 0.0, ts = 1000), point(lat = -2.5, lon = 180.0, ts = 1400))))
+    }
+
+    @Test
     fun `activity segments become spans and unknown kinds are skipped`() {
         val segments = """[{"kind":"talk","start_frac":0.1,"end_frac":0.2},{"kind":"meditation","start_frac":0.5,"end_frac":0.6},{"kind":"dance","start_frac":0.7,"end_frac":0.8}]"""
         val way = build(minimal(route = ROUTE_3, segments = segments, extra = ""","place_start":"A","place_end":"B""""))

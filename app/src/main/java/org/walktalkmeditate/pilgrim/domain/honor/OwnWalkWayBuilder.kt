@@ -124,7 +124,7 @@ object OwnWalkWayBuilder {
             )
         }
         val fullGeometry = WayGeometry(full)
-        if (fullGeometry.totalMeters < MIN_LENGTH_METERS) return null
+        if (!(fullGeometry.totalMeters >= MIN_LENGTH_METERS)) return null
         val route = if (full.size > MAX_ROUTE_POINTS) strideSample(full, MAX_ROUTE_POINTS) else full
 
         // Positions come from the full-resolution samples, before any

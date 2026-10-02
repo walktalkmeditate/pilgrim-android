@@ -1402,4 +1402,13 @@
     <string name="honor_summary_voices" tools:ignore="PluralsCandidate">%1$s voices along the way</string>
     <string name="honor_summary_reply_one">%1$s reply</string>
     <string name="honor_summary_replies" tools:ignore="PluralsCandidate">%1$s replies</string>
+
+    <!-- Phase 21 U31: PilgrimageCopy's lines (pilgrimage-stage spec P1 §1), English
+         Swift literals on iOS, lowercase with no full stop. Disk full is not here:
+         iOS borrows the share importer's honor_import_disk_full, voices and all. -->
+    <string name="pilgrimage_error_not_walkable">this route isn\'t walkable yet</string>
+    <string name="pilgrimage_error_incomplete">the download didn\'t finish</string>
+    <string name="pilgrimage_error_walk_in_progress">finish your walk first</string>
+    <string name="pilgrimage_error_catalog_unreachable">the routes are out of reach right now</string>
+    <string name="pilgrimage_error_map_too_large">more map than can be saved at once</string>
 </resources>
