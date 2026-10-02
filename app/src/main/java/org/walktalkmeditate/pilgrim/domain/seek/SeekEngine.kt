@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import org.walktalkmeditate.pilgrim.domain.ArrivalDebounce
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkState
@@ -144,7 +145,10 @@ class SeekEngine(
     private var graceDeadlineMillis: Long? = null
     private var suspendedGraceRemainingMillis: Long? = null
     private var isSuspended = false
-    private var consecutiveInsideCount = 0
+    private val arrivalDebounce = ArrivalDebounce(
+        requiredFixes = SeekEngineTuning.ARRIVAL_FIX_COUNT,
+        accuracyMeters = SeekEngineTuning.ARRIVAL_ACCURACY_METERS,
+    )
     private var lastCoordinate: SeekPoint? = null
     private val courseSamples = ArrayDeque<CourseSample>()
 
@@ -229,7 +233,7 @@ class SeekEngine(
             remainingBudgetMeters = remainingBudget,
             rng = rng,
         )
-        consecutiveInsideCount = 0
+        arrivalDebounce.reset()
         rerollPulseDistance = _distanceToActiveMeters.value
         _distanceToActiveMeters.value = null
         invalidatePulseTimer()
@@ -305,19 +309,9 @@ class SeekEngine(
         }
     }
 
-    /**
-     * Fixes worse than the accuracy gate neither advance nor reset the
-     * consecutive count — a momentary multipath fix must not erase honest
-     * progress toward arrival, and must never fake it either.
-     */
     private fun updateArrivalDebounce(point: LocationPoint, distance: Double, radius: Double) {
-        val accuracy = point.horizontalAccuracyMeters
-        if (accuracy == null || accuracy < 0 || accuracy > SeekEngineTuning.ARRIVAL_ACCURACY_METERS) {
-            ensurePulseScheduled()
-            return
-        }
-        consecutiveInsideCount = if (distance <= radius) consecutiveInsideCount + 1 else 0
-        if (consecutiveInsideCount >= SeekEngineTuning.ARRIVAL_FIX_COUNT) {
+        val accuracy = point.horizontalAccuracyMeters?.toDouble()
+        if (arrivalDebounce.register(distance = distance, radius = radius, accuracy = accuracy)) {
             transitionToArrived()
         } else {
             ensurePulseScheduled()
@@ -326,7 +320,7 @@ class SeekEngine(
 
     private fun transitionToArrived() {
         _phase.value = SeekEnginePhase.ARRIVED
-        consecutiveInsideCount = 0
+        arrivalDebounce.reset()
         invalidatePulseTimer()
         val baseWindowMillis = stillnessWindowOverrideMillis
             ?: (
@@ -376,7 +370,7 @@ class SeekEngine(
         _phase.value = SeekEnginePhase.GUIDING
         _distanceToActiveMeters.value = null
         rerollPulseDistance = null
-        consecutiveInsideCount = 0
+        arrivalDebounce.reset()
         _events.tryEmit(SeekEngineEvent.RevealedNext(activeIndex = nextIndex))
     }
 
