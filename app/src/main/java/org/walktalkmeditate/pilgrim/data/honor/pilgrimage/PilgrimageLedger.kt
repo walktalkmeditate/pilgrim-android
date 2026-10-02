@@ -303,6 +303,7 @@ class PilgrimageLedgerStore @Inject constructor(private val wayStore: WayStore) 
      * @throws IOException as [save] does.
      */
     fun reconcile(routeId: String, newStages: List<PilgrimageRouteStage>) {
+        if (!hasLedger(routeId)) return
         update(routeId) { current -> current?.reconciled(newStages) }
     }
 
@@ -312,6 +313,7 @@ class PilgrimageLedgerStore @Inject constructor(private val wayStore: WayStore) 
      * @throws IOException as [save] does.
      */
     fun clearRedrawNotice(routeId: String) {
+        if (!hasLedger(routeId)) return
         update(routeId) { current ->
             current?.takeIf { it.redrawNoticePending == true }?.copy(redrawNoticePending = null)
         }
@@ -340,6 +342,13 @@ class PilgrimageLedgerStore @Inject constructor(private val wayStore: WayStore) 
             }
         }
     }
+
+    /**
+     * Whether a ledger file exists, checked before a change that only ever
+     * rewrites one, so it creates no route folder or lock file where iOS
+     * would write nothing (its callers check first).
+     */
+    private fun hasLedger(routeId: String): Boolean = wayStore.ledgerFile(routeId)?.isFile == true
 
     private fun read(file: File): PilgrimageLedger? {
         val text = try {

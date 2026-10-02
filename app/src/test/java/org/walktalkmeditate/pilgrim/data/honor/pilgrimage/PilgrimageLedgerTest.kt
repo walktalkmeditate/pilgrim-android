@@ -306,6 +306,12 @@ class PilgrimageLedgerTest {
         assertEquals(0.2, sameSecond.stages["0"]?.stoppedAtFrac ?: 0.0, 0.0)
         assertEquals("an older walk's: the entry's own", "a", secondBefore.stages["0"]?.name)
         assertEquals(0.5, secondBefore.stages["0"]?.stoppedAtFrac ?: 0.0, 0.0)
+
+        // Only a whole-second rule tells these apart: the entry holds
+        // milliseconds, and an earlier instant in its own second still wins.
+        val withMillis = ledger().recorded(0, "a", 20.0, HonorStageOutcome(0.5, arrived = false), day.plusMillis(900))
+        val earlierInTheSecond = withMillis.recorded(0, "b", 21.0, HonorStageOutcome(0.2, arrived = false), day.plusMillis(100))
+        assertEquals("the same second is never older", "b", earlierInTheSecond.stages["0"]?.name)
     }
 
     @Test
@@ -495,12 +501,15 @@ class PilgrimageLedgerTest {
         assertEquals("no second write", 1_000_000L, ledgerFile.lastModified())
         store.clearRedrawNotice("camino-norte")
         assertFalse(File(dir, "pilgrimage/camino-norte/ledger.json").exists())
+        assertFalse("no folder or lock file where there was no ledger", File(dir, "pilgrimage/camino-norte").exists())
     }
 
     @Test
     fun `an update's reconcile rewrites a ledger on disk, and makes none where there was none`() {
         store.reconcile("camino-frances", listOf(routeStage(0, name = "a", km = 20.0)))
         assertFalse(ledgerFile.exists())
+        store.reconcile("camino-norte", listOf(routeStage(0, name = "a", km = 20.0)))
+        assertFalse("no folder or lock file where there was no ledger", File(dir, "pilgrimage/camino-norte").exists())
 
         store.save(ledger().recorded(0, "a", 20.0, arrived, day))
         store.reconcile("camino-frances", listOf(routeStage(0, name = "a, redrawn", km = 20.0)))
