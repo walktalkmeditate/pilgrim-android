@@ -1205,7 +1205,15 @@ fun WalkSummaryWeatherLine(
     }
 }
 
-private fun formatTemperature(celsius: Double, imperial: Boolean): String {
-    val rounded = if (imperial) celsius * 9.0 / 5.0 + 32.0 else celsius
-    return String.format(Locale.US, "%.0f°%s", rounded, if (imperial) "F" else "C")
+/**
+ * iOS `WeatherSnapshot.formatTemperature(_:imperial:)` (`WeatherService.swift:61-66@7c200bf`):
+ * `%.0f°C`, or `%.0f°F` for an imperial walker. C's `%.0f` rounds the
+ * binary value half to even and keeps a negative zero (9.5 and 10.5 both
+ * print "10", −0.5 prints "-0"); Java's rounds a tie half up, so the value
+ * is rounded first with [Math.rint], which is the same rule. The summary's
+ * line, the prompt's weather and a stage's morning card share it.
+ */
+internal fun formatTemperature(celsius: Double, imperial: Boolean): String {
+    val degrees = if (imperial) celsius * 9.0 / 5.0 + 32.0 else celsius
+    return String.format(Locale.US, "%.0f°%s", Math.rint(degrees), if (imperial) "F" else "C")
 }

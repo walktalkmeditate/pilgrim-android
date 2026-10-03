@@ -22,6 +22,19 @@ interface HonorPreferencesRepository {
      * which is the default until the first read lands.
      */
     suspend fun awaitVoicesEnabled(): Boolean
+
+    /**
+     * iOS `UserPreferences.pilgrimageOfflineNoteShown` (`UserPreferences.swift:79@7c200bf`,
+     * default false): whether a stage's overview has already said its map
+     * tiles need a connection, which it says once per install
+     * (pilgrimage-stage spec P4 §6.4). Awaited for the same reason as
+     * [awaitVoicesEnabled]: a read before DataStore has loaded would be the
+     * default and say the note a second time.
+     */
+    suspend fun awaitPilgrimageOfflineNoteShown(): Boolean
+
+    /** Written the moment the note shows, never at an online opening. */
+    suspend fun setPilgrimageOfflineNoteShown()
 }
 
 /** The long-lived scope behind [HonorPreferencesRepository]'s `stateIn`. */

@@ -2,18 +2,27 @@
 package org.walktalkmeditate.pilgrim.ui.walk
 
 import android.app.Application
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.text.TextLayoutResult
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.domain.honor.WayCoordinate
+import org.walktalkmeditate.pilgrim.domain.honor.WayStage
+import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
+import org.walktalkmeditate.pilgrim.domain.honor.WayStagePlace
+import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -370,5 +379,90 @@ class WalkOptionsSheetTest {
         }
         composeRule.onNodeWithText("Soundscape").performClick()
         assertTrue(fired)
+    }
+
+    // ---- "the day" (pilgrimage-stage spec P5 §10, C12) -------------------
+
+    private fun stage() = WayStage(
+        routeId = "camino-frances", index = 0, count = 33, name = "Saint-Jean-Pied-de-Port to Roncesvalles",
+        theme = "Initiation", narrative = "The Pyrenees are the first question the way asks.",
+        closing = "You crossed a border on foot.", warnings = emptyList(), distanceKm = 24.2, gainMeters = 1419.0,
+        hours = WayStageHours(7.0, 9.0), difficulty = "hard",
+        start = WayStagePlace("Saint-Jean-Pied-de-Port", WayCoordinate(0.0, 0.0)),
+        end = WayStagePlace("Roncesvalles", WayCoordinate(0.0, 0.01)),
+    )
+
+    private fun showStageOptions(beforeStart: Boolean, stageDay: WayStage?, onOpenStageDay: () -> Unit = {}) {
+        composeRule.setContent {
+            PilgrimTheme {
+                WalkOptionsSheet(
+                    canSetIntention = beforeStart,
+                    intention = null,
+                    onSetIntention = {},
+                    waypointCount = 0,
+                    canDropWaypoint = !beforeStart,
+                    onDropWaypoint = {},
+                    onDismiss = {},
+                    stageDay = stageDay,
+                    onOpenStageDay = onOpenStageDay,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `a stage's pre-walk options carry the day, its theme beneath, after Set Intention`() {
+        var opened = false
+        showStageOptions(beforeStart = true, stageDay = stage(), onOpenStageDay = { opened = true })
+
+        val intention = composeRule.onNodeWithText("Set Intention").fetchSemanticsNode().boundsInRoot
+        val day = composeRule.onNodeWithText("the day").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        composeRule.onNodeWithText("Initiation").assertIsDisplayed()
+        assertTrue("after Set Intention", day.top > intention.top)
+        composeRule.onNodeWithText("the day").performClick()
+        assertTrue(opened)
+    }
+
+    @Test
+    fun `a stage's options carry the day mid-walk too, before Drop Waypoint`() {
+        showStageOptions(beforeStart = false, stageDay = stage())
+
+        val day = composeRule.onNodeWithText("the day").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val waypoint = composeRule.onNodeWithText("Drop Waypoint").fetchSemanticsNode().boundsInRoot
+        assertTrue("before Drop Waypoint", day.top < waypoint.top)
+    }
+
+    // iOS's shared `optionRow` (`WalkOptionsSheet.swift:320-325@7c200bf`):
+    // `.lineLimit(1)`, so the dataset's longest theme ends in "…" on one line.
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `a long stage theme stays on one line and ends in an ellipsis`() {
+        val longest = "Nine temples, and a hundred and seventeen metres between the first two"
+        showStageOptions(beforeStart = true, stageDay = stage().copy(theme = longest))
+
+        val layouts = mutableListOf<TextLayoutResult>()
+        // The row is one button, its texts merged; the theme's own layout is in the unmerged tree.
+        composeRule.onNodeWithText(longest, useUnmergedTree = true).fetchSemanticsNode()
+            .config[SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts)
+
+        val layout = layouts.single()
+        assertEquals(1, layout.lineCount)
+        assertTrue("ends in an ellipsis", layout.isLineEllipsized(0))
+    }
+
+    @Test
+    fun `a walk that isn't a stage has no day before Start`() {
+        showStageOptions(beforeStart = true, stageDay = null)
+
+        composeRule.onNodeWithText("Set Intention").assertIsDisplayed()
+        composeRule.onNodeWithText("the day").assertDoesNotExist()
+    }
+
+    @Test
+    fun `a walk that isn't a stage has no day during the walk`() {
+        showStageOptions(beforeStart = false, stageDay = null)
+
+        composeRule.onNodeWithText("Drop Waypoint").assertIsDisplayed()
+        composeRule.onNodeWithText("the day").assertDoesNotExist()
     }
 }

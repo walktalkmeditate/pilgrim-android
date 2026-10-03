@@ -21,8 +21,8 @@ import kotlinx.coroutines.flow.stateIn
 
 /**
  * DataStore-backed [HonorPreferencesRepository], eagerly started so the
- * overview's toggle shows the stored value as it opens. The key is iOS's
- * UserDefaults key verbatim.
+ * overview's toggle shows the stored value as it opens. The keys are iOS's
+ * UserDefaults keys verbatim.
  */
 @Singleton
 class DataStoreHonorPreferencesRepository @Inject constructor(
@@ -30,12 +30,13 @@ class DataStoreHonorPreferencesRepository @Inject constructor(
     @HonorPreferencesScope scope: CoroutineScope,
 ) : HonorPreferencesRepository {
 
-    private val storedVoicesEnabled: Flow<Boolean> = dataStore.data
+    private val stored: Flow<Preferences> = dataStore.data
         .catch { t ->
             Log.w(TAG, "honor preferences read failed; using defaults", t)
             emit(emptyPreferences())
         }
-        .map { it[KEY_HONOR_VOICES_ENABLED] ?: DEFAULT_VOICES_ENABLED }
+
+    private val storedVoicesEnabled: Flow<Boolean> = stored.map { it[KEY_HONOR_VOICES_ENABLED] ?: DEFAULT_VOICES_ENABLED }
 
     override val voicesEnabled: StateFlow<Boolean> = storedVoicesEnabled
         .distinctUntilChanged()
@@ -47,9 +48,17 @@ class DataStoreHonorPreferencesRepository @Inject constructor(
 
     override suspend fun awaitVoicesEnabled(): Boolean = storedVoicesEnabled.first()
 
+    override suspend fun awaitPilgrimageOfflineNoteShown(): Boolean =
+        stored.map { it[KEY_PILGRIMAGE_OFFLINE_NOTE_SHOWN] ?: false }.first()
+
+    override suspend fun setPilgrimageOfflineNoteShown() {
+        dataStore.edit { it[KEY_PILGRIMAGE_OFFLINE_NOTE_SHOWN] = true }
+    }
+
     private companion object {
         const val TAG = "HonorPrefs"
         val KEY_HONOR_VOICES_ENABLED = booleanPreferencesKey("honorVoicesEnabled")
+        val KEY_PILGRIMAGE_OFFLINE_NOTE_SHOWN = booleanPreferencesKey("pilgrimageOfflineNoteShown")
         const val DEFAULT_VOICES_ENABLED = true
     }
 }

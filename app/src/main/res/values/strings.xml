@@ -1465,4 +1465,21 @@
     <string name="pilgrimage_download_first_title">Download this route first?</string>
     <string name="pilgrimage_download_first_message">Its stages have to be on your phone before you can walk one.</string>
     <string name="pilgrimage_not_now">Not now</string>
+
+    <!-- Phase 21 U38: a stage's overview, its morning card, and "the day" (pilgrimage-stage
+         spec P4 §6–§8, §12; P5 §10). English Swift literals on iOS. Counts are Locale.US
+         digits, passed formatted. The card's button face is "walk" or "close"; TalkBack
+         reads its label instead, with an ASCII apostrophe as iOS spells it. The weather
+         is the lower-cased condition, then the temperature in the walker's unit. -->
+    <string name="honor_overview_stage_of">stage %1$s of %2$s</string>
+    <string name="honor_overview_offline_note">map tiles need a connection; the way itself is on your phone.</string>
+    <string name="honor_overview_begin_stage_a11y">Walk this stage</string>
+    <string name="honor_moment_along_the_stage">%1$s along the stage</string>
+    <string name="honor_moment_place_on_the_way">A place on the way.</string>
+    <string name="pilgrimage_morning_walk">walk</string>
+    <string name="pilgrimage_morning_close">close</string>
+    <string name="pilgrimage_morning_walk_a11y">Begin walking this stage</string>
+    <string name="pilgrimage_morning_close_a11y">Close the day\'s words</string>
+    <string name="pilgrimage_morning_weather">%1$s, %2$s</string>
+    <string name="walk_options_the_day">the day</string>
 </resources>

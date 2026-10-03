@@ -20,10 +20,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Signpost
+import androidx.compose.material.icons.outlined.AccountBalance
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Book
 import androidx.compose.material.icons.outlined.Chair
+import androidx.compose.material.icons.outlined.Cottage
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Spa
+import androidx.compose.material.icons.outlined.Verified
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.WbTwilight
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
@@ -98,6 +102,14 @@ internal fun iconKeyToVector(key: String): ImageVector = when (key) {
     // Reserved honor-arrival marker: drawn, never offered as a chip, as
     // Seek's is. Filled, like iOS's "signpost.right.fill".
     HonorPersistence.ARRIVAL_WAYPOINT_ICON -> Icons.Filled.Signpost
+    // A pilgrimage stage's own waypoint icons (`STAGE_MOMENT_ICON_KEYS`,
+    // pilgrimage-stage spec P5 §5.6): drawn on a Way's pins and headers,
+    // never offered as a chip. Outlined, like the unfilled SF names; the
+    // seal is owner decision 10's stand-in.
+    "house.lodge" -> Icons.Outlined.Cottage
+    "seal" -> Icons.Outlined.Verified
+    "building.columns" -> Icons.Outlined.AccountBalance
+    "book.closed" -> Icons.Outlined.Book
     else -> {
         // Unknown SF Symbol key — likely from a future iOS-introduced
         // chip imported via .pilgrim ZIP into a stale Android build.

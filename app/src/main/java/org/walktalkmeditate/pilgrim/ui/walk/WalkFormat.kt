@@ -135,17 +135,12 @@ object WalkFormat {
     }
 
     /**
-     * Temperature formatted in the user's preferred unit system.
+     * Temperature formatted in the user's preferred unit system, as iOS's
+     * `WeatherSnapshot.formatTemperature` prints it (see [formatTemperature]).
      * Metric: `{N}°C`. Imperial: `{N}°F` via `f = c * 9/5 + 32`.
-     * Both round to integer.
      */
-    fun temperature(celsius: Double, units: UnitSystem): String = when (units) {
-        UnitSystem.Metric -> String.format(Locale.US, "%d°C", celsius.roundToInt())
-        UnitSystem.Imperial -> {
-            val f = celsius * 9.0 / 5.0 + 32.0
-            String.format(Locale.US, "%d°F", f.roundToInt())
-        }
-    }
+    fun temperature(celsius: Double, units: UnitSystem): String =
+        formatTemperature(celsius, imperial = units == UnitSystem.Imperial)
 
     /**
      * Compact duration for the time-chip pills. Returns "—" for ≤0,
