@@ -63,6 +63,7 @@ import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPhase
 import org.walktalkmeditate.pilgrim.domain.honor.VoiceKind
 import org.walktalkmeditate.pilgrim.domain.honor.Way
@@ -767,6 +768,36 @@ class HonorWalkViewModelTest {
         vm.playReply(card.moment)
 
         assertEquals(listOf(HonorCommand.PlayReply("voice-1")), sentCommands)
+    }
+
+    // The arrival card's "your reply" on a stage (pilgrimage-stage spec P3 §13.4, P5 §8.3).
+
+    @Test
+    fun `your reply to a stage's closing line leaves as the play-reply command under the reflection's id`() =
+        runTest(dispatcher) {
+            val stageId = "pilgrimage:camino-frances:0"
+            val staged = way(id = stageId, source = WaySource.Pilgrimage("camino-frances", 0), moments = emptyList())
+                .copy(stage = stage())
+            startLiveWalk(way = staged, session = { it.copy(wayId = stageId, sourceKind = HonorSourceKind.PILGRIMAGE) })
+            val vm = viewModel(send = WalkActionPublisher(context)::sendHonorCommand)
+            backgroundScope.launch { vm.state.collect {} }
+            vm.state.awaitValue { it?.session != null }
+
+            vm.playStageReflectionReply()
+
+            assertEquals(listOf(HonorCommand.PlayReply(HonorPersistence.STAGE_REFLECTION_MOMENT_ID)), startedCommandIntents())
+        }
+
+    @Test
+    fun `on a Way that isn't a stage no reflection reply is asked for`() = runTest(dispatcher) {
+        startLiveWalk()
+        val vm = viewModel()
+        backgroundScope.launch { vm.state.collect {} }
+        vm.state.awaitValue { it?.session != null }
+
+        vm.playStageReflectionReply()
+
+        assertEquals(emptyList<HonorCommand>(), sentCommands)
     }
 
     @Test

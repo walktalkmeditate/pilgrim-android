@@ -680,14 +680,22 @@ class HonorSession internal constructor(
          * nor heard. When it ends, the engine gets its turn back.
          */
         private fun planReply(plan: Plan, momentId: String) {
-            val moment = momentsById[momentId] ?: return
-            val n = voiceOriginIndex(moment.id) ?: return
-            val relativePath = wayStore.replies(way.id)[n] ?: return
-            val file = media.recordingFile(relativePath) ?: return
+            val file = earlierReply(momentId) ?: return
             hold.active?.let { plan.endVoice(it, HonorVoiceEnd.INTERRUPTED) }
             plan.stopPlayer()
             hold = hold.released()
             plan.playReply(file)
+        }
+
+        /**
+         * iOS `existingReplyURL(for:)`, and `stageReflectionReplyURL()` for
+         * the reserved id no moment of the Way carries, which plays only on
+         * a stage (P3 §13.4 item 3).
+         */
+        private fun earlierReply(momentId: String): File? {
+            if (momentId == HonorPersistence.STAGE_REFLECTION_MOMENT_ID) return media.stageReflectionReply(way)
+            val n = momentsById[momentId]?.let { voiceOriginIndex(it.id) } ?: return null
+            return wayStore.replies(way.id)[n]?.let(media::recordingFile)
         }
 
         private suspend fun commitAndPerform(plan: Plan) {

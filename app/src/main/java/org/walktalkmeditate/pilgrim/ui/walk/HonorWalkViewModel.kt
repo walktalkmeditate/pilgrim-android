@@ -55,6 +55,7 @@ import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPhase
 import org.walktalkmeditate.pilgrim.domain.honor.HonorTuning
 import org.walktalkmeditate.pilgrim.domain.honor.Way
@@ -534,6 +535,17 @@ class HonorWalkViewModel internal constructor(
      */
     fun playReply(moment: WayMoment) {
         voiceCommand(command = { HonorCommand.PlayReply(moment.id) }, mustPlay = null) { shown, _ -> shown.released() }
+    }
+
+    /**
+     * "your reply" on a stage's arrival card (iOS `playReply(url:)` of
+     * `stageReflectionReplyURL()`, `ActiveWalkView+Honor.swift:62-75@7c200bf`):
+     * the walker's reply to the closing line, through the same command
+     * under the reflection's reserved id. Nothing on a Way that isn't a stage.
+     */
+    fun playStageReflectionReply() {
+        val stage = latestLive?.loaded?.way?.stage ?: return
+        playReply(HonorPersistence.stageReflectionMoment(stage))
     }
 
     private fun voiceCommand(

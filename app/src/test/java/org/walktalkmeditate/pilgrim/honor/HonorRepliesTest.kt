@@ -14,6 +14,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
 import org.walktalkmeditate.pilgrim.domain.honor.VoiceKind
 import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.domain.honor.WayMedia
@@ -112,6 +113,18 @@ class HonorRepliesTest {
         replies.fileIfPending(recording("recordings/w/reply.wav"))
 
         assertEquals(mapOf(2 to "recordings/w/reply.wav"), store.replies(SHARE_WAY_ID))
+    }
+
+    // Pilgrimage-stage spec P3 §13: without the reserved −1 the reply would stay an ordinary take, its origin still armed.
+    @Test
+    fun `a reply to a stage's closing line files under the reserved origin, in its package's folder`() {
+        val stageId = WayStore.stageWayId("camino-frances", 0)
+        store.save(way(OWN_WAY_ID).copy(id = stageId, source = WaySource.Pilgrimage("camino-frances", 0), moments = emptyList()))
+        replies.arm(walkId = WALK, wayId = stageId, momentId = HonorPersistence.STAGE_REFLECTION_MOMENT_ID)
+
+        replies.fileIfPending(recording("recordings/w/reflection.wav"))
+
+        assertEquals(mapOf(-1 to "recordings/w/reflection.wav") to null, store.replies(stageId) to replies.pending.value)
     }
 
     @Test

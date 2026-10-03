@@ -6,6 +6,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import javax.inject.Inject
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
+import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.domain.honor.WayMedia
 import org.walktalkmeditate.pilgrim.domain.honor.WayMoment
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
@@ -37,5 +39,16 @@ class HonorMediaFiles internal constructor(
         val root = filesRoot().canonicalFile
         val file = File(root, relativePath).canonicalFile
         return file.takeIf { it.path.startsWith(root.path + File.separator) && it.isFile }
+    }
+
+    /**
+     * iOS `stageReflectionReplyURL()` (`ActiveWalkViewModel+Replies.swift:59-63@7c200bf`):
+     * the walker's reply to a stage's closing line, from this walk or an
+     * earlier one, filed under the reserved origin. Null on a Way that
+     * isn't a stage, and when the recording is gone.
+     */
+    fun stageReflectionReply(way: Way): File? {
+        if (way.stage == null) return null
+        return wayStore.replies(way.id)[HonorPersistence.STAGE_REFLECTION_ORIGIN]?.let(::recordingFile)
     }
 }

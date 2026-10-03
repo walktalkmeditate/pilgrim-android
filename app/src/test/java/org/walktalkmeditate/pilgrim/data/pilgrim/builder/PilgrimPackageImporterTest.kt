@@ -46,6 +46,7 @@ import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorWalkState
 import org.walktalkmeditate.pilgrim.data.honor.WayLink
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageLedgerStore
 import org.walktalkmeditate.pilgrim.data.pilgrim.FakeArchivedWalkRegistry
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimActivity
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimArchivedWalk
@@ -531,6 +532,37 @@ class PilgrimPackageImporterTest {
         assertEquals(WayLink(HonorWalkState.WAY_ID, 2_400.0, 2_100.0), store.wayLink(uuid))
         assertNotNull(store.load(HonorWalkState.WAY_ID))
         assertEquals(HonorFinishKind.CLEAN, db.honorDao().getMarker(uuid)!!.finishKind)
+        assertNull(db.honorDao().getSession(walkId))
+    }
+
+    // Pilgrimage-stage spec P2 C-11: the importer's pre-finalize is a ledger writer, through the finalizer's locked record.
+    @Test
+    fun `a pending stage walk's Honor step runs before the strip, so its stage reaches the ledger first`() = runBlocking {
+        val store = WayStore({ File(tempDir, "Ways") })
+        val uuid = UUID.randomUUID().toString()
+        val walkId = db.walkDao().insert(Walk(uuid = uuid, startTimestamp = 1_000L, endTimestamp = 3_601_000L))
+        db.honorDao().insertSession(
+            HonorSessionEntity(
+                walkId = walkId,
+                wayId = WayStore.stageWayId("camino-frances", 4),
+                sourceKind = HonorSourceKind.PILGRIMAGE,
+                voicesEnabled = false,
+                softTapEnabled = false,
+                startFrac = 0.1,
+                progressFrac = 0.5,
+                finishKind = HonorFinishKind.CLEAN,
+                stageRouteId = "camino-frances",
+                stageIndex = 4,
+                stageName = "Larrasoaña to Pamplona",
+                stageDistanceKm = 15.6,
+            ),
+        )
+        val importer = importerWithFinalizer(store, HonorFinalizer(db, store, Clock { 5_000L }, Dispatchers.IO))
+
+        importer.import(buildArchive(tended = false, walks = emptyMap(), archived = listOf(archivedEntry(uuid))))
+
+        assertEquals(0.5, PilgrimageLedgerStore(store).load("camino-frances")!!.stages["4"]!!.stoppedAtFrac!!, 0.0)
+        assertNotNull(db.honorDao().getMarker(uuid))
         assertNull(db.honorDao().getSession(walkId))
     }
 
