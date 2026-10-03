@@ -132,7 +132,7 @@ fun HonorOverviewScreen(
                     units = units,
                     voicesEnabled = voicesEnabled,
                     onVoicesEnabledChange = viewModel::setVoicesEnabled,
-                    onBegin = { onBegin(overview.choice) },
+                    onBegin = { onBegin(viewModel.begin()) },
                     importState = importState,
                     onRetryMedia = viewModel::retryMedia,
                     onWalkWithoutMissing = viewModel::walkWithoutMissingVoices,

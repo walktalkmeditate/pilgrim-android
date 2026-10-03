@@ -75,6 +75,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayPoint
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.domain.wgs84MidLatitudeMeters
 import org.walktalkmeditate.pilgrim.honor.HonorReplies
+import org.walktalkmeditate.pilgrim.honor.HonorStageHandoff
 import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.honor.OwnWalkWays
 import org.walktalkmeditate.pilgrim.service.WalkTrackingService
@@ -88,6 +89,7 @@ import org.walktalkmeditate.pilgrim.walk.BellTrigger
 import org.walktalkmeditate.pilgrim.walk.WalkActionPublisher
 import org.walktalkmeditate.pilgrim.walk.WalkController
 import org.walktalkmeditate.pilgrim.walk.honor.HonorCommand
+import org.walktalkmeditate.pilgrim.walk.honor.HonorHarness
 import org.walktalkmeditate.pilgrim.walk.honor.HonorMediaFiles
 
 /**
@@ -169,6 +171,19 @@ class HonorWalkViewModelTest {
         assertEquals(SHARE_WAY_ID to listOf("voice-1", "photo-1"), state.line.wayId to state.pins.map { it.momentId })
         assertNull(state.session)
     }
+
+    // Owner decision 2: the pre-walk screen draws the copy Start will stage.
+    @Test
+    fun `before Start the pre-walk screen draws the stage its overview handed over, not the package redrawn since`() =
+        runTest(dispatcher) {
+            val atTheDoor = HonorHarness.stage()
+            store.save(HonorHarness.stage(marks = emptyList(), title = "Larrasoaña to Pamplona, redrawn"))
+            val vm = viewModel(stageHandoff = HonorStageHandoff().apply { hand(atTheDoor) })
+
+            vm.showWay(HonorWayChoice.Stored(HonorHarness.STAGE_ID))
+
+            assertEquals(atTheDoor, vm.state.awaitValue { it != null }!!.way)
+        }
 
     @Test
     fun `a listed Way gone from the store draws nothing before Start`() = runTest(dispatcher) {
@@ -1118,6 +1133,7 @@ class HonorWalkViewModelTest {
     private fun viewModel(
         honorEnabled: Boolean = true,
         send: (HonorCommand) -> Unit = { sentCommands += it },
+        stageHandoff: HonorStageHandoff = HonorStageHandoff(),
     ) = HonorWalkViewModel(
         controller = controller,
         honorDao = db.honorDao(),
@@ -1133,6 +1149,7 @@ class HonorWalkViewModelTest {
         ioDispatcher = dispatcher,
         tickMillis = 1_000L,
         loadWaveform = { FloatArray(150) { 0.5f } },
+        stageHandoff = stageHandoff,
     ).also { viewModels += it }
 
     private val sentCommands = mutableListOf<HonorCommand>()

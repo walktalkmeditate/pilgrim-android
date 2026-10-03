@@ -219,6 +219,8 @@ class UiAudioGateRevivalTest {
         override fun waterAhead() = Unit
 
         override fun arrival() = Unit
+
+        override val arrivalMillis = 0L
     }
 
     private companion object {

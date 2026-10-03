@@ -75,6 +75,14 @@ class HonorHapticsTest {
     }
 
     @Test
+    fun `arrival's length is its waveform's, three 30 ms taps with their onsets 160 and 180 ms apart`() {
+        haptics.arrival()
+
+        assertEquals(370L, haptics.arrivalMillis)
+        assertEquals(haptics.arrivalMillis, shadowOf(vibrator).pattern.sum())
+    }
+
+    @Test
     fun `water ahead is one soft tick at the whisper's intensity`() {
         supportPrimitives()
 

@@ -39,6 +39,8 @@ class HonorHaptics @Inject constructor(
 
     override fun arrival() = seekHaptics.arrival()
 
+    override val arrivalMillis: Long = ARRIVAL_MILLIS
+
     /** One tap: the primitive where the device has it, else a 30 ms one-shot at the same strength. */
     private fun impact(impact: Impact) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -87,5 +89,13 @@ class HonorHaptics @Inject constructor(
 
         /** The BellPlayer and Seek one-shot length. */
         const val TAP_MS = 30L
+
+        /**
+         * Seek's arrival, onsets at 0, 160 and 340 ms, to the end of its
+         * last tap: the waveform's 30 ms one, the longer of its two
+         * renderings (a primitive tick is shorter).
+         */
+        const val ARRIVAL_MILLIS =
+            SeekHaptics.ARRIVAL_GAP_FIRST_MS + SeekHaptics.ARRIVAL_GAP_SECOND_MS + SeekHaptics.TAP_MS
     }
 }

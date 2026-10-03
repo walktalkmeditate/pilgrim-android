@@ -95,8 +95,9 @@ interface HonorArrivalRecorder {
  * - **Persist before ritual.** Each engine call's state and every row its
  *   events change commit in one transaction that first re-checks the walk
  *   is unfinished; only then do sounds, haptics, and arrival run, in the
- *   events' order. A refused commit ends the session, so no Honor row
- *   lands after finalize. The UI draws cards from those rows.
+ *   events' order, a single tap after a won arrival waiting out arrival's
+ *   pattern. A refused commit ends the session, so no Honor row lands
+ *   after finalize. The UI draws cards from those rows.
  */
 @Singleton
 class HonorSession internal constructor(
@@ -237,6 +238,17 @@ class HonorSession internal constructor(
         }
     }
 
+    /**
+     * An own walk and a stage follow the copy staged under the walk at
+     * Begin. A stage whose staged copy is missing falls back to its
+     * package's `way.json`, and the fracs and fired marks a revival restores
+     * still fit it: the package guard refuses every package change from the
+     * walk screen's opening on, and while this session's live row exists
+     * (pilgrimage-stage spec P2 §2, A-1), so the package holds still under
+     * the walk. Only a commit already past its check when Begin opened the
+     * walk screen can still land, about a second later (P2 §10 item 9), and
+     * it matters here only on top of a lost staging file.
+     */
     private suspend fun prepare(walkId: Long): Prepared {
         val dao = database.honorDao()
         val session = dao.getSession(walkId) ?: return Prepared.Done(HonorSessionStart.NotHonor)
@@ -328,6 +340,7 @@ class HonorSession internal constructor(
     ) {
         val walkId = prepared.walkId
         val inputs = Channel<Input>(Channel.UNLIMITED)
+        private val scope = CoroutineScope(job + sessionDispatcher)
         private val way = prepared.way
         private val engine = prepared.engine
         private val rows = prepared.rows
@@ -353,7 +366,6 @@ class HonorSession internal constructor(
             private set
 
         fun launch(initialFix: LocationPoint?) {
-            val scope = CoroutineScope(job + sessionDispatcher)
             inputs.trySend(Input.Begin(initialFix))
             scope.launch { consume() }
             scope.launch { walkState.collect { inputs.trySend(Input.Sync) } }
@@ -736,6 +748,7 @@ class HonorSession internal constructor(
         }
 
         private suspend fun perform(rituals: List<Ritual>) {
+            var arrivalPlayed = false
             for (ritual in rituals) {
                 when (ritual) {
                     is Ritual.Play -> voice.play(ritual.file, ritual.gain, Listener(ritual.token, ritual.byEngine))
@@ -753,9 +766,9 @@ class HonorSession internal constructor(
                         ducked = false
                         duck.restoreAfterWayVoice()
                     }
-                    Ritual.MomentHaptic -> haptics.momentReached()
-                    Ritual.SoftTapHaptic -> haptics.softTap()
-                    Ritual.WaterHaptic -> haptics.waterAhead()
+                    Ritual.MomentHaptic -> tap(afterArrival = arrivalPlayed, haptics::momentReached)
+                    Ritual.SoftTapHaptic -> tap(afterArrival = arrivalPlayed, haptics::softTap)
+                    Ritual.WaterHaptic -> tap(afterArrival = arrivalPlayed, haptics::waterAhead)
                     is Ritual.Arrive -> {
                         val won = arrivalRecorder.recordHonorArrival(
                             walkId = walkId,
@@ -764,8 +777,28 @@ class HonorSession internal constructor(
                             waypointLabel = arrivalLabel(way.title),
                             at = ritual.at,
                         )
-                        if (won) haptics.arrival()
+                        if (won) {
+                            haptics.arrival()
+                            arrivalPlayed = true
+                        }
                     }
+                }
+            }
+        }
+
+        /**
+         * A single tap after arrival's three in the same step waits for them
+         * to end, so both are felt, as iOS layers them; it is lost if the
+         * session ends first.
+         */
+        private fun tap(afterArrival: Boolean, play: () -> Unit) {
+            if (!afterArrival) return play()
+            scope.launch {
+                delay(haptics.arrivalMillis)
+                try {
+                    play()
+                } catch (e: RuntimeException) {
+                    Log.w(TAG, "walk $walkId: a tap after arrival failed: ${e::class.simpleName}")
                 }
             }
         }

@@ -459,7 +459,11 @@ class HonorMomentTrackerTest {
     fun `a restored null clock leaves the first notice free`() {
         val t = markTracker(water("a", frac = 0.5))
         t.restore(HonorMomentTracker.Snapshot(emptySet(), emptyList(), emptySet(), lastNoticeSeconds = null))
-        assertEquals(listOf("a"), markAhead(t.waterAt(250.0, progress = 0.25, clock = 7_200.0)))
+        assertEquals(
+            "a minute in: a clock restored as 0 would still be inside its hour",
+            listOf("a"),
+            markAhead(t.waterAt(250.0, progress = 0.25, clock = 60.0)),
+        )
     }
 
     @Test

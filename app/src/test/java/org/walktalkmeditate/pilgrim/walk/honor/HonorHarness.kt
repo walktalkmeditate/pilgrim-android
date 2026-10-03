@@ -8,6 +8,7 @@ import java.io.File
 import java.time.Instant
 import java.util.Collections
 import java.util.UUID
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -82,6 +83,7 @@ internal class HonorHarness(private val folder: File) {
         ports: FakePorts = FakePorts(),
         honorEnabled: Boolean = true,
         arrivalRecorder: HonorArrivalRecorder = controller,
+        sessionDispatcher: CoroutineDispatcher = Dispatchers.IO,
     ) = HonorSession(
         database = db,
         wayStore = store,
@@ -94,7 +96,7 @@ internal class HonorHarness(private val folder: File) {
         releaseFlags = FixedReleaseFlags(honor = honorEnabled),
         clock = clock,
         arrivalLabel = { title -> "Walked their way: $title" },
-        sessionDispatcher = Dispatchers.IO,
+        sessionDispatcher = sessionDispatcher,
         tickMillis = 0,
     )
 
@@ -231,6 +233,9 @@ internal class FakePorts {
     /** Runs inside [HonorHapticsPort.waterAhead]: what the rows say as the water haptic plays. */
     var onWaterAhead: () -> Unit = {}
 
+    /** Runs as each haptic plays, with the name its call line carries ("water", "arrival", …). */
+    var onHaptic: (String) -> Unit = {}
+
     val voice = object : WayVoicePort {
         override fun play(file: File, gain: Float, listener: WayVoiceListener) {
             onPlay(file)
@@ -275,22 +280,23 @@ internal class FakePorts {
     }
 
     val haptics = object : HonorHapticsPort {
-        override fun momentReached() {
-            calls += "haptic moment"
-        }
+        override fun momentReached() = haptic("moment")
 
-        override fun softTap() {
-            calls += "haptic softTap"
-        }
+        override fun softTap() = haptic("softTap")
 
         override fun waterAhead() {
             onWaterAhead()
-            calls += "haptic water"
+            haptic("water")
         }
 
-        override fun arrival() {
-            calls += "haptic arrival"
-        }
+        override fun arrival() = haptic("arrival")
+
+        override val arrivalMillis = ARRIVAL_MILLIS
+    }
+
+    private fun haptic(name: String) {
+        onHaptic(name)
+        calls += "haptic $name"
     }
 
     val gates = object : HonorGatePort {
@@ -312,4 +318,9 @@ internal class FakePorts {
     }
 
     fun clear() = calls.clear()
+
+    companion object {
+        /** The fake arrival's length, as long as the real one's. */
+        const val ARRIVAL_MILLIS = 370L
+    }
 }
