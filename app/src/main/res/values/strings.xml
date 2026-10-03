@@ -1425,4 +1425,44 @@
          Remove the catalog entry's; each asks with its own verb. -->
     <string name="pilgrimage_replace_confirmation">Replace the %1$s? Its stages leave your phone; what you\'ve walked of it is remembered if it comes back. Walks in your journal stay.</string>
     <string name="pilgrimage_remove_confirmation">Remove the %1$s? Its stages leave your phone; what you\'ve walked of it is remembered if it comes back. Walks in your journal stay.</string>
+
+    <!-- Phase 21 U37: the third door, the catalog and the route page (pilgrimage-stage
+         spec P4 §2–§5, §12). English Swift literals on iOS with no Localizable.strings
+         entry. Counts are Locale.US digits, passed formatted; "hours" never singular,
+         as iOS ships it (pilgrim-ios #122 item 7, matched). The badge words are
+         TalkBack labels only, never drawn. "ellipsis" is the overflow glyph's spoken
+         name, the house stand-in for an unlabelled SF symbol (pilgrim-ios #108). -->
+    <string name="honor_ways_pilgrimage_header">A pilgrimage</string>
+    <string name="honor_ways_pilgrimage_row">Walk a pilgrimage</string>
+    <string name="honor_ways_pilgrimage_footer">A route from the open-pilgrimages dataset, walked one stage at a time.</string>
+    <string name="pilgrimage_catalog_title">Pilgrimages</string>
+    <string name="pilgrimage_badge_update_ready">update ready</string>
+    <string name="pilgrimage_badge_on_your_phone">on your phone</string>
+    <string name="pilgrimage_sparse_note">few places marked yet</string>
+    <string name="pilgrimage_facts_gain">%1$s up</string>
+    <string name="pilgrimage_facts_hours" tools:ignore="PluralsCandidate">%1$s hours</string>
+    <string name="pilgrimage_facts_hours_range">%1$s to %2$s hours</string>
+    <string name="pilgrimage_route_download">Download</string>
+    <string name="pilgrimage_route_update">Update</string>
+    <string name="pilgrimage_route_on_your_phone">On your phone</string>
+    <string name="pilgrimage_route_progress">stage %1$s of %2$s</string>
+    <string name="pilgrimage_route_redraw_notice">the route\'s stages were redrawn; your kilometres are kept.</string>
+    <string name="pilgrimage_route_summary_fallback">%1$s · %2$s</string>
+    <string name="pilgrimage_next_start">start with stage 1</string>
+    <string name="pilgrimage_next_stage">next: stage %1$s</string>
+    <string name="pilgrimage_next_continue">continue from where you stopped</string>
+    <string name="pilgrimage_next_whole_way">you have walked the whole way</string>
+    <string name="pilgrimage_route_stages_header">Stages</string>
+    <string name="pilgrimage_route_stage_title">%1$s. %2$s</string>
+    <string name="pilgrimage_route_reaching">reaching for the stages…</string>
+    <string name="pilgrimage_route_more_a11y">ellipsis</string>
+    <string name="pilgrimage_route_remove">Remove</string>
+    <string name="pilgrimage_replace_title">Replace?</string>
+    <string name="pilgrimage_replace">Replace</string>
+    <!-- iOS's `installed?.route.name ?? "route"`, when the installed route's name can't be read. -->
+    <string name="pilgrimage_replace_fallback_name">route</string>
+    <string name="pilgrimage_remove_title">Remove?</string>
+    <string name="pilgrimage_download_first_title">Download this route first?</string>
+    <string name="pilgrimage_download_first_message">Its stages have to be on your phone before you can walk one.</string>
+    <string name="pilgrimage_not_now">Not now</string>
 </resources>
