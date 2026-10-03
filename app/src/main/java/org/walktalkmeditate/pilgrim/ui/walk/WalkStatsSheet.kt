@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.walk
 
 import android.Manifest
+import android.content.res.Resources
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -58,6 +59,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -81,6 +83,7 @@ import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.isInProgress
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.ui.honor.ListeningChip
+import org.walktalkmeditate.pilgrim.ui.honor.WayRelation
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
@@ -415,6 +418,23 @@ private fun MinimizedContent(
     }
 }
 
+/** The caption line's words, written when drawn, in the walker's unit at that moment (Annex A.11 item 3). */
+internal object HonorCaptionCopy {
+
+    /**
+     * "off the way · N m", always metres (pilgrim-ios #109, matched), or
+     * "water in 280 m" / "water in 0.2 mi" as iOS's `WayDistance` writes
+     * it, a non-finite or negative distance reading 0.
+     */
+    fun text(resources: Resources, caption: HonorCaption, units: UnitSystem): String = when (caption) {
+        is HonorCaption.OffWay -> resources.getString(R.string.honor_soft_tap_caption, caption.meters.toString())
+        is HonorCaption.Water -> resources.getString(
+            R.string.honor_water_caption,
+            WayRelation.distance(if (caption.meters.isFinite()) caption.meters else 0.0, units),
+        )
+    }
+}
+
 /**
  * iOS's minimized bar on an honor walk (`WalkStatsSheet.swift:328-449@7c200bf`):
  * the listening chip above the stats while a Way voice is held, else the
@@ -439,7 +459,7 @@ private fun HonorMinimizedContent(
     val distance = WalkFormat.distance(distanceMeters, units)
     val remaining = honor.remainingMeters?.let { WalkFormat.distance(it, units) }
         ?: stringResource(R.string.honor_stat_remaining_unknown)
-    val caption = honor.softTapMeters?.let { stringResource(R.string.honor_soft_tap_caption, it.toString()) }
+    val caption = honor.caption?.let { HonorCaptionCopy.text(LocalResources.current, it, units) }
     val third = caption ?: stringResource(R.string.honor_stats_a11y_remaining, remaining)
     val stats = stringResource(R.string.honor_stats_a11y_value, duration, distance, third)
     val value = intention?.takeIf { it.isNotEmpty() }

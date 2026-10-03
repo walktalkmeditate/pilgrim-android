@@ -37,6 +37,7 @@ import org.walktalkmeditate.pilgrim.data.weather.WeatherFetching
 import org.walktalkmeditate.pilgrim.data.weather.WeatherSnapshot
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.honor.Way
+import org.walktalkmeditate.pilgrim.domain.honor.WayCoordinate
 import org.walktalkmeditate.pilgrim.domain.honor.WayMedia
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
@@ -50,6 +51,8 @@ import org.walktalkmeditate.pilgrim.ui.recordings.WaveformCache
 import org.walktalkmeditate.pilgrim.ui.recordings.WaveformLoader
 import org.walktalkmeditate.pilgrim.ui.recordings.nextPlaybackSpeed
 import org.walktalkmeditate.pilgrim.ui.walk.map.HonorWayLine
+import org.walktalkmeditate.pilgrim.ui.walk.map.WayMarkPin
+import org.walktalkmeditate.pilgrim.ui.walk.map.WayMarkPins
 import org.walktalkmeditate.pilgrim.ui.walk.map.WayPin
 import org.walktalkmeditate.pilgrim.ui.walk.map.wayPins
 import org.walktalkmeditate.pilgrim.ui.walk.summary.MapCameraBounds
@@ -186,6 +189,21 @@ class HonorOverviewViewModel internal constructor(
     /** Waveform samples by [PreviewVoice.playbackId], read off the main thread once a preview opens. */
     val waveforms: StateFlow<Map<Long, FloatArray>> = _waveforms.asStateFlow()
 
+    /** Where the map's camera is, as it last reported; null until the first report. */
+    private var liveCamera: Pair<WayCoordinate, Double>? = null
+
+    private val _markPins = MutableStateFlow<List<WayMarkPin>>(emptyList())
+
+    /**
+     * A stage's service marks on the overview (iOS `refreshMarkPins()`,
+     * `HonorOverviewView.swift:356-362@7c200bf`, pilgrimage-stage spec P5
+     * §3): none until the map first reports its camera, since the screen
+     * opens fit to the whole Way, a zoom it never chose; then the 40 nearest
+     * the camera's centre from zoom 13, chosen again at every report, a pan
+     * of 200 m included.
+     */
+    val markPins: StateFlow<List<WayMarkPin>> = _markPins.asStateFlow()
+
     init {
         viewModelScope.launch { load() }
     }
@@ -216,6 +234,7 @@ class HonorOverviewViewModel internal constructor(
                 photoUris = photos,
             ),
         )
+        refreshMarkPins()
         if (way.source is WaySource.Share) followLandingMedia(way)
         if (way.isPilgrimageStage) sayOfflineNoteOnce()
         val here = awaitLastKnownFix() ?: return
@@ -284,6 +303,21 @@ class HonorOverviewViewModel internal constructor(
     /** "walk without the missing voices": the line and both buttons go; Begin was enabled all along. */
     fun walkWithoutMissingVoices() {
         imports.walkWithoutMissingVoices()
+    }
+
+    /** iOS's `onCameraChanged`: the camera as the map's report throttle lets it through. */
+    fun onCameraChanged(center: WayCoordinate, zoom: Double) {
+        liveCamera = center to zoom
+        refreshMarkPins()
+    }
+
+    private fun refreshMarkPins() {
+        val (center, zoom) = liveCamera ?: run {
+            _markPins.value = emptyList()
+            return
+        }
+        val way = (_state.value as? HonorOverviewUiState.Ready)?.overview?.way
+        _markPins.value = WayMarkPins.pins(way?.marks.orEmpty(), zoom, center)
     }
 
     /** The preview showing now. */

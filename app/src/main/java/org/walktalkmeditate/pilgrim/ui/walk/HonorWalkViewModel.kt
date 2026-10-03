@@ -46,6 +46,8 @@ import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.honor.HonorCardStateEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorDao
 import org.walktalkmeditate.pilgrim.data.honor.HonorMomentStateEntity
+import org.walktalkmeditate.pilgrim.data.honor.HonorNoticeEntity
+import org.walktalkmeditate.pilgrim.data.honor.HonorNoticeKind
 import org.walktalkmeditate.pilgrim.data.honor.dismissedAt
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
@@ -61,6 +63,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.HonorTuning
 import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.domain.honor.WayCoordinate
 import org.walktalkmeditate.pilgrim.domain.honor.WayGeometry
+import org.walktalkmeditate.pilgrim.domain.honor.WayMark
 import org.walktalkmeditate.pilgrim.domain.honor.WayMedia
 import org.walktalkmeditate.pilgrim.domain.honor.WayMoment
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
@@ -85,6 +88,8 @@ import org.walktalkmeditate.pilgrim.ui.honor.heldOver
 import org.walktalkmeditate.pilgrim.ui.honor.softTapCaptionMeters
 import org.walktalkmeditate.pilgrim.ui.honor.voiceDurationSeconds
 import org.walktalkmeditate.pilgrim.ui.walk.map.HonorWayLine
+import org.walktalkmeditate.pilgrim.ui.walk.map.WalkMarkSelection
+import org.walktalkmeditate.pilgrim.ui.walk.map.WayMarkPin
 import org.walktalkmeditate.pilgrim.ui.walk.map.WayPin
 import org.walktalkmeditate.pilgrim.ui.walk.map.wayPins
 import org.walktalkmeditate.pilgrim.walk.WalkActionPublisher
@@ -182,6 +187,8 @@ data class HonorCardsUi(
     val wayId: String,
     val arrival: HonorArrivalSummary?,
     val place: HonorPlaceCard?,
+    /** A stage's arrival card: the walker's reply to its closing line is on the phone, from this walk or an earlier one. */
+    val hasStageReply: Boolean = false,
 ) {
     /** iOS `isShowingHonorCard`: with neither, every touch belongs to the map. */
     val isShowingCard: Boolean get() = arrival != null || place != null
@@ -191,13 +198,29 @@ data class HonorCardsUi(
 @Immutable
 data class HonorListening(val elapsedSeconds: Double, val paused: Boolean)
 
+/**
+ * The walk screen's one caption line, in the minimized bar's third stat for
+ * 20 s (iOS `softTapCaption`; pilgrimage-stage spec P3 §7, P5 §6). A model
+ * rather than a string, so iOS PR #91's temple notice adds a case (Annex
+ * A.4.2); the sheet writes the words when it draws them.
+ */
+sealed interface HonorCaption {
+    /** The soft tap's "off the way · N m", always metres (pilgrim-ios #109, matched); dark while nothing sets the preference. */
+    @Immutable
+    data class OffWay(val meters: Long) : HonorCaption
+
+    /** A stage's "water in <distance>", in the walker's unit, as the engine measured it along the line. */
+    @Immutable
+    data class Water(val meters: Double) : HonorCaption
+}
+
 /** The minimized sheet's Honor parts (parity spec E §10). */
 @Immutable
 data class HonorSheetStats(
     /** The Way's distance left; null before Begin, which reads "--". */
     val remainingMeters: Double?,
-    /** The soft tap's caption, borrowing the stat's slot for 20 s; dark while nothing sets the preference (pilgrim-ios #109). */
-    val softTapMeters: Long?,
+    /** Water's while it shows, else the soft tap's; a stage has no soft tap, so they never meet. */
+    val caption: HonorCaption?,
     val listening: HonorListening?,
 )
 
@@ -359,20 +382,21 @@ class HonorWalkViewModel internal constructor(
         val placement = combine(here(), headingFlow(), _focus, touches) { here, heading, focus, touches ->
             Placement(here, heading, focus, touches)
         }
-        combine(live, queue, voiceNow, mediaFlow(), placement) { live, queue, voice, media, placement ->
-            live?.let { cardsUi(it, queue, voice, media, placement) }
+        val files = combine(mediaFlow(), stageReplyFlow()) { media, stageReply -> CardFiles(media, stageReply) }
+        combine(live, queue, voiceNow, files, placement) { live, queue, voice, files, placement ->
+            live?.let { cardsUi(it, queue, voice, files, placement) }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS), null)
     }
 
-    /** The minimized sheet's Remaining stat, soft-tap caption, and listening chip on an honor walk screen. */
+    /** The minimized sheet's Remaining stat, caption, and listening chip on an honor walk screen. */
     val sheet: StateFlow<HonorSheetStats?> = if (!enabled) {
         MutableStateFlow(null)
     } else {
-        combine(state, live, voiceNow, softTapMeters()) { state, live, voice, softTap ->
+        combine(state, live, voiceNow, softTapMeters(), waterCaption()) { state, live, voice, softTap, water ->
             if (state == null) return@combine null
             HonorSheetStats(
                 remainingMeters = live?.let { (1 - it.session.progressFrac) * it.loaded.geometry.totalMeters },
-                softTapMeters = softTap,
+                caption = water ?: softTap?.let(HonorCaption::OffWay),
                 listening = voice?.view?.takeIf { it.playingMomentId != null }
                     ?.let { HonorListening(elapsedSeconds = voice.elapsedSeconds, paused = it.paused) },
             )
@@ -385,6 +409,35 @@ class HonorWalkViewModel internal constructor(
     } else {
         combine(replies.pending, live) { pending, live -> pending?.takeIf { it.walkId == live?.walkId }?.momentId }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS), null)
+    }
+
+    // The marks' state, touched only on the main thread: the map's camera
+    // callbacks and this model's collectors both run there. It outlives a
+    // backgrounded screen's unsubscribing, as iOS's view model keeps it.
+    private val markSelection = WalkMarkSelection()
+    private val _marks = MutableStateFlow<List<WayMarkPin>>(emptyList())
+    private var markWayMarks: List<WayMark>? = null
+    private var markWalkId: Long? = null
+    private var marksApplied = false
+
+    /**
+     * A stage's service marks on the walk map (iOS
+     * `ActiveWalkViewModel+MarkPins`, pilgrimage-stage spec P5 §2): the 40
+     * nearest the walker from zoom 13, chosen again once a fix lands 200 m
+     * from the one they were chosen at, or when the camera crosses a whole
+     * zoom level; a pan never chooses them again. Start lets go of the
+     * last anchor and the walk's first recorded fix takes it, the camera's
+     * centre standing in until then (P5 A1). Before Start a level change
+     * draws them around the camera, as iOS's does (P5 C2, pilgrim-ios #123).
+     * Published only when they change; a Way without marks publishes none.
+     */
+    val marks: StateFlow<List<WayMarkPin>> = if (!enabled) {
+        MutableStateFlow(emptyList())
+    } else {
+        channelFlow {
+            launch { driveMarks() }
+            _marks.collect { send(it) }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS), emptyList())
     }
 
     /**
@@ -406,6 +459,16 @@ class HonorWalkViewModel internal constructor(
                 HonorWalkUiState(way, HonorWayLine.of(way), wayPins(way, heardVoiceIds = emptySet()), session = null)
             }
         }
+    }
+
+    /**
+     * iOS `mapCameraDidChange(center:zoom:)` (`ActiveWalkViewModel+MarkPins.swift:36-44@7c200bf`):
+     * the map's camera, as its report throttle lets it through. The marks
+     * are chosen again only when the zoom crosses a whole level.
+     */
+    fun onCameraChanged(center: WayCoordinate, zoom: Double) {
+        if (!enabled) return
+        if (markSelection.onCamera(center, zoom)) applyMarks()
     }
 
     /**
@@ -725,15 +788,36 @@ class HonorWalkViewModel internal constructor(
      * (`ActiveWalkViewModel.swift:600-603@7c200bf`).
      */
     private fun mediaFlow(): Flow<HonorCardMedia?> {
-        val recordingCounts = live.map { it?.walkId }.distinctUntilChanged().flatMapLatest { walkId ->
-            if (walkId == null) flowOf(0) else repository.observeVoiceRecordings(walkId).map { it.size }
-        }.distinctUntilChanged()
+        val recordingCounts = recordingCounts()
         val tops = combine(live.map { it?.loaded }.distinctUntilChanged { a, b -> a === b }, queue.map { it?.top }) { loaded, top ->
             loaded?.let { l -> top?.let { id -> l.way.moments.firstOrNull { it.id == id } }?.let { l.way to it } }
         }.distinctUntilChanged { a, b -> a?.first === b?.first && a?.second?.id == b?.second?.id }
         return combine(tops, recordingCounts, replies.filed) { top, _, _ -> top }
             .mapLatest { top -> top?.let { (way, moment) -> withContext(ioDispatcher) { resolveMedia(way, moment) } } }
             .onStart { emit(null) }
+    }
+
+    private fun recordingCounts(): Flow<Int> =
+        live.map { it?.walkId }.distinctUntilChanged().flatMapLatest { walkId ->
+            if (walkId == null) flowOf(0) else repository.observeVoiceRecordings(walkId).map { it.size }
+        }.distinctUntilChanged()
+
+    /**
+     * iOS `stageReflectionReplyURL()` behind the arrival card's reply row
+     * (`ActiveWalkView+Honor.swift:62-75@7c200bf`, P5 §8.3): whether the
+     * walker's reply to the stage's closing line is on the phone, from this
+     * walk or an earlier one, read again as the card appears and after each
+     * saved recording and each reply filed. Always false on a Way that
+     * isn't a stage, and before arrival.
+     */
+    private fun stageReplyFlow(): Flow<Boolean> {
+        val arrivedStage = live
+            .map { live -> live?.loaded?.way?.takeIf { it.isPilgrimageStage && live.session.phase == HonorPhase.ARRIVED } }
+            .distinctUntilChanged { a, b -> a === b }
+        return combine(arrivedStage, recordingCounts(), replies.filed) { way, _, _ -> way }
+            .mapLatest { way -> way != null && withContext(ioDispatcher) { mediaFiles.stageReflectionReply(way) } != null }
+            .onStart { emit(false) }
+            .distinctUntilChanged()
     }
 
     private suspend fun resolveMedia(way: Way, moment: WayMoment): HonorCardMedia {
@@ -762,15 +846,16 @@ class HonorWalkViewModel internal constructor(
         live: LiveHonor,
         queue: HonorCardQueue?,
         voice: VoiceNow?,
-        media: HonorCardMedia?,
+        files: CardFiles,
         placement: Placement,
     ): HonorCardsUi {
+        val media = files.media
         val way = live.loaded.way
         val touches = placement.touches.forWalk(live.walkId)
         val arrivalDismissed = HONOR_ARRIVAL_CARD_ID in touches.dismissals ||
             live.cardRows.any { it.momentId == HONOR_ARRIVAL_CARD_ID && it.dismissedAt != null }
         val arrival = if (live.session.phase == HonorPhase.ARRIVED && !arrivalDismissed) {
-            HonorArrival.summary(way, live.rows, live.arrivedAtMillis)
+            HonorArrival.summary(way, live.rows, live.arrivedAtMillis, walkedMeters = live.session.arrivalWalkedMeters ?: 0.0)
         } else {
             null
         }
@@ -794,7 +879,13 @@ class HonorWalkViewModel internal constructor(
                 media = media?.takeIf { it.momentId == moment.id },
             )
         }
-        return HonorCardsUi(live.walkId, way.id, arrival = arrival, place = place.takeIf { arrival == null })
+        return HonorCardsUi(
+            live.walkId,
+            way.id,
+            arrival = arrival,
+            place = place.takeIf { arrival == null },
+            hasStageReply = arrival?.isStage == true && files.hasStageReply,
+        )
     }
 
     /**
@@ -826,6 +917,72 @@ class HonorWalkViewModel internal constructor(
             }
         }
     }.distinctUntilChanged()
+
+    /**
+     * Water ahead (iOS `showMarkCaption`, pilgrimage-stage spec P3 §7.3, P5
+     * §6): the walk's latest notice, which `:tracker` writes in the step
+     * that fires it, before its haptic. It shows while
+     * `0 ≤ now − firedAt < 20 s`, so a restarted UI shows what is left of it,
+     * and a wall clock set back can't stretch it. A revived `:tracker` never
+     * writes it again, so it never replays (P5 A2). A kind this build doesn't
+     * know shows nothing.
+     */
+    private fun waterCaption(): Flow<HonorCaption.Water?> =
+        live.map { it?.walkId }.distinctUntilChanged()
+            .flatMapLatest { walkId -> if (walkId == null) flowOf(null) else honorDao.observeLatestNotice(walkId) }
+            .distinctUntilChanged()
+            .flatMapLatest(::noticeCaption)
+            .distinctUntilChanged()
+
+    private fun noticeCaption(notice: HonorNoticeEntity?): Flow<HonorCaption.Water?> = flow {
+        val caption = notice?.takeIf { it.kind == HonorNoticeKind.WATER }?.let { HonorCaption.Water(it.meters) }
+        val age = notice?.let { clock.now() - it.firedAt }
+        if (caption == null || age == null || age < 0 || age >= SOFT_TAP_CAPTION_MILLIS) {
+            emit(null)
+            return@flow
+        }
+        emit(caption)
+        delay(SOFT_TAP_CAPTION_MILLIS - age)
+        emit(null)
+    }
+
+    /** The walk's Start and end, its fixes, and the Way on screen, as they reach the marks. */
+    private suspend fun driveMarks() {
+        val wayMarks = state.map { it?.way?.marks.orEmpty() }.distinctUntilChanged()
+        val walks = controller.state.map { MarkWalk(it.inProgressWalkId(), it.lastFix()) }.distinctUntilChanged()
+        combine(wayMarks, walks, ::Pair).collect { (marks, walk) -> onMarkInputs(marks, walk) }
+    }
+
+    private fun onMarkInputs(marks: List<WayMark>, walk: MarkWalk) {
+        var apply = false
+        if (marks != markWayMarks) {
+            markWayMarks = marks
+            // The marks chosen so far were chosen without this Way's.
+            apply = marksApplied
+        }
+        if (walk.walkId != markWalkId) {
+            markWalkId = walk.walkId
+            markSelection.resetAnchor()
+            if (walk.walkId == null) {
+                // iOS `teardownHonor`: the marks go with the walk; the camera stays.
+                marksApplied = false
+                _marks.value = emptyList()
+                return
+            }
+            // iOS anchors at once on the fix it already has; until this
+            // walk's first, the camera's centre stands in (P5 A1).
+            apply = apply || markSelection.near != null
+        }
+        if (walk.walkId != null && walk.fix != null && markSelection.onFix(walk.fix)) apply = true
+        if (apply) applyMarks()
+    }
+
+    /** iOS `applyMarkPins()`: a Way without marks clears them. */
+    private fun applyMarks() {
+        marksApplied = true
+        val marks = markWayMarks.orEmpty()
+        _marks.value = if (marks.isEmpty()) emptyList() else markSelection.pins(marks)
+    }
 
     /** The engine's windowed nearest point (`HonorEngine.track`), from the session's persisted progress. */
     private fun offWayMeters(live: LiveHonor, here: WayCoordinate?): Double? {
@@ -861,6 +1018,11 @@ class HonorWalkViewModel internal constructor(
     )
 
     private data class VoiceNow(val view: HonorVoiceView, val elapsedSeconds: Double)
+
+    private class CardFiles(val media: HonorCardMedia?, val hasStageReply: Boolean)
+
+    /** The walk in progress, if any, and its last recorded fix. */
+    private data class MarkWalk(val walkId: Long?, val fix: WayCoordinate?)
 
     /** The session's voice columns, and the Way whose moments give each voice its length. */
     private class PersistedVoice(val view: HonorVoiceView, val way: Way) {

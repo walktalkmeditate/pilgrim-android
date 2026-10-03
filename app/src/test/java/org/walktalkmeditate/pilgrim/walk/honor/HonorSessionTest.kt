@@ -809,6 +809,19 @@ class HonorSessionTest {
         assertEquals(arrived.walkedFrac * WayGeometry(stage.route).totalMeters, later.arrivalWalkedMeters!!, 0.0)
     }
 
+    /** iOS has no stage branch for the label, so a stage says "their" here (pilgrimage-stage spec P5 §9, pilgrim-ios #122, matched). */
+    @Test
+    fun `a stage's arrival waypoint reads Walked their way and the stage's title, as iOS ships it`() = runBlocking {
+        val walk = h.startHonorWalk(stage)
+        val session = h.newSession(FakePorts())
+        session.begin(walk, trailhead())
+        session.walkTo(*(1..19).map { it * 0.0005 }.toDoubleArray())
+        session.walkTo(0.0098, 0.0098, 0.0098)
+
+        assertEquals("Walked their way: Larrasoaña to Pamplona", h.repository.waypointsFor(walk.id).single().label)
+        session.stop()
+    }
+
     // Finish, and writes after it
 
     @Test

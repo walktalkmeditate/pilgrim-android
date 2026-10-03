@@ -5,10 +5,14 @@ import android.app.Application
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
@@ -23,9 +27,11 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.width
+import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -34,7 +40,10 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
+import org.walktalkmeditate.pilgrim.domain.honor.WayCoordinate
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.honor.VoiceKind
@@ -44,7 +53,9 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.data.sounds.BreathRhythm
 import org.walktalkmeditate.pilgrim.ui.meditation.MeditationScreenContent
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
+import org.walktalkmeditate.pilgrim.ui.walk.HonorCaption
 import org.walktalkmeditate.pilgrim.ui.walk.HonorCardMedia
+import org.walktalkmeditate.pilgrim.ui.walk.HonorCardsUi
 import org.walktalkmeditate.pilgrim.ui.walk.HonorListening
 import org.walktalkmeditate.pilgrim.ui.walk.HonorPlaceCard
 import org.walktalkmeditate.pilgrim.ui.walk.HonorSheetStats
@@ -341,6 +352,7 @@ class HonorOnWalkSemanticsTest {
         show {
             HonorArrivalCard(
                 summary = HonorArrivalSummary("the long way", voicesHeard = 1, placesPassed = 2),
+                units = UnitSystem.Metric,
                 onContinue = { continued = true },
             )
         }
@@ -357,6 +369,7 @@ class HonorOnWalkSemanticsTest {
         show {
             HonorArrivalCard(
                 summary = HonorArrivalSummary("the long way", voicesHeard = 1, placesPassed = 2),
+                units = UnitSystem.Metric,
                 onContinue = {},
                 modifier = Modifier.testTag(ARRIVAL_TAG),
             )
@@ -369,7 +382,11 @@ class HonorOnWalkSemanticsTest {
     @Test
     fun `a share walked without its voices counts only the places passed`() {
         show {
-            HonorArrivalCard(summary = HonorArrivalSummary("Obradoiro → Rúa do Franco", 0, 1), onContinue = {})
+            HonorArrivalCard(
+                summary = HonorArrivalSummary("Obradoiro → Rúa do Franco", 0, 1),
+                units = UnitSystem.Metric,
+                onContinue = {},
+            )
         }
 
         composeRule.onNodeWithText("one place passed").assertIsDisplayed()
@@ -379,7 +396,7 @@ class HonorOnWalkSemanticsTest {
 
     @Test
     fun `on an honor walk the minimized stats are one Walk stats element naming Remaining`() {
-        showSheet(HonorSheetStats(remainingMeters = 650.0, softTapMeters = null, listening = null))
+        showSheet(HonorSheetStats(remainingMeters = 650.0, caption = null, listening = null))
 
         val value = "${WalkFormat.duration(90_000L)}, ${WalkFormat.distance(250.0)}, ${WalkFormat.distance(650.0)} remaining"
         composeRule.onNodeWithContentDescription("Walk stats")
@@ -389,7 +406,7 @@ class HonorOnWalkSemanticsTest {
 
     @Test
     fun `the Walk stats value leads with the intention`() {
-        showSheet(HonorSheetStats(remainingMeters = 650.0, softTapMeters = null, listening = null), intention = "for her")
+        showSheet(HonorSheetStats(remainingMeters = 650.0, caption = null, listening = null), intention = "for her")
 
         val value = "for her. ${WalkFormat.duration(90_000L)}, ${WalkFormat.distance(250.0)}, " +
             "${WalkFormat.distance(650.0)} remaining"
@@ -399,7 +416,7 @@ class HonorOnWalkSemanticsTest {
 
     @Test
     fun `the bar shows the intention above the stats while no voice is held`() {
-        showSheet(HonorSheetStats(remainingMeters = 650.0, softTapMeters = null, listening = null), intention = "for her")
+        showSheet(HonorSheetStats(remainingMeters = 650.0, caption = null, listening = null), intention = "for her")
 
         composeRule.onNodeWithText("for her", useUnmergedTree = true).assertExists()
     }
@@ -407,7 +424,7 @@ class HonorOnWalkSemanticsTest {
     @Test
     fun `a held voice's chip takes the intention's place`() {
         showSheet(
-            HonorSheetStats(remainingMeters = 650.0, softTapMeters = null, listening = HonorListening(5.0, false)),
+            HonorSheetStats(remainingMeters = 650.0, caption = null, listening = HonorListening(5.0, false)),
             intention = "for her",
         )
 
@@ -416,30 +433,237 @@ class HonorOnWalkSemanticsTest {
 
     @Test
     fun `the third stat reads Remaining`() {
-        showSheet(HonorSheetStats(remainingMeters = 650.0, softTapMeters = null, listening = null))
+        showSheet(HonorSheetStats(remainingMeters = 650.0, caption = null, listening = null))
 
         composeRule.onNodeWithText("Remaining", useUnmergedTree = true).assertExists()
     }
 
     @Test
     fun `before Begin Remaining reads two dashes`() {
-        showSheet(HonorSheetStats(remainingMeters = null, softTapMeters = null, listening = null))
+        showSheet(HonorSheetStats(remainingMeters = null, caption = null, listening = null))
 
         composeRule.onNodeWithText("--", useUnmergedTree = true).assertExists()
     }
 
     @Test
     fun `a soft tap's caption takes the third stat's place`() {
-        showSheet(HonorSheetStats(remainingMeters = 650.0, softTapMeters = 250L, listening = null))
+        showSheet(HonorSheetStats(remainingMeters = 650.0, caption = HonorCaption.OffWay(250L), listening = null))
 
         composeRule.onNodeWithText("off the way · 250 m", useUnmergedTree = true).assertExists()
     }
 
     @Test
     fun `the chip sits in the minimized bar while a voice is held, apart from the stats`() {
-        showSheet(HonorSheetStats(remainingMeters = 650.0, softTapMeters = null, listening = HonorListening(5.0, false)))
+        showSheet(HonorSheetStats(remainingMeters = 650.0, caption = null, listening = HonorListening(5.0, false)))
 
         composeRule.onNodeWithContentDescription("Skip this voice").assert(isButton())
+    }
+
+    // ---- A pilgrimage stage (pilgrimage-stage spec P5 §6–§8, §12, §16) --------
+
+    @Test
+    fun `a stage's arrival card reads the stage, its places and kilometres, its closing line, then continue`() {
+        showStageArrival(placesPassed = 3, reply = replyRow())
+
+        composeRule.onNodeWithText("you walked the stage").assertIsDisplayed()
+        composeRule.onNodeWithText(STAGE_NAME).assertIsDisplayed()
+        composeRule.onNodeWithText("3 places passed · 24.2 km").assertIsDisplayed()
+        composeRule.onNodeWithText(CLOSING).assertIsDisplayed()
+        composeRule.onNodeWithText("continue").assert(isButton())
+    }
+
+    @Test
+    fun `one place passed reads in the singular`() {
+        showStageArrival(placesPassed = 1)
+
+        composeRule.onNodeWithText("one place passed · 24.2 km").assertIsDisplayed()
+    }
+
+    // So "the whole stage" can never show (P5 C7, pilgrim-ios #122, matched).
+    @Test
+    fun `with no place passed the kilometres stand alone`() {
+        showStageArrival(placesPassed = 0)
+
+        composeRule.onNodeWithText("24.2 km").assertIsDisplayed()
+    }
+
+    @Test
+    fun `with no reply yet the row offers reply here, read Record a reply to this stage`() {
+        showStageArrival(reply = replyRow())
+
+        composeRule.onNodeWithContentDescription("Record a reply to this stage").assert(isButton()).performClick()
+        composeRule.onAllNodesWithContentDescription("Play your reply").assertCountEquals(0)
+        assertEquals(listOf("reply"), stageTaps)
+    }
+
+    @Test
+    fun `with a reply on the phone record again starts at once, with no question, and your reply plays it`() {
+        showStageArrival(reply = replyRow(hasReply = true))
+
+        composeRule.onNodeWithContentDescription("Record a reply to this stage").assert(isButton()).performClick()
+        composeRule.onAllNodesWithText("Replace your earlier reply?").assertCountEquals(0)
+        composeRule.onNodeWithContentDescription("Play your reply").assert(isButton()).performClick()
+
+        assertEquals(listOf("reply", "play"), stageTaps)
+    }
+
+    // The face changes, the label doesn't: TalkBack never hears "record again" (P5-D2).
+    @Test
+    fun `the reply button's face reads reply here, then record again once a reply is on the phone`() {
+        val resources = ApplicationProvider.getApplicationContext<Application>().resources
+
+        assertEquals(
+            "reply here" to "record again",
+            resources.getString(HonorArrivalCopy.replyTitle(hasReply = false)) to
+                resources.getString(HonorArrivalCopy.replyTitle(hasReply = true)),
+        )
+    }
+
+    @Test
+    fun `while the reply records the row says so in a caption, with its stop button and nothing to start another`() {
+        showStageArrival(reply = replyRow(isRecording = true))
+
+        composeRule.onNodeWithText("recording your reply here").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Stop recording your reply").assert(isButton()).performClick()
+        composeRule.onAllNodesWithContentDescription("Record a reply to this stage").assertCountEquals(0)
+        composeRule.onAllNodesWithContentDescription("Play your reply").assertCountEquals(0)
+        assertEquals(listOf("stop"), stageTaps)
+    }
+
+    @Test
+    fun `an earlier reply stays playable while a new one records`() {
+        showStageArrival(reply = replyRow(hasReply = true, isRecording = true))
+
+        composeRule.onNodeWithContentDescription("Stop recording your reply").assert(isButton())
+        composeRule.onNodeWithContentDescription("Play your reply").assert(isButton())
+    }
+
+    @Test
+    fun `a stage's arrival card says nothing of them`() {
+        showStageArrival(placesPassed = 2, reply = replyRow(hasReply = true))
+
+        composeRule.onAllNodesWithText("their", substring = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("they", substring = true).assertCountEquals(0)
+    }
+
+    @Test
+    fun `an arrival on a Way that isn't a stage has no closing line and no reply row`() {
+        show {
+            HonorCardLayer(
+                cards = HonorCardsUi(walkId = 1L, wayId = "walk:x", arrival = HonorArrivalSummary("the long way", 1, 2), place = null),
+                units = UnitSystem.Metric,
+                replyingToMomentId = null,
+                isRecording = false,
+                actionsFor = { actions() },
+                onContinue = {},
+                stageReplyActions = stageReplyActions(),
+            )
+        }
+
+        composeRule.onAllNodesWithContentDescription("Record a reply to this stage").assertCountEquals(0)
+    }
+
+    @Test
+    fun `the card layer shows the reply recording only while the take answers the closing line`() {
+        var replyingTo by mutableStateOf<String?>("voice-1")
+        show {
+            HonorCardLayer(
+                cards = HonorCardsUi(walkId = 1L, wayId = STAGE_ID, arrival = stageSummary(placesPassed = 1), place = null),
+                units = UnitSystem.Metric,
+                replyingToMomentId = replyingTo,
+                isRecording = true,
+                actionsFor = { actions() },
+                onContinue = {},
+                stageReplyActions = stageReplyActions(),
+            )
+        }
+        composeRule.onNodeWithContentDescription("Record a reply to this stage").assertExists()
+
+        replyingTo = HonorPersistence.STAGE_REFLECTION_MOMENT_ID
+
+        composeRule.onNodeWithText("recording your reply here").assertIsDisplayed()
+    }
+
+    @Test
+    fun `a stage's waypoint card reads the dataset's words`() {
+        showCard(stageCard(text = "A shepherd carried this Madonna up from Lourdes."))
+
+        composeRule.onNodeWithText("A shepherd carried this Madonna up from Lourdes.").assertIsDisplayed()
+    }
+
+    @Test
+    fun `a stage's waypoint with no words reads A place on the way`() {
+        showCard(stageCard(text = null))
+
+        composeRule.onNodeWithText("A place on the way.").assertIsDisplayed()
+        composeRule.onAllNodesWithText("A place they marked.").assertCountEquals(0)
+    }
+
+    // iOS `.lineLimit(4)` (`WayPlaceCard.swift:116-126@7c200bf`): the card doesn't scroll, so it shows what fits.
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `a stage's long words stop at four lines with an ellipsis`() {
+        val words = "The way climbs out of the village past the last fountain and the stone cross. ".repeat(8).trim()
+        showCard(stageCard(text = words))
+
+        val layouts = mutableListOf<TextLayoutResult>()
+        composeRule.onNodeWithText(words).fetchSemanticsNode()
+            .config[SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts)
+
+        assertEquals(4 to true, layouts.single().lineCount to layouts.single().isLineEllipsized(3))
+    }
+
+    @Test
+    fun `a stage's local name stands under the kicker, the label never echoed`() {
+        show {
+            WayMomentCompactHeader(moment = stageMoment(text = null), subline = null, tick = null, keepsEmptyKicker = true)
+        }
+
+        composeRule.onNodeWithText("Vierge d'Orisson").assertIsDisplayed()
+        composeRule.onNodeWithText("Orissongo Ama Birjina").assertIsDisplayed()
+    }
+
+    @Test
+    fun `a stage's Sit? offers its 5 minutes and the line beside it`() {
+        var sat: Int? = null
+        show {
+            WayPlaceCard(
+                card = stageCard(text = null),
+                units = UnitSystem.Metric,
+                isRecordingReply = false,
+                actions = actions(onSit = { sat = it }),
+            )
+        }
+
+        composeRule.onNodeWithText("your soundscape holds while you sit").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Sit here for 5 minutes").assert(isButton()).performClick()
+        assertEquals(5, sat)
+    }
+
+    // E-15: the one "they" a stage's walk shows, as iOS ships it (pilgrim-ios #122, matched).
+    @Test
+    fun `the sitting a stage's Sit? begins says they sat here 5 minutes`() {
+        showMeditation(theirSittingMinutes = 5)
+
+        composeRule.onNodeWithText("they sat here 5 minutes").assertExists()
+    }
+
+    @Test
+    fun `water ahead takes the third stat's place, and the Walk stats value reads it`() {
+        showSheet(HonorSheetStats(remainingMeters = 650.0, caption = HonorCaption.Water(280.0), listening = null))
+
+        composeRule.onNodeWithText("water in 280 m", useUnmergedTree = true).assertExists()
+        composeRule.onAllNodesWithText("Remaining", useUnmergedTree = true).assertCountEquals(0)
+        val value = "${WalkFormat.duration(90_000L)}, ${WalkFormat.distance(250.0)}, water in 280 m"
+        composeRule.onNodeWithContentDescription("Walk stats")
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, value))
+    }
+
+    @Test
+    fun `a miles walker reads water in tenths of a mile`() {
+        showSheet(HonorSheetStats(remainingMeters = 650.0, caption = HonorCaption.Water(280.0), listening = null), units = UnitSystem.Imperial)
+
+        composeRule.onNodeWithText("water in 0.2 mi", useUnmergedTree = true).assertExists()
     }
 
     // ---- The meditation caption (E §12) --------------------------------------
@@ -483,7 +707,7 @@ class HonorOnWalkSemanticsTest {
 
     // ---- Harness ----------------------------------------------------------
 
-    private fun showSheet(honor: HonorSheetStats, intention: String? = null) = show {
+    private fun showSheet(honor: HonorSheetStats, intention: String? = null, units: UnitSystem = UnitSystem.Metric) = show {
         WalkStatsSheet(
             state = SheetState.Minimized,
             onStateChange = {},
@@ -496,7 +720,7 @@ class HonorOnWalkSemanticsTest {
             recorderState = VoiceRecorderUiState.Idle,
             audioLevelFlow = MutableStateFlow(0f),
             recordingsCount = 0,
-            units = UnitSystem.Metric,
+            units = units,
             intention = intention,
             onStartWalk = {},
             onStartMeditation = {}, onEndMeditation = {},
@@ -520,10 +744,51 @@ class HonorOnWalkSemanticsTest {
         composeRule.waitForIdle()
     }
 
+    private val stageTaps = mutableListOf<String>()
+
+    private fun stageReplyActions() = StageReplyActions(
+        onReply = { stageTaps += "reply" },
+        onStopReply = { stageTaps += "stop" },
+        onPlayReply = { stageTaps += "play" },
+    )
+
+    private fun replyRow(hasReply: Boolean = false, isRecording: Boolean = false) =
+        StageReplyRow(hasReply = hasReply, isRecording = isRecording, actions = stageReplyActions())
+
+    private fun stageSummary(placesPassed: Int = 3) = HonorArrivalSummary(
+        wayTitle = STAGE_NAME,
+        voicesHeard = 0,
+        placesPassed = placesPassed,
+        stageName = STAGE_NAME,
+        distanceWalkedMeters = 24_200.0,
+        closing = CLOSING,
+    )
+
+    private fun showStageArrival(placesPassed: Int = 3, reply: StageReplyRow? = null) = show {
+        HonorArrivalCard(summary = stageSummary(placesPassed), units = UnitSystem.Metric, onContinue = {}, stageReply = reply)
+    }
+
+    /** iOS `PilgrimageStageWalkTests.stageWay`'s waypoint: words, two local names, a sitting, a pin. */
+    private fun stageMoment(text: String?) = WayMoment(
+        id = "wp-orisson",
+        frac = 0.3,
+        at = WayCoordinate(lat = 0.0, lon = 300.0 / 111_320),
+        kind = WayMomentKind.Waypoint(label = "Vierge d'Orisson", icon = "building.columns"),
+        text = text,
+        names = mapOf("eu" to "Orissongo Ama Birjina", "fr" to "Vierge d'Orisson"),
+        sitMinutes = 5,
+        pin = WayCoordinate(lat = 0.0002, lon = 300.0 / 111_320),
+    )
+
+    private fun stageCard(text: String?) = card(stageMoment(text)).copy(isStage = true, keepsEmptyKicker = true)
+
     private fun isButton() = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button)
 
     private companion object {
         const val ARRIVAL_TAG = "arrival-card"
+        const val STAGE_ID = "pilgrimage:camino-frances:0"
+        const val STAGE_NAME = "Saint-Jean-Pied-de-Port to Roncesvalles"
+        const val CLOSING = "You crossed a border on foot."
     }
 
     private fun actions(

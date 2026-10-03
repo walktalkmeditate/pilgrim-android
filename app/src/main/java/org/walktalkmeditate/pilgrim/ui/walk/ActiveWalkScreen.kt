@@ -87,6 +87,7 @@ import org.walktalkmeditate.pilgrim.domain.WalkStats
 import org.walktalkmeditate.pilgrim.domain.isInProgress
 import org.walktalkmeditate.pilgrim.domain.walkModeOrNull
 import org.walktalkmeditate.pilgrim.domain.seek.SeekEnginePhase
+import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
 import org.walktalkmeditate.pilgrim.ui.seek.SeekDurationSheet
 import org.walktalkmeditate.pilgrim.ui.seek.SeekGatewayOverlay
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
@@ -95,6 +96,7 @@ import org.walktalkmeditate.pilgrim.honor.HonorStartRefusal
 import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.ui.honor.HonorAlert
 import org.walktalkmeditate.pilgrim.ui.honor.HonorCardLayer
+import org.walktalkmeditate.pilgrim.ui.honor.StageReplyActions
 import org.walktalkmeditate.pilgrim.ui.honor.WayPlaceCardActions
 import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.StageMorningCard
 import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.StageMorningCardAction
@@ -103,6 +105,7 @@ import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupStage
 import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupViewModel
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.walk.map.rememberWayMapPins
+import org.walktalkmeditate.pilgrim.ui.walk.map.rememberWayMarkMapPins
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RouteSegmentColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 
@@ -309,6 +312,11 @@ fun ActiveWalkScreen(
         if (mode == WalkMode.Honor && honorWay != null) honorWalkViewModel.showWay(honorWay)
     }
     val honorMapPins = rememberWayMapPins(honor?.pins.orEmpty())
+    // A stage's service marks (pilgrimage-stage spec P5 §2, §5): the map
+    // reports its camera only to a Way that has some (P5 A5).
+    val honorMarks by honorWalkViewModel.marks.collectAsStateWithLifecycle()
+    val honorMarkPins = rememberWayMarkMapPins(honorMarks)
+    val honorHasMarks = !honor?.way?.marks.isNullOrEmpty()
     // The cards, the chip, and the Remaining stat (parity spec E §7–§11).
     val honorCards by honorWalkViewModel.cards.collectAsStateWithLifecycle()
     val honorSheet by honorWalkViewModel.sheet.collectAsStateWithLifecycle()
@@ -888,6 +896,8 @@ fun ActiveWalkScreen(
             honorWay = honor?.line,
             wayPins = honorMapPins,
             onWayPinTap = honorWalkViewModel::onWayPinTap,
+            wayMarks = honorMarkPins,
+            onCameraChanged = if (honorHasMarks) honorWalkViewModel::onCameraChanged else null,
             companion = honorCompanion,
             honorFocus = honorFocus,
             // The arrival's signpost, the same mark the summary draws for it.
@@ -1311,6 +1321,16 @@ fun ActiveWalkScreen(
                     )
                 },
                 onContinue = honorWalkViewModel::dismissArrival,
+                // The reply to a stage's closing line (P5 §8.3): the same
+                // "reply here" and microphone ask as a voice's, stopped with
+                // the talk button's toggle, played through `:tracker`.
+                stageReplyActions = StageReplyActions(
+                    onReply = {
+                        replyHere(ReplyRequest(cards.walkId, cards.wayId, HonorPersistence.STAGE_REFLECTION_MOMENT_ID))
+                    },
+                    onStopReply = viewModel::toggleRecording,
+                    onPlayReply = honorWalkViewModel::playStageReflectionReply,
+                ),
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = honorSheetInset(measuredSheetHeightPx, sheetInsetDp, density) + PilgrimSpacing.small)

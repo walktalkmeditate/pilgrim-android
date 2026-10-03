@@ -210,6 +210,10 @@ interface HonorDao {
     @Query("SELECT * FROM honor_notices WHERE walk_id = :walkId ORDER BY fired_at, kind, ref_id")
     suspend fun getNotices(walkId: Long): List<HonorNoticeEntity>
 
+    /** The walk's latest notice, whose caption the walk screen shows for what is left of its 20 s. */
+    @Query("SELECT * FROM honor_notices WHERE walk_id = :walkId ORDER BY fired_at DESC, kind DESC, ref_id DESC LIMIT 1")
+    fun observeLatestNotice(walkId: Long): Flow<HonorNoticeEntity?>
+
     /** Repeating the finalize step keeps the first marker. */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertMarker(marker: HonorWalkMarkerEntity)

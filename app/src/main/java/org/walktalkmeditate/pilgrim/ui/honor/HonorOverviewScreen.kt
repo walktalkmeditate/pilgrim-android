@@ -65,6 +65,7 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.walk.PilgrimMap
 import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
 import org.walktalkmeditate.pilgrim.ui.walk.map.rememberWayMapPins
+import org.walktalkmeditate.pilgrim.ui.walk.map.rememberWayMarkMapPins
 
 /**
  * iOS `HonorOverviewView` (parity spec F §8–§14, shared-walk spec S4 §8–§9):
@@ -86,6 +87,7 @@ fun HonorOverviewScreen(
     val positionMillis by viewModel.playbackPositionMillis.collectAsStateWithLifecycle()
     val speed by viewModel.playbackSpeed.collectAsStateWithLifecycle()
     val waveforms by viewModel.waveforms.collectAsStateWithLifecycle()
+    val markPins by viewModel.markPins.collectAsStateWithLifecycle()
     LaunchedEffect(state) {
         if (state is HonorOverviewUiState.Unavailable) onClose()
     }
@@ -112,6 +114,7 @@ fun HonorOverviewScreen(
             }
         }
         val mapPins = rememberWayMapPins(overview.pins)
+        val mapMarks = rememberWayMarkMapPins(markPins)
         HonorOverviewFrame(
             map = { cardHeight ->
                 PilgrimMap(
@@ -126,6 +129,8 @@ fun HonorOverviewScreen(
                     honorWay = overview.line,
                     wayPins = mapPins,
                     onWayPinTap = { momentId -> previewMomentId = momentId },
+                    wayMarks = mapMarks,
+                    onCameraChanged = viewModel::onCameraChanged,
                 )
             },
             card = {

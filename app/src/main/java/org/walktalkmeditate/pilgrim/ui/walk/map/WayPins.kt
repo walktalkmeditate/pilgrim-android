@@ -199,7 +199,7 @@ fun rememberWayMapPins(pins: List<WayPin>): List<WayMapPin> {
     val looks = remember(pins) { pins.map { it.glyph to it.tint }.toSet() }
     val rasters = remember(looks, density, painters) {
         looks.associateWith { (glyph, tint) ->
-            renderWayPin(painters.getValue(glyph), Color(tint.argb), density)
+            renderWayPin(painters.getValue(glyph), Color(tint.argb), density, WAY_PIN_SIZE_DP)
         }
     }
     return remember(pins, rasters) {
@@ -227,8 +227,9 @@ private const val PIN_DISC_ALPHA = 0.9f
 private const val PIN_GLYPH_SCALE = 0.55f
 private const val PIN_GLYPH_ALPHA = 0.55f
 
-private fun renderWayPin(painter: Painter, tint: Color, density: Float): Bitmap {
-    val sizePx = (WAY_PIN_SIZE_DP * density).roundToInt().coerceAtLeast(1)
+/** A Way pin's raster at [sizeDp]: a moment's 22, a service mark's 18. */
+internal fun renderWayPin(painter: Painter, tint: Color, density: Float, sizeDp: Float): Bitmap {
+    val sizePx = (sizeDp * density).roundToInt().coerceAtLeast(1)
     val image = ImageBitmap(sizePx, sizePx)
     val glyphPx = sizePx * PIN_GLYPH_SCALE
     CanvasDrawScope().draw(
