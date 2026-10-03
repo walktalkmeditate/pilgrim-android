@@ -45,7 +45,7 @@ data class WayArrival(val theirSeconds: Double, val yourSeconds: Double)
 /** A Way's `way.json` as a reader's cache sees it: the file changed when either differs. */
 data class WayFileStamp(val lastModifiedMillis: Long, val length: Long)
 
-/** A staged own-walk Way, by the uuid of the walk that is honoring it. */
+/** A staged Way (an own walk's, or a stage's), by the uuid of the walk that is honoring it. */
 data class StagedWay(val walkUuid: String, val stagedAtMillis: Long)
 
 /**
@@ -66,7 +66,7 @@ data class StagingFolder(val walkUuid: String, val lastTouchedMillis: Long, val 
  * <base>/<way id>/media/          shared walks only
  * <base>/<way id>/.media-<path>.download.tmp   a media file still gathering (Android)
  * <base>/links/<walk uuid>.json   one WayLink per walk (Android)
- * <base>/staging/<walk uuid>/way.json   an own-walk Way while it is walked (Android)
+ * <base>/staging/<walk uuid>/way.json   an own-walk or stage Way while it is walked (Android)
  * <base>/pilgrimage/replacing.txt                a Replace's swap marker
  * <base>/pilgrimage/<route>/route.json           a downloaded route's package
  * <base>/pilgrimage/<route>/release.txt          the release it is pinned to

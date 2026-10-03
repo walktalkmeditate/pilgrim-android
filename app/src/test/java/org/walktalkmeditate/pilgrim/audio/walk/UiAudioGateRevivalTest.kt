@@ -216,6 +216,8 @@ class UiAudioGateRevivalTest {
 
         override fun softTap() = Unit
 
+        override fun waterAhead() = Unit
+
         override fun arrival() = Unit
     }
 

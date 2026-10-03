@@ -52,7 +52,7 @@ import org.walktalkmeditate.pilgrim.walk.WalkController
 import org.walktalkmeditate.pilgrim.walk.WalkStartRequest
 import org.walktalkmeditate.pilgrim.walk.honor.HonorHarness
 
-/** The walk screen's Start on an honor walk: the minted uuid, the staged own-walk Way, and the start through the chain. */
+/** The walk screen's Start on an honor walk: the minted uuid, the staged own-walk or stage Way, and the start. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
 class BeginHonorWalkTest {
@@ -325,6 +325,44 @@ class BeginHonorWalkTest {
         assertThrows(IllegalStateException::class.java) { runBlocking { begin(controller)(request()) } }
 
         assertNotNull(h.store.staged(mintedUuid))
+    }
+
+    // A pilgrimage stage (pilgrimage-stage spec P3 §9; owner decision 2)
+
+    private fun stageRequest(settings: HonorSettings) =
+        BeginHonorWalk.Request(way = HonorWayChoice.Stored(HonorHarness.STAGE_ID), intention = null, settings = settings)
+
+    @Test
+    fun `a stage's Start stages the stage under the minted uuid and leaves its package as it was`() = runBlocking {
+        val stage = HonorHarness.stage()
+        h.store.save(stage)
+
+        begin(RecordingController())(stageRequest(settings))
+
+        assertEquals(stage, h.store.staged(mintedUuid))
+        assertEquals(stage, h.store.load(HonorHarness.STAGE_ID))
+    }
+
+    // iOS `testAStageWalksWithNoCompanionAndNoSoftTap` (`PilgrimageStageWalkTests.swift@7c200bf`).
+    @Test
+    fun `a stage walks with no soft tap, the preference on`() = runBlocking {
+        h.store.save(HonorHarness.stage())
+        val controller = RecordingController()
+
+        begin(controller)(stageRequest(HonorSettings(voicesEnabled = true, softTapEnabled = true)))
+
+        val sent = controller.requests.single().honor!!.settings
+        assertEquals(HonorSettings(voicesEnabled = true, softTapEnabled = false), sent)
+    }
+
+    // iOS `testAnOwnWalkWayKeepsItsCompanion`, the control: no stage, so the preference stands.
+    @Test
+    fun `an own walk keeps the soft tap the preference set`() = runBlocking {
+        val controller = RecordingController()
+
+        begin(controller)(request().copy(settings = HonorSettings(voicesEnabled = true, softTapEnabled = true)))
+
+        assertTrue(controller.requests.single().honor!!.settings.softTapEnabled)
     }
 
     @Test

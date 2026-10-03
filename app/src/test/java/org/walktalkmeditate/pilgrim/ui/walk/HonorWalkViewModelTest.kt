@@ -371,6 +371,20 @@ class HonorWalkViewModelTest {
         assertNull(vm.companion.value)
     }
 
+    @Test
+    fun `a stage session draws the copy staged at Begin, not its package redrawn since`() = runTest(dispatcher) {
+        val stageId = "pilgrimage:camino-frances:0"
+        val staged = way(id = stageId, source = WaySource.Pilgrimage("camino-frances", 0)).copy(stage = stage())
+        store.save(staged.copy(title = "redrawn by an Update", route = route.take(4)))
+        startLiveWalk(way = staged, session = { it.copy(wayId = stageId, sourceKind = HonorSourceKind.PILGRIMAGE) })
+        val vm = viewModel()
+        backgroundScope.launch { vm.state.collect {} }
+
+        val drawn = vm.state.awaitValue { it?.session != null }!!
+
+        assertEquals("the long way" to route, drawn.way.title to drawn.way.route)
+    }
+
     // ---- Pin taps and the fly-to -----------------------------------------
 
     @Test
@@ -1083,6 +1097,7 @@ class HonorWalkViewModelTest {
                 walkedFrac = session.walkedFrac, offWaySince = session.offWaySince,
                 offWayActiveSeconds = session.offWayActiveSeconds, lastReacquireAttempt = session.lastReacquireAttempt,
                 softTapSince = null, softTapArmed = false, arrivalInsideFixes = session.arrivalInsideFixes,
+                lastNoticeSeconds = session.lastNoticeSeconds,
             ),
         )
     }

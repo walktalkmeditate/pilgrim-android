@@ -28,6 +28,7 @@ data class HonorEngineState(
     @ColumnInfo(name = "soft_tap_since") val softTapSince: Long?,
     @ColumnInfo(name = "soft_tap_armed") val softTapArmed: Boolean,
     @ColumnInfo(name = "arrival_inside_fixes") val arrivalInsideFixes: Int,
+    @ColumnInfo(name = "last_notice_seconds") val lastNoticeSeconds: Double?,
 )
 
 /** The playing voice's columns of a session row. */
@@ -53,8 +54,8 @@ data class WalkInProgressAudio(
 )
 
 /**
- * The live Honor tables and the walk marker. Session and moment rows are
- * written by `:tracker` only, card rows by the UI only. Every write is an
+ * The live Honor tables and the walk marker. Session, moment, and notice
+ * rows are written by `:tracker` only, card rows by the UI only. Every write is an
  * insert, a targeted UPDATE, or an upsert: never `REPLACE`, which deletes
  * the row first (and would cascade). Guarded updates return the number
  * of rows changed, so a caller knows whether its compare-and-set won.
@@ -80,13 +81,22 @@ interface HonorDao {
 
     /**
      * Arrival's compare-and-set: flips the phase once and keeps its numbers
-     * for the link. The literals are the [HonorPhase] names the converter stores.
+     * for the link, and the distance walked for the stage arrival card. The
+     * literals are the [HonorPhase] names the converter stores.
      */
     @Query(
         "UPDATE honor_sessions SET phase = 'ARRIVED', arrival_their_seconds = :theirSeconds, " +
-            "arrival_your_seconds = :yourSeconds WHERE walk_id = :walkId AND phase = 'WALKING'",
+            "arrival_your_seconds = :yourSeconds, arrival_walked_meters = :walkedMeters " +
+            "WHERE walk_id = :walkId AND phase = 'WALKING'",
     )
-    suspend fun recordArrival(walkId: Long, theirSeconds: Double, yourSeconds: Double): Int
+    suspend fun recordArrival(walkId: Long, theirSeconds: Double, yourSeconds: Double, walkedMeters: Double): Int
+
+    /** The stage a session walks, from the Way it loaded; written once, at its first start. */
+    @Query(
+        "UPDATE honor_sessions SET stage_route_id = :routeId, stage_index = :index, " +
+            "stage_name = :name, stage_distance_km = :distanceKm WHERE walk_id = :walkId",
+    )
+    suspend fun recordStageIdentity(walkId: Long, routeId: String, index: Int, name: String, distanceKm: Double): Int
 
     /** The first finish kind wins; recovery can't relabel a clean finish, nor the reverse. */
     @Query("UPDATE honor_sessions SET finish_kind = :kind WHERE walk_id = :walkId AND finish_kind IS NULL")
@@ -193,6 +203,13 @@ interface HonorDao {
     @Query("SELECT * FROM honor_card_states WHERE walk_id = :walkId ORDER BY moment_id")
     fun observeCardStates(walkId: Long): Flow<List<HonorCardStateEntity>>
 
+    /** A notice is spoken once: a second insert for the same walk, kind, and id keeps the first. */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertNotice(notice: HonorNoticeEntity)
+
+    @Query("SELECT * FROM honor_notices WHERE walk_id = :walkId ORDER BY fired_at, kind, ref_id")
+    suspend fun getNotices(walkId: Long): List<HonorNoticeEntity>
+
     /** Repeating the finalize step keeps the first marker. */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertMarker(marker: HonorWalkMarkerEntity)
@@ -208,6 +225,7 @@ interface HonorDao {
     suspend fun deleteLiveRows(walkId: Long) {
         deleteCardStates(walkId)
         deleteMomentStates(walkId)
+        deleteNotices(walkId)
         deleteSession(walkId)
     }
 
@@ -216,6 +234,9 @@ interface HonorDao {
 
     @Query("DELETE FROM honor_moment_states WHERE walk_id = :walkId")
     suspend fun deleteMomentStates(walkId: Long): Int
+
+    @Query("DELETE FROM honor_notices WHERE walk_id = :walkId")
+    suspend fun deleteNotices(walkId: Long): Int
 
     @Query("DELETE FROM honor_sessions WHERE walk_id = :walkId")
     suspend fun deleteSession(walkId: Long): Int

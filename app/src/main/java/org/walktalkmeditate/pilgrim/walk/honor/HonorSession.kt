@@ -30,10 +30,12 @@ import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.honor.HonorEngineState
 import org.walktalkmeditate.pilgrim.data.honor.HonorMomentStateEntity
-import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
+import org.walktalkmeditate.pilgrim.data.honor.HonorNoticeEntity
+import org.walktalkmeditate.pilgrim.data.honor.HonorNoticeKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorVoiceEnd
 import org.walktalkmeditate.pilgrim.data.honor.WayArrival
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.data.honor.isStagedPerWalk
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
@@ -50,13 +52,20 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 interface HonorArrivalRecorder {
 
     /**
-     * On a walk still in progress, flips the session's phase once, then writes
+     * On a walk still in progress, flips the session's phase once, keeping
+     * [arrival] and the [walkedMeters] the engine had credited, then writes
      * HONOR_ARRIVAL and the reserved waypoint labelled [waypointLabel], at
      * [at] or else the walk's last fix.
      *
      * @return true only when this call flipped the phase.
      */
-    suspend fun recordHonorArrival(walkId: Long, arrival: WayArrival, waypointLabel: String, at: LocationPoint?): Boolean
+    suspend fun recordHonorArrival(
+        walkId: Long,
+        arrival: WayArrival,
+        walkedMeters: Double,
+        waypointLabel: String,
+        at: LocationPoint?,
+    ): Boolean
 }
 
 /**
@@ -71,9 +80,13 @@ interface HonorArrivalRecorder {
  * - **Keyed to the walk id.** Every [start] replaces the session before
  *   it, so a cached process carries nothing from an earlier walk. The
  *   Way, the frozen preferences, and the engine's state come from Room
- *   and the Ways store alone; a revival restores the anchor and the queue,
- *   never replays the voice the dead process was playing, and bumps the
- *   gate generation so the UI re-sends its gates.
+ *   and the Ways store alone; a revival restores the anchor, the queue,
+ *   and a stage's water spoken and quiet clock, never replays the voice
+ *   the dead process was playing or a notice it spoke, and bumps the gate
+ *   generation so the UI re-sends its gates. An own walk's Way and a
+ *   stage's are the copies staged under the walk at Begin, so a package
+ *   changed meanwhile never redraws a stage under its walk (owner
+ *   decision 2 of the pilgrimage-stage spec).
  * - **The engine fed in iOS's order.** One actor takes the fixes, the 1 Hz
  *   engine clock, the gates, the player's callbacks, and the walker's
  *   commands, in arrival order. Begin feeds the latest fix before the
@@ -230,7 +243,7 @@ class HonorSession internal constructor(
         val walk = database.walkDao().getById(walkId)
         if (walk == null || walk.endTimestamp != null) return refuse(walkId, "the walk is not in progress")
         if (!WayStore.isValidId(session.wayId)) return refuse(walkId, "its Way id fails the store's allow-list")
-        val staged = if (session.sourceKind == HonorSourceKind.OWN_WALK) wayStore.staged(walk.uuid) else null
+        val staged = if (session.sourceKind.isStagedPerWalk) wayStore.staged(walk.uuid) else null
         val way = staged?.takeIf { it.id == session.wayId } ?: wayStore.load(session.wayId)
             ?: return refuse(walkId, "no staged or listed Way loads")
 
@@ -242,7 +255,7 @@ class HonorSession internal constructor(
             voicesEnabled = session.voicesEnabled,
             clock = clock,
         )
-        if (revived) engine.restore(session.engineSnapshot(rows.values))
+        if (revived) engine.restore(session.engineSnapshot(rows.values, dao.getNotices(walkId)))
         val now = clock.now()
         val interrupted = rows.values
             .filter { it.voiceStartedAt != null && it.voiceEnd == null }
@@ -251,6 +264,9 @@ class HonorSession internal constructor(
         val live = database.withTransaction {
             if (dao.countLiveSessionOnUnfinishedWalk(walkId) == 0) return@withTransaction false
             dao.bumpGateGeneration(walkId)
+            if (!revived) {
+                way.stage?.let { dao.recordStageIdentity(walkId, it.routeId, it.index, it.name, it.distanceKm) }
+            }
             interrupted.forEach { dao.upsertMomentState(it) }
             dao.updateVoiceState(hold.toVoiceState(walkId))
             true
@@ -301,7 +317,8 @@ class HonorSession internal constructor(
         data object Restore : Ritual
         data object MomentHaptic : Ritual
         data object SoftTapHaptic : Ritual
-        class Arrive(val arrival: WayArrival, val at: LocationPoint?) : Ritual
+        data object WaterHaptic : Ritual
+        class Arrive(val arrival: WayArrival, val walkedMeters: Double, val at: LocationPoint?) : Ritual
     }
 
     private inner class Run(
@@ -515,9 +532,20 @@ class HonorSession internal constructor(
                         plan.endVoice(event.moment, HonorVoiceEnd.DROPPED)
                     }
                     is HonorEngineEvent.SoftTap -> plan.rituals += Ritual.SoftTapHaptic
+                    is HonorEngineEvent.MarkAhead -> {
+                        plan.notices += HonorNoticeEntity(
+                            walkId = walkId,
+                            kind = HonorNoticeKind.WATER,
+                            refId = event.mark.id,
+                            meters = event.meters,
+                            firedAt = plan.now,
+                        )
+                        plan.rituals += Ritual.WaterHaptic
+                    }
                     is HonorEngineEvent.Arrived -> plan.rituals += Ritual.Arrive(
                         WayArrival(theirSeconds = event.theirSeconds, yourSeconds = event.yourSeconds),
-                        fix,
+                        walkedMeters = engine.distanceWalkedMeters,
+                        at = fix,
                     )
                 }
             }
@@ -657,11 +685,12 @@ class HonorSession internal constructor(
             val engineState = snapshot.toEngineState(walkId)
             val writeEngine = engineState != committedEngineState
             val writeHold = hold != committedHold
-            if (writeEngine || writeHold || plan.rows.isNotEmpty()) {
+            if (writeEngine || writeHold || plan.rows.isNotEmpty() || plan.notices.isNotEmpty()) {
                 val committed = commit(
                     engineState = engineState.takeIf { writeEngine },
                     hold = hold.takeIf { writeHold },
                     changedRows = plan.rows.values,
+                    notices = plan.notices,
                 )
                 if (!committed) {
                     end()
@@ -690,6 +719,7 @@ class HonorSession internal constructor(
             engineState: HonorEngineState?,
             hold: VoiceHold?,
             changedRows: Collection<HonorMomentStateEntity>,
+            notices: Collection<HonorNoticeEntity>,
         ): Boolean = try {
             database.withTransaction {
                 val dao = database.honorDao()
@@ -697,6 +727,7 @@ class HonorSession internal constructor(
                 engineState?.let { dao.updateEngineState(it) }
                 hold?.let { dao.updateVoiceState(it.toVoiceState(walkId)) }
                 changedRows.forEach { dao.upsertMomentState(it) }
+                notices.forEach { dao.insertNotice(it) }
                 true
             }
         } catch (e: SQLiteException) {
@@ -724,10 +755,12 @@ class HonorSession internal constructor(
                     }
                     Ritual.MomentHaptic -> haptics.momentReached()
                     Ritual.SoftTapHaptic -> haptics.softTap()
+                    Ritual.WaterHaptic -> haptics.waterAhead()
                     is Ritual.Arrive -> {
                         val won = arrivalRecorder.recordHonorArrival(
                             walkId = walkId,
                             arrival = ritual.arrival,
+                            walkedMeters = ritual.walkedMeters,
                             waypointLabel = arrivalLabel(way.title),
                             at = ritual.at,
                         )
@@ -737,9 +770,10 @@ class HonorSession internal constructor(
             }
         }
 
-        /** One engine call or command: the rows it changes, and the rituals to run once they commit. */
+        /** One engine call or command: the rows it changes, the notices it speaks, and the rituals after the commit. */
         private inner class Plan(val now: Long) {
             val rows = LinkedHashMap<String, HonorMomentStateEntity>()
+            val notices = mutableListOf<HonorNoticeEntity>()
             val rituals = mutableListOf<Ritual>()
 
             fun row(id: String): HonorMomentStateEntity =

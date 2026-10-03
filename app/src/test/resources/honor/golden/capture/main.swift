@@ -7,7 +7,8 @@ import ObjectiveC
 // Drives iOS's real HonorEngine (HonorEngine.swift, HonorMomentTracker.swift,
 // HonorTuning.swift, WayGeometry.swift, Way.swift, ArrivalDebounce.swift,
 // fetched verbatim at 7c200bf) over the corpus, the way
-// ActiveWalkViewModel+Honor.swift@7c200bf does, and records what it does.
+// ActiveWalkViewModel+Honor.swift@7c200bf does, and records what it does:
+// own walks' voices and moments, and pilgrimage stages' water.
 //
 //   harness corpus <corpus dir>                  writes the Ways and traces
 //   harness capture <corpus dir> <expected dir>  writes the event streams
@@ -74,6 +75,8 @@ struct EventRecord: Codable, Equatable {
     var offWayMeters: Double?
     var theirSeconds: Double?
     var yourSeconds: Double?
+    /// How far ahead a water mark is, unrounded, as `.markAhead` carries it.
+    var meters: Double?
 }
 
 struct Coordinate: Codable, Equatable { let lat: Double; let lon: Double }
@@ -108,6 +111,13 @@ struct StateRecord: Codable, Equatable {
     let playing: String?
     let voicePaused: Bool
     let queue: [String]
+    // A stage's water watcher, also private, recorded only for a Way with
+    // marks so the own-walk traces keep their bytes: the marks spoken
+    // (sorted), and the engine clock at the last notice. iOS names that
+    // clock `lastMarkSeconds` at 7c200bf; the key is the name iOS PR #91
+    // gives it, `lastNoticeSeconds`, so the fold-in changes one label here.
+    let firedMarks: [String]?
+    let lastNoticeSeconds: Double?
 }
 
 struct Record: Codable, Equatable {
@@ -189,7 +199,7 @@ func run(way: Way, trace: Trace, forceMiss: Bool) -> [Record] {
         case .voiceResume: events.append(EventRecord(type: "voiceResume"))
         case .voiceDropped(let m): events.append(EventRecord(type: "voiceDropped", id: m.id))
         case .softTap(let meters): events.append(EventRecord(type: "softTap", offWayMeters: meters))
-        case .markAhead: fatalError("an own walk has no marks")
+        case .markAhead(let mark, let meters): events.append(EventRecord(type: "markAhead", id: mark.id, meters: meters))
         case .arrived(let theirs, let yours):
             events.append(EventRecord(type: "arrived", theirSeconds: theirs, yourSeconds: yours))
         }
@@ -210,6 +220,7 @@ func run(way: Way, trace: Trace, forceMiss: Bool) -> [Record] {
         let tracker = field(engine, "moments", as: HonorMomentTracker.self)
         let armed = field(engine, "softTapArmed", as: Bool.self)
         let since = field(engine, "softTapSince", as: Date?.self)
+        let watchesWater = way.marks != nil
         return StateRecord(
             progressFrac: engine.progressFrac,
             distanceRemainingMeters: engine.distanceRemainingMeters,
@@ -227,7 +238,9 @@ func run(way: Way, trace: Trace, forceMiss: Bool) -> [Record] {
             lastReacquireAttempt: sinceT0(field(engine, "lastReacquireAttempt", as: Date?.self)),
             playing: tracker.playing?.id,
             voicePaused: tracker.isVoicePaused,
-            queue: field(tracker, "queue", as: [WayMoment].self).map(\.id))
+            queue: field(tracker, "queue", as: [WayMoment].self).map(\.id),
+            firedMarks: watchesWater ? field(tracker, "firedMarks", as: Set<String>.self).sorted() : nil,
+            lastNoticeSeconds: watchesWater ? field(tracker, "lastMarkSeconds", as: TimeInterval?.self) : nil)
     }
 
     var records: [Record] = []
@@ -361,6 +374,8 @@ func summarize(_ name: String, way: Way, records: [Record]) {
             var line = "  input \(r.i) (\(at)): \(e.type)"
             if let id = e.id { line += " \(id)" }
             if let m = e.offWayMeters { line += String(format: " %.1f m", m) }
+            if let m = e.meters { line += String(format: " %.3f m ahead", m) }
+            if e.type == "markAhead", let clock = r.state?.lastNoticeSeconds { line += String(format: ", clock %.1f s", clock) }
             if let a = e.theirSeconds, let b = e.yourSeconds { line += String(format: " their %.1f s, your %.1f s", a, b) }
             print(line)
         }

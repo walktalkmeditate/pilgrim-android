@@ -5,6 +5,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 import org.walktalkmeditate.pilgrim.data.honor.HonorMomentStateEntity
+import org.walktalkmeditate.pilgrim.data.honor.HonorNoticeEntity
+import org.walktalkmeditate.pilgrim.data.honor.HonorNoticeKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
 import org.walktalkmeditate.pilgrim.domain.Clock
@@ -53,6 +55,26 @@ class HonorSessionStateTest {
     }
 
     @Test
+    fun `the water spoken is the walk's water notices, with the row's quiet clock, and an unknown kind is ignored`() {
+        val session = HonorSessionEntity(
+            walkId = 1L,
+            wayId = HonorHarness.STAGE_ID,
+            sourceKind = HonorSourceKind.PILGRIMAGE,
+            voicesEnabled = false,
+            softTapEnabled = false,
+            lastNoticeSeconds = 1_820.4,
+        )
+        val notices = listOf(
+            HonorNoticeEntity(1L, HonorNoticeKind.WATER, "wp-osm-water-node1", meters = 280.0, firedAt = 5_000L),
+            HonorNoticeEntity(1L, HonorNoticeKind.UNKNOWN, "wp-temple-10", meters = 900.0, firedAt = 9_000L),
+        )
+
+        val tracker = session.engineSnapshot(rows = emptyList(), notices = notices).tracker
+
+        assertEquals(setOf("wp-osm-water-node1") to 1_820.4, tracker.firedMarks to tracker.lastNoticeSeconds)
+    }
+
+    @Test
     fun `a session row and its moment rows restore the engine where it stood`() {
         val way = HonorHarness.way()
         var now = 5_000_000L
@@ -86,11 +108,12 @@ class HonorSessionStateTest {
             softTapSince = state.softTapSince,
             softTapArmed = state.softTapArmed,
             arrivalInsideFixes = state.arrivalInsideFixes,
+            lastNoticeSeconds = state.lastNoticeSeconds,
         )
         val rows = snapshot.tracker.reached.map { HonorMomentStateEntity(walkId = 1L, momentId = it, reachedAt = 1L) }
 
         val revived = HonorEngine(way, softTapEnabled = false, voicesEnabled = false, clock = Clock { now })
-        revived.restore(restoredRow.engineSnapshot(rows))
+        revived.restore(restoredRow.engineSnapshot(rows, notices = emptyList()))
         revived.updateActiveDuration(10.0)
 
         assertEquals(snapshot, revived.snapshot())

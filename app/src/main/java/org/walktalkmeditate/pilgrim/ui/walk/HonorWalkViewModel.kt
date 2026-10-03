@@ -50,6 +50,7 @@ import org.walktalkmeditate.pilgrim.data.honor.dismissedAt
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.data.honor.isStagedPerWalk
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
@@ -615,10 +616,10 @@ class HonorWalkViewModel internal constructor(
         }.flowOn(ioDispatcher)
     }
 
-    /** The staged Way an own-walk session follows, else the listed one, as `:tracker`'s session loads it. */
+    /** The staged Way an own-walk or stage session follows, else the listed one, as `:tracker`'s session loads it. */
     private suspend fun loadWay(walkId: Long, key: WayKey): LoadedWay? = withContext(ioDispatcher) {
         val walkUuid = repository.getWalk(walkId)?.uuid ?: return@withContext null
-        val staged = if (key.sourceKind == HonorSourceKind.OWN_WALK) wayStore.staged(walkUuid) else null
+        val staged = if (key.sourceKind.isStagedPerWalk) wayStore.staged(walkUuid) else null
         val way = staged?.takeIf { it.id == key.wayId } ?: wayStore.load(key.wayId) ?: return@withContext null
         LoadedWay(way, HonorWayLine.of(way), WayGeometry(way.route))
     }

@@ -146,6 +146,8 @@ class WalkAudioArbiterSessionTest {
 
         override fun softTap() = Unit
 
+        override fun waterAhead() = Unit
+
         override fun arrival() = Unit
     }
 }

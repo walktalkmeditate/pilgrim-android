@@ -5,6 +5,8 @@ import kotlin.math.max
 import kotlin.math.roundToLong
 import org.walktalkmeditate.pilgrim.data.honor.HonorEngineState
 import org.walktalkmeditate.pilgrim.data.honor.HonorMomentStateEntity
+import org.walktalkmeditate.pilgrim.data.honor.HonorNoticeEntity
+import org.walktalkmeditate.pilgrim.data.honor.HonorNoticeKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorVoiceState
@@ -120,7 +122,15 @@ internal fun voiceOriginIndex(momentId: String): Int? =
 internal fun WayMoment.voiceGain(): Float =
     if ((kind as? WayMomentKind.Voice)?.kind == VoiceKind.AMBIENT) AMBIENT_GAIN else 1f
 
-internal fun HonorSessionEntity.engineSnapshot(rows: Collection<HonorMomentStateEntity>) = HonorEngine.Snapshot(
+/**
+ * The engine where this row, its moment rows, and its [notices] left it:
+ * the water spoken is the walk's water notices, and an unknown kind's row
+ * is ignored.
+ */
+internal fun HonorSessionEntity.engineSnapshot(
+    rows: Collection<HonorMomentStateEntity>,
+    notices: Collection<HonorNoticeEntity>,
+) = HonorEngine.Snapshot(
     phase = phase,
     startFrac = startFrac,
     anchoredByFallback = anchoredByFallback,
@@ -138,10 +148,15 @@ internal fun HonorSessionEntity.engineSnapshot(rows: Collection<HonorMomentState
     tracker = HonorMomentTracker.Snapshot(
         reached = rows.filter { it.reachedAt != null }.mapTo(mutableSetOf()) { it.momentId },
         queue = rows.filter { it.queuePosition != null }.sortedBy { it.queuePosition }.map { it.momentId },
+        firedMarks = notices.filter { it.kind == HonorNoticeKind.WATER }.mapTo(mutableSetOf()) { it.refId },
+        lastNoticeSeconds = lastNoticeSeconds,
     ),
 )
 
-/** The phase is left out: only arrival's compare-and-set writes it. */
+/**
+ * The phase is left out: only arrival's compare-and-set writes it. The
+ * water spoken goes out as notice rows, in the same commit.
+ */
 internal fun HonorEngine.Snapshot.toEngineState(walkId: Long) = HonorEngineState(
     walkId = walkId,
     startFrac = startFrac,
@@ -157,6 +172,7 @@ internal fun HonorEngine.Snapshot.toEngineState(walkId: Long) = HonorEngineState
     softTapSince = softTapSinceMillis,
     softTapArmed = softTapArmed,
     arrivalInsideFixes = arrivalInsideFixes,
+    lastNoticeSeconds = tracker.lastNoticeSeconds,
 )
 
 /**

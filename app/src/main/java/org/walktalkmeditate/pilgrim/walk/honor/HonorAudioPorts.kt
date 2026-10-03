@@ -97,6 +97,9 @@ interface HonorHapticsPort {
     /** iOS `.honorOffWay`, a soft impact. */
     fun softTap()
 
+    /** iOS `.honorWaterAhead`, one soft tap at the whisper's intensity, after the notice's rows commit. */
+    fun waterAhead()
+
     /** Seek's three rising taps, after arrival's rows commit. */
     fun arrival()
 }

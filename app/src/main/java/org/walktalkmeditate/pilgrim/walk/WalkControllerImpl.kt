@@ -331,6 +331,7 @@ class WalkControllerImpl @Inject constructor(
     override suspend fun recordHonorArrival(
         walkId: Long,
         arrival: WayArrival,
+        walkedMeters: Double,
         waypointLabel: String,
         at: LocationPoint?,
     ): Boolean = dispatchMutex.withLock {
@@ -354,6 +355,7 @@ class WalkControllerImpl @Inject constructor(
                 walkId = walkId,
                 theirSeconds = arrival.theirSeconds,
                 yourSeconds = arrival.yourSeconds,
+                walkedMeters = walkedMeters,
                 eventAt = now,
                 waypoint = waypoint,
             )

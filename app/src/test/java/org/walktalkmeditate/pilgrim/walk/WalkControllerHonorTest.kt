@@ -163,10 +163,11 @@ class WalkControllerHonorTest {
         val walk = h.startHonorWalk()
         val arrival = WayArrival(theirSeconds = 600.0, yourSeconds = 540.0)
 
-        assertTrue(h.controller.recordHonorArrival(walk.id, arrival, "Walked their way: Morning loop", fix(0.01, 5_000L)))
+        val label = "Walked their way: Morning loop"
+        assertTrue(h.controller.recordHonorArrival(walk.id, arrival, 1_050.0, label, fix(0.01, 5_000L)))
         assertFalse(
             "a second arrival is refused",
-            h.controller.recordHonorArrival(walk.id, arrival, "Walked their way: Morning loop", fix(0.01, 6_000L)),
+            h.controller.recordHonorArrival(walk.id, arrival, 1_090.0, label, fix(0.01, 6_000L)),
         )
 
         assertEquals(1, h.repository.eventsFor(walk.id).count { it.eventType == WalkEventType.HONOR_ARRIVAL })
@@ -178,13 +179,14 @@ class WalkControllerHonorTest {
         assertEquals(HonorPhase.ARRIVED, session.phase)
         assertEquals(600.0, session.arrivalTheirSeconds!!, 0.0)
         assertEquals(540.0, session.arrivalYourSeconds!!, 0.0)
+        assertEquals("the first arrival's walked metres are kept", 1_050.0, session.arrivalWalkedMeters!!, 0.0)
     }
 
     @Test
     fun `arrival with no fix yet still writes the event and skips the waypoint`() = runBlocking {
         val walk = h.startHonorWalk()
 
-        assertTrue(h.controller.recordHonorArrival(walk.id, WayArrival(1.0, 1.0), "label", at = null))
+        assertTrue(h.controller.recordHonorArrival(walk.id, WayArrival(1.0, 1.0), 1.0, "label", at = null))
 
         assertEquals(1, h.repository.eventsFor(walk.id).count { it.eventType == WalkEventType.HONOR_ARRIVAL })
         assertTrue(h.repository.waypointsFor(walk.id).isEmpty())
@@ -195,7 +197,7 @@ class WalkControllerHonorTest {
         val walk = h.startHonorWalk()
         h.controller.finishWalk()
 
-        assertFalse(h.controller.recordHonorArrival(walk.id, WayArrival(1.0, 1.0), "label", fix(0.01, 1L)))
+        assertFalse(h.controller.recordHonorArrival(walk.id, WayArrival(1.0, 1.0), 1.0, "label", fix(0.01, 1L)))
 
         assertTrue(h.repository.eventsFor(walk.id).none { it.eventType == WalkEventType.HONOR_ARRIVAL })
         assertTrue(h.repository.waypointsFor(walk.id).isEmpty())
@@ -204,7 +206,7 @@ class WalkControllerHonorTest {
     @Test
     fun `a clean finish runs the Honor step before the state flips, keyed by the walk's uuid`() = runBlocking {
         val walk = h.startHonorWalk()
-        h.controller.recordHonorArrival(walk.id, WayArrival(600.0, 540.0), "label", fix(0.01, 1L))
+        h.controller.recordHonorArrival(walk.id, WayArrival(600.0, 540.0), 1_000.0, "label", fix(0.01, 1L))
 
         h.controller.finishWalk()
 
@@ -219,7 +221,7 @@ class WalkControllerHonorTest {
     @Test
     fun `a failing Honor step never stops the walk ending, and the launch retry completes it`() = runBlocking {
         val walk = h.startHonorWalk()
-        h.controller.recordHonorArrival(walk.id, WayArrival(600.0, 540.0), "label", fix(0.01, 1L))
+        h.controller.recordHonorArrival(walk.id, WayArrival(600.0, 540.0), 1_000.0, "label", fix(0.01, 1L))
         val blocker = File(folder.root, "Ways/links").apply { writeText("a file where the links folder goes") }
 
         h.controller.finishWalk()
@@ -240,7 +242,7 @@ class WalkControllerHonorTest {
     @Test
     fun `the tracker's own recovery records a recovered finish`() = runBlocking {
         val walk = h.startHonorWalk()
-        h.controller.recordHonorArrival(walk.id, WayArrival(600.0, 540.0), "label", fix(0.01, 1L))
+        h.controller.recordHonorArrival(walk.id, WayArrival(600.0, 540.0), 1_000.0, "label", fix(0.01, 1L))
         val revived = h.newController()
 
         revived.recoverStaleWalks()
