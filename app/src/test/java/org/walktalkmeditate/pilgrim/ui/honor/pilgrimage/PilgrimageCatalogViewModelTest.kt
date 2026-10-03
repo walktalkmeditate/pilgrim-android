@@ -3,12 +3,19 @@ package org.walktalkmeditate.pilgrim.ui.honor.pilgrimage
 
 import android.app.Application
 import android.content.Context
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.viewModelScope
 import androidx.test.core.app.ApplicationProvider
 import java.io.File
 import java.time.Instant
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.job
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import okhttp3.mockwebserver.MockResponse
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.After
@@ -32,6 +39,7 @@ import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageCopy
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageError
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageLedger
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness.Companion.declared
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness.Companion.waitUntil
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageRoute
@@ -44,8 +52,9 @@ import org.walktalkmeditate.pilgrim.data.units.UnitSystem
  * three faces with a zero-route catalog unreachable, the rust line only
  * over a held list, the first grapheme, and the ViewModel's loads (the
  * unreachable copy offline with no cache, a failed retry, the installed
- * route and every route's ledger, the reload when it is on top again, and
- * "try again" as the one forced load). Robolectric for the strings; the
+ * route and every route's ledger, the reload when it is on top again, a
+ * restored catalog's first return counted as one, only the latest of two
+ * loads writing, and "try again" as the one forced load). Robolectric for the strings; the
  * manager and the service run on real IO threads, so waits are wall-clock.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -281,6 +290,59 @@ class PilgrimageCatalogViewModelTest {
         assertEquals("camino-frances", vm.state.value.installed?.routeId)
     }
 
+    /**
+     * P4 A-3: a catalog restored under its route page had been on top
+     * before the kill, so that page's closing is a return, and reloads, as
+     * it would in an unbroken process.
+     */
+    @Test
+    fun `a catalog restored under its route page reloads on its first return to the top`() {
+        val saved = SavedStateHandle()
+        loaded(world.catalogViewModel(saved)).resumed()
+        world.newProcessCatalogService()
+        val restoredState = SavedStateHandle(saved.keys().associateWith { saved.get<Any>(it) })
+
+        val restored = loaded(world.catalogViewModel(restoredState))
+        assertNull(restored.state.value.installed)
+        world.install()
+        restored.resumed()
+
+        waitUntil("the reload reads the install the route page made") { restored.state.value.installed != null }
+    }
+
+    /**
+     * Only the latest load writes. The first opening's fetch fails slowly
+     * with no cache while the walker, back with Wi-Fi on, starts another:
+     * the older failure neither drops the spinner for the unreachable face
+     * nor leaves its rust line over the list the newer one loads.
+     */
+    @Test
+    fun `an older load that fails after a newer one began writes nothing`() {
+        val firstFetch = world.harness.stubs.hold(PilgrimageScreensWorld.INDEX_PATH)
+        val secondAnswer = CountDownLatch(1)
+        val fetches = AtomicInteger()
+        world.harness.stubs.stub(PilgrimageScreensWorld.INDEX_PATH) {
+            if (fetches.getAndIncrement() == 0) {
+                MockResponse().setResponseCode(HTTP_UNAVAILABLE)
+            } else {
+                secondAnswer.await(10, TimeUnit.SECONDS)
+                declared(PilgrimageScreensWorld.index())
+            }
+        }
+        val vm = world.catalogViewModel()
+        firstFetch.awaitArrival()
+
+        vm.load()
+        firstFetch.release()
+        waitUntil("the newer load is fetching") { fetches.get() == 2 }
+        waitUntil("the older load has ended") { vm.viewModelScope.coroutineContext.job.children.count() == 1 }
+
+        assertEquals("still the spinner", PilgrimageCatalogFace.Spinner, faceOf(vm))
+        secondAnswer.countDown()
+        loaded(vm)
+        assertEquals(PilgrimageCatalogFace.Listing(vm.catalog.value!!, failure = null), faceOf(vm))
+    }
+
     /** P4 §3.4: only "try again" reaches past a fresh cache. */
     @Test
     fun `try again forces a fetch, and a reload on top never does`() {
@@ -304,6 +366,9 @@ class PilgrimageCatalogViewModelTest {
         return vm
     }
 
+    private fun faceOf(vm: PilgrimageCatalogViewModel): PilgrimageCatalogFace =
+        PilgrimageCatalogModel.face(vm.state.value.isLoading, vm.catalog.value, vm.state.value.failure)
+
     private fun lineOf(face: PilgrimageCatalogFace): Int =
         PilgrimageCopy.line((face as PilgrimageCatalogFace.Unreachable).error)
 
@@ -326,4 +391,8 @@ class PilgrimageCatalogViewModelTest {
             stages = emptyList(),
         ),
     )
+
+    private companion object {
+        const val HTTP_UNAVAILABLE = 503
+    }
 }

@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.ArrowCircleDown
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -153,9 +154,17 @@ data class PilgrimageCatalogUiState(
  * screen coming back on top, as the route page closes over it, loads again,
  * never forced, so a route just downloaded or removed reads right. Only
  * "try again" forces a fetch.
+ *
+ * Two Android additions. Only the latest load writes, so an older one that
+ * fails after a newer began can't put the rust line over a list the newer
+ * loaded, nor drop the spinner for the unreachable face meanwhile. And the
+ * first time on top is kept in [SavedStateHandle], so a catalog restored
+ * under its route page after a process death reloads when that page
+ * closes, as the catalog of an unbroken process would.
  */
 @HiltViewModel
 class PilgrimageCatalogViewModel internal constructor(
+    private val savedState: SavedStateHandle,
     private val catalogs: PilgrimageCatalogService,
     private val packages: PilgrimagePackageManager,
     private val ledgerStore: PilgrimageLedgerStore,
@@ -165,11 +174,12 @@ class PilgrimageCatalogViewModel internal constructor(
 
     @Inject
     constructor(
+        savedState: SavedStateHandle,
         catalogs: PilgrimageCatalogService,
         packages: PilgrimagePackageManager,
         ledgerStore: PilgrimageLedgerStore,
         unitsPreferences: UnitsPreferencesRepository,
-    ) : this(catalogs, packages, ledgerStore, unitsPreferences, Dispatchers.IO)
+    ) : this(savedState, catalogs, packages, ledgerStore, unitsPreferences, Dispatchers.IO)
 
     val catalog: StateFlow<PilgrimageCatalog?> = catalogs.catalog
 
@@ -178,16 +188,16 @@ class PilgrimageCatalogViewModel internal constructor(
     private val _state = MutableStateFlow(PilgrimageCatalogUiState())
     val state: StateFlow<PilgrimageCatalogUiState> = _state.asStateFlow()
 
-    /** iOS's `hasAppearedOnce`: the opening's own load covers the first time on top. */
-    private var resumedOnce = false
+    /** The latest [load]'s number; a load that finds a later one has begun writes nothing. */
+    @Volatile private var latestLoad = 0
 
     init {
         load()
     }
 
-    /** The screen is on top again: a reload, except the first time, which [init] covers. */
+    /** The screen is on top again: a reload, except the first time, which [init] covers (iOS's `hasAppearedOnce`). */
     fun resumed() {
-        if (resumedOnce) load() else resumedOnce = true
+        if (savedState.get<Boolean>(KEY_RESUMED_ONCE) == true) load() else savedState[KEY_RESUMED_ONCE] = true
     }
 
     /**
@@ -195,28 +205,49 @@ class PilgrimageCatalogViewModel internal constructor(
      * process's read, which can finish an interrupted Replace), then the
      * ledger of every listed route, the first of a repeated id kept.
      * [PilgrimageCatalogService.load] throws only with no cache at all.
+     * An older load still running is left to finish, never cancelled, so
+     * `installed()` is never cut off mid-swap; it just writes nothing.
      */
     fun load(force: Boolean = false) {
+        val number = ++latestLoad
         _state.update { it.copy(isLoading = true, failure = null) }
         viewModelScope.launch {
-            try {
-                val catalog = catalogs.load(force)
-                val installed = packages.installed()
-                val ledgers = withContext(ioDispatcher) {
-                    LinkedHashMap<String, PilgrimageLedger>().apply {
-                        catalog.routes.forEach { entry -> ledgerStore.load(entry.id)?.let { putIfAbsent(entry.id, it) } }
-                    }
+            val result = read(force)
+            if (number != latestLoad) return@launch
+            _state.update { current ->
+                when (result) {
+                    is LoadResult.Read -> current.copy(isLoading = false, installed = result.installed, ledgers = result.ledgers)
+                    is LoadResult.Failed -> current.copy(isLoading = false, failure = result.error)
                 }
-                _state.update { it.copy(installed = installed, ledgers = ledgers) }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: PilgrimageException) {
-                _state.update { it.copy(failure = e.error) }
-            } catch (e: Exception) {
-                // iOS's `(error as? PilgrimageError) ?? .catalogUnreachable`: `installed()`'s own reads can fail here.
-                _state.update { it.copy(failure = PilgrimageError.CATALOG_UNREACHABLE) }
             }
-            _state.update { it.copy(isLoading = false) }
         }
+    }
+
+    private suspend fun read(force: Boolean): LoadResult = try {
+        val catalog = catalogs.load(force)
+        val installed = packages.installed()
+        val ledgers = withContext(ioDispatcher) {
+            LinkedHashMap<String, PilgrimageLedger>().apply {
+                catalog.routes.forEach { entry -> ledgerStore.load(entry.id)?.let { putIfAbsent(entry.id, it) } }
+            }
+        }
+        LoadResult.Read(installed, ledgers)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: PilgrimageException) {
+        LoadResult.Failed(e.error)
+    } catch (e: Exception) {
+        // iOS's `(error as? PilgrimageError) ?? .catalogUnreachable`: `installed()`'s own reads can fail here.
+        LoadResult.Failed(PilgrimageError.CATALOG_UNREACHABLE)
+    }
+
+    private sealed interface LoadResult {
+        class Read(val installed: PilgrimagePackageManager.Installed?, val ledgers: Map<String, PilgrimageLedger>) : LoadResult
+
+        class Failed(val error: PilgrimageError) : LoadResult
+    }
+
+    companion object {
+        internal const val KEY_RESUMED_ONCE = "resumedOnce"
     }
 }

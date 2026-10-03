@@ -89,9 +89,10 @@ fun PilgrimageCatalogContent(
 /**
  * One section per group in the catalog's order, a group no pilgrimage
  * claims under no header. The rust line over it is the only place a
- * reload that threw while the list showed reaches the walker. Rows are
- * keyed by position and entry id, never by a group's id, which can repeat
- * (P1 A6).
+ * reload that threw while the list showed reaches the walker: the frame's
+ * 16 in from the edge and 8 under the bar, as iOS's; the 8 under it stands
+ * in for the `List`'s own top inset. Rows are keyed by position and entry
+ * id, never by a group's id, which can repeat (P1 A6).
  */
 @Composable
 private fun CatalogListing(
@@ -106,7 +107,7 @@ private fun CatalogListing(
                 text = stringResource(PilgrimageCopy.line(failure)),
                 style = pilgrimType.caption,
                 color = pilgrimColors.rust,
-                modifier = Modifier.padding(horizontal = PilgrimSpacing.small).padding(bottom = PilgrimSpacing.small),
+                modifier = Modifier.padding(top = PilgrimSpacing.small, bottom = PilgrimSpacing.small),
             )
         }
         LazyColumn(modifier = Modifier.fillMaxSize()) {

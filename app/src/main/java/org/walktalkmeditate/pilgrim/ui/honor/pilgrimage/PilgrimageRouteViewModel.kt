@@ -44,11 +44,17 @@ enum class PilgrimageRouteAlert { REPLACE, REMOVE, DOWNLOAD_FIRST }
  * One route page's state, iOS `PilgrimageRouteView`'s `@State` (`PilgrimageRouteView.swift:86-98@7c200bf`,
  * P4 §4.1): the catalog entry and the release it was opened under, what
  * the last reload read, the page's own failure, the preview's two states,
- * and the redraw notice, kept for the page's life once shown. [actionInFlight]
- * is Android's: the page's own action from its tap to the reload after it,
- * so the button and the overflow are busy while the guard's database reads
- * run, before the manager's phase says so (iOS's guard reads nothing), and
- * a second tap can't read "the download didn't finish" meanwhile.
+ * and the redraw notice, kept for the page's life once shown.
+ *
+ * [holds] is Android's: the page's opening and its installs that haven't
+ * reloaded yet, each holding the button and the overflow. The opening holds
+ * the page until it has read what is installed, so a tap can't skip
+ * "Replace?" (iOS's opening reload is synchronous). Each install holds it
+ * from its tap through the reload after it, standing in for iOS's early
+ * phase and synchronous reload while the guard's database reads run, so a
+ * second tap can't read "the download didn't finish". Counted, so an
+ * install refused at once can't release another's hold. A Remove holds
+ * nothing, as iOS's synchronous Remove never dims the page.
  */
 @Immutable
 data class PilgrimageRoutePage(
@@ -61,8 +67,10 @@ data class PilgrimageRoutePage(
     val isLoadingStages: Boolean = false,
     val stagesFailure: PilgrimageError? = null,
     val showRedrawNotice: Boolean = false,
-    val actionInFlight: Boolean = false,
+    val holds: Int = 0,
 ) {
+    val isHeld: Boolean get() = holds > 0
+
     val isInstalled: Boolean get() = installed?.routeId == entry.id
 
     /** Against the release the page was opened under, by inequality (pilgrim-ios #121, matched). */
@@ -129,11 +137,12 @@ object PilgrimageRouteModel {
     /**
      * iOS's `isBusy` (`PilgrimageRouteView.swift:308-312@7c200bf`) holds the
      * button and the overflow while any download runs, this page's or not;
-     * a map save joins it in Stage 21-3. The stage rows and the alerts
-     * stay live (pilgrim-ios #121, matched).
+     * a map save joins it in Stage 21-3; [held] is the page's own
+     * ([PilgrimageRoutePage.holds]). The stage rows and the alerts stay
+     * live (pilgrim-ios #121, matched).
      */
-    fun isBusy(phase: PilgrimagePackageManager.Phase, actionInFlight: Boolean): Boolean =
-        phase is PilgrimagePackageManager.Phase.Downloading || actionInFlight
+    fun isBusy(phase: PilgrimagePackageManager.Phase, held: Boolean): Boolean =
+        phase is PilgrimagePackageManager.Phase.Downloading || held
 
     /** "stage d of n" from the manager's phase: both sides drop `route.json`, the one file that isn't a stage. */
     fun downloadProgress(resources: Resources, phase: PilgrimagePackageManager.Phase): String? {
@@ -256,7 +265,11 @@ class PilgrimageRouteViewModel internal constructor(
         viewModelScope.launch {
             if (_state.value == PilgrimageRouteUiState.Resolving) resolve()
             if (page == null) return@launch
-            reload()
+            try {
+                reload()
+            } finally {
+                releaseHold()
+            }
             loadStagesIfNeeded(force = false)
         }
     }
@@ -264,7 +277,7 @@ class PilgrimageRouteViewModel internal constructor(
     /** The download button: nothing while busy or with this release on the phone, as iOS's disabled button. */
     fun onDownloadTapped() {
         val page = page ?: return
-        if (PilgrimageRouteModel.isBusy(phase.value, page.actionInFlight)) return
+        if (PilgrimageRouteModel.isBusy(phase.value, page.isHeld)) return
         if (page.isInstalled && !page.hasUpdate) return
         beginInstall()
     }
@@ -272,7 +285,7 @@ class PilgrimageRouteViewModel internal constructor(
     /** The overflow's Remove, held while busy as iOS's menu is. */
     fun onRemoveTapped() {
         val page = page ?: return
-        if (PilgrimageRouteModel.isBusy(phase.value, page.actionInFlight)) return
+        if (PilgrimageRouteModel.isBusy(phase.value, page.isHeld)) return
         _alert.value = PilgrimageRouteAlert.REMOVE
     }
 
@@ -334,36 +347,41 @@ class PilgrimageRouteViewModel internal constructor(
      * iOS `install(replacing:)`: Update before Replace before Download, the
      * failure cleared as it starts and set by its end, and a reload either
      * way, since a failed Update's rollback removed the package. The work
-     * starts in the manager's scope at the tap. The page stays busy through
+     * starts in the manager's scope at the tap. The page stays held through
      * its reload, which reads off the main thread here, so no tap lands on
      * the label from before the commit.
      */
     private fun install(replacing: Boolean) {
         val page = page ?: return
-        updatePage { it.copy(failure = null, actionInFlight = true) }
+        updatePage { it.copy(failure = null, holds = it.holds + 1) }
         val operation = when {
             page.hasUpdate -> packages.update(page.entry, page.release)
             replacing -> packages.replace(page.entry, page.release)
             else -> packages.download(page.entry, page.release)
         }
         viewModelScope.launch {
-            val failure = failureOf { operation.await() }
-            updatePage { it.copy(failure = failure) }
-            reload()
-            updatePage { it.copy(actionInFlight = false) }
+            try {
+                val failure = failureOf { operation.await() }
+                updatePage { it.copy(failure = failure) }
+                reload()
+            } finally {
+                releaseHold()
+            }
         }
     }
 
-    /** iOS `removeRoute`: a reload on success; a refusal's line otherwise, the page left as it stood. */
+    /** iOS `removeRoute`: a reload on success; a refusal's line otherwise, the page left as it stood, never held. */
     private fun remove() {
         val page = page ?: return
-        updatePage { it.copy(actionInFlight = true) }
         val operation = packages.remove(page.entry.id)
         viewModelScope.launch {
             val failure = failureOf { operation.await() }
             if (failure == null) reload() else updatePage { it.copy(failure = failure) }
-            updatePage { it.copy(actionInFlight = false) }
         }
+    }
+
+    private fun releaseHold() {
+        updatePage { it.copy(holds = it.holds - 1) }
     }
 
     /** iOS's `(error as? PilgrimageError) ?? .incomplete`, the page's going rethrown. */
@@ -460,12 +478,14 @@ class PilgrimageRouteViewModel internal constructor(
         _state.value = catalog?.let { readyOrGone(it, id) } ?: PilgrimageRouteUiState.Gone
     }
 
+    /** A ready page is held by its opening reload, which the init block runs and releases. */
     private fun readyOrGone(catalog: PilgrimageCatalog, id: String): PilgrimageRouteUiState {
         val entry = catalog.routes.firstOrNull { it.id == id } ?: return PilgrimageRouteUiState.Gone
         val page = PilgrimageRoutePage(
             entry = entry,
             release = catalog.release,
             showRedrawNotice = savedState.get<Boolean>(KEY_REDRAW_NOTICE) == true,
+            holds = 1,
         )
         return PilgrimageRouteUiState.Ready(page)
     }

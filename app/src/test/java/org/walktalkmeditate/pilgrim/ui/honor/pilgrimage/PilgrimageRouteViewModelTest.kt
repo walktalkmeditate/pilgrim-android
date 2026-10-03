@@ -64,7 +64,8 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
  * The guard refusing on entry and flipping before the commit, a page
  * opened mid-download showing its live phase and keeping its opening state
  * after the commit (pilgrim-ios #121, matched), process-death restore, the
- * redraw notice shown once, the in-flight flag, the stage taps, Replace,
+ * redraw notice shown once, the page's holds (its opening reload's, each
+ * install's, counted, and none for a Remove), the stage taps, Replace,
  * Update, Remove, and a download that outlives its page. Robolectric for
  * the strings; waits are wall-clock, as the manager runs on real threads.
  */
@@ -250,12 +251,12 @@ class PilgrimageRouteViewModelTest {
     }
 
     @Test
-    fun `busy is any download running, or this page's own action`() {
+    fun `busy is any download running, or this page's own hold`() {
         val downloading = PilgrimagePackageManager.Phase.Downloading(done = 1, total = 3)
-        assertTrue(PilgrimageRouteModel.isBusy(downloading, actionInFlight = false))
-        assertTrue(PilgrimageRouteModel.isBusy(PilgrimagePackageManager.Phase.Idle, actionInFlight = true))
-        assertFalse(PilgrimageRouteModel.isBusy(PilgrimagePackageManager.Phase.Idle, actionInFlight = false))
-        assertFalse(PilgrimageRouteModel.isBusy(PilgrimagePackageManager.Phase.Failed(PilgrimageError.INCOMPLETE), actionInFlight = false))
+        assertTrue(PilgrimageRouteModel.isBusy(downloading, held = false))
+        assertTrue(PilgrimageRouteModel.isBusy(PilgrimagePackageManager.Phase.Idle, held = true))
+        assertFalse(PilgrimageRouteModel.isBusy(PilgrimagePackageManager.Phase.Idle, held = false))
+        assertFalse(PilgrimageRouteModel.isBusy(PilgrimagePackageManager.Phase.Failed(PilgrimageError.INCOMPLETE), held = false))
     }
 
     // ---- The spec's additions: the ViewModel ----
@@ -304,7 +305,7 @@ class PilgrimageRouteViewModelTest {
         world.harness.signals.screenUp = true
         hold.release()
 
-        waitUntil("the refusal lands") { pageOf(vm).failure != null && !pageOf(vm).actionInFlight }
+        waitUntil("the refusal lands") { pageOf(vm).failure != null && !pageOf(vm).isHeld }
         assertEquals(PilgrimageError.WALK_IN_PROGRESS, pageOf(vm).failure)
         assertNull(runBlocking { world.manager.installed() })
         assertFalse(pageOf(vm).isInstalled)
@@ -323,11 +324,11 @@ class PilgrimageRouteViewModelTest {
         assertEquals(PilgrimagePackageManager.Phase.Downloading(done = 2, total = 3), vm.phase.value)
         assertEquals("stage 1 of 2", PilgrimageRouteModel.downloadProgress(resources, vm.phase.value))
         val page = settled(vm)
-        assertTrue(PilgrimageRouteModel.isBusy(vm.phase.value, page.actionInFlight))
+        assertTrue(PilgrimageRouteModel.isBusy(vm.phase.value, page.isHeld))
         vm.onDownloadTapped()
         vm.onRemoveTapped()
         assertNull(vm.alert.value)
-        assertFalse(pageOf(vm).actionInFlight)
+        assertEquals("the held taps started nothing", 0, pageOf(vm).holds)
         hold.release()
         download.awaitBlocking()
     }
@@ -370,7 +371,7 @@ class PilgrimageRouteViewModelTest {
         assertEquals(RELEASE, page.release)
         assertTrue(page.showRedrawNotice)
         assertEquals(PilgrimagePackageManager.Phase.Idle, vm.phase.value)
-        assertFalse(PilgrimageRouteModel.isBusy(vm.phase.value, page.actionInFlight))
+        assertFalse(PilgrimageRouteModel.isBusy(vm.phase.value, page.isHeld))
     }
 
     @Test
@@ -407,12 +408,12 @@ class PilgrimageRouteViewModelTest {
     }
 
     /**
-     * Android's own flag: between the tap and the phase, the guard reads the
+     * Android's own hold: between the tap and the phase, the guard reads the
      * database, and a second tap there would be refused as a second
      * download, "the download didn't finish", while the first carries on.
      */
     @Test
-    fun `a quick second tap is held by the page's own in-flight flag`() {
+    fun `a quick second tap is held by the page's own hold`() {
         world.holdCatalog()
         val vm = world.routeViewModel()
         settled(vm)
@@ -426,14 +427,74 @@ class PilgrimageRouteViewModelTest {
         vm.onDownloadTapped()
         waitUntil("the guard is reading") { guardReads.get() == 1 }
         assertEquals("the phase hasn't moved yet", PilgrimagePackageManager.Phase.Idle, vm.phase.value)
-        assertTrue(PilgrimageRouteModel.isBusy(vm.phase.value, pageOf(vm).actionInFlight))
+        assertTrue(PilgrimageRouteModel.isBusy(vm.phase.value, pageOf(vm).isHeld))
         vm.onDownloadTapped()
         guardHeld.countDown()
 
-        waitUntil("the download lands") { pageOf(vm).isInstalled && !pageOf(vm).actionInFlight }
+        waitUntil("the download lands") { pageOf(vm).isInstalled && !pageOf(vm).isHeld }
         assertNull(pageOf(vm).failure)
         runBlocking { world.manager.installed() }
         assertEquals("one download: its entry check and its commit check", 2, guardReads.get())
+    }
+
+    /**
+     * Android's async opening read: until the first reload has read what
+     * is installed, the page reads "Download" with nothing installed, so a
+     * tap there would download beside the other route without "Replace?".
+     * iOS's opening reload is synchronous, so its page has no such moment.
+     */
+    @Test
+    fun `a tap before the first reload lands does nothing, so Download never skips Replace`() {
+        withNorteInstalled()
+        world.holdCatalog()
+        val busy = world.holdManager()
+
+        val vm = world.routeViewModel()
+
+        assertTapsHeldUntilTheFirstReload(vm, busy)
+    }
+
+    /** P4 §4.11, after a kill mid-download: the launch sweep keeps the manager busy, so the restored page's reload waits. */
+    @Test
+    fun `a page restored while the manager is busy is held until its first reload, then asks Replace`() {
+        withNorteInstalled()
+        world.holdCatalog()
+        world.newProcessCatalogService()
+        val busy = world.holdManager()
+
+        val vm = world.routeViewModel()
+        waitUntil("the catalog is read") { vm.state.value is PilgrimageRouteUiState.Ready }
+
+        assertTapsHeldUntilTheFirstReload(vm, busy)
+    }
+
+    /**
+     * Counted holds. With the page's own download streaming, a stage's
+     * "Download this route first?" starts a second install, which the
+     * manager refuses at once (pilgrim-ios #119, matched). Its reload must
+     * leave the first install's hold, or the page would read an idle
+     * "Download" between that install's commit and the reload after it.
+     */
+    @Test
+    fun `an install refused while the page's own runs leaves that one's hold`() {
+        val hold = world.harness.hold("stage-01.json")
+        world.holdCatalog()
+        val vm = world.routeViewModel()
+        settled(vm)
+        vm.onDownloadTapped()
+        hold.awaitArrival()
+
+        vm.open(0)
+        waitUntil("Download this route first?") { vm.alert.value == PilgrimageRouteAlert.DOWNLOAD_FIRST }
+        vm.confirmDownloadFirst()
+        waitUntil("the second install is refused and reloaded") {
+            pageOf(vm).failure == PilgrimageError.INCOMPLETE && pageOf(vm).holds == 1
+        }
+
+        assertTrue("held whatever the phase says", PilgrimageRouteModel.isBusy(PilgrimagePackageManager.Phase.Idle, pageOf(vm).isHeld))
+        hold.release()
+        waitUntil("the first install lands") { pageOf(vm).isInstalled && !pageOf(vm).isHeld }
+        assertNull("its success clears the refusal's line, as iOS's does", pageOf(vm).failure)
     }
 
     /** P4 §4.8, pilgrim-ios #119 item 3: no busy check; an installed stage whose Way won't read asks for a download too. */
@@ -489,7 +550,7 @@ class PilgrimageRouteViewModelTest {
 
         vm.confirmReplace()
 
-        waitUntil("the swap lands") { pageOf(vm).isInstalled && !pageOf(vm).actionInFlight }
+        waitUntil("the swap lands") { pageOf(vm).isInstalled && !pageOf(vm).isHeld }
         assertNull(pageOf(vm).failure)
         assertEquals(ROUTE_ID, runBlocking { world.manager.installed() }?.routeId)
         assertFalse(world.harness.wayStore.routeFile(NORTE_ID)!!.exists())
@@ -509,11 +570,11 @@ class PilgrimageRouteViewModelTest {
         vm.onDownloadTapped()
 
         assertNull(vm.alert.value)
-        waitUntil("the update lands") { pageOf(vm).installed?.release == "v1.8.0" && !pageOf(vm).actionInFlight }
+        waitUntil("the update lands") { pageOf(vm).installed?.release == "v1.8.0" && !pageOf(vm).isHeld }
         val updated = pageOf(vm)
         assertEquals("On your phone", PilgrimageRouteModel.buttonLabel(resources, updated.isInstalled, updated.hasUpdate))
         vm.onDownloadTapped()
-        assertFalse("a current route's button does nothing", pageOf(vm).actionInFlight)
+        assertEquals("a current route's button does nothing", 0, pageOf(vm).holds)
     }
 
     /** P4 §4.8: Remove leaves the stage list as the removed package drew it, and the kept ledger fills the circles. */
@@ -528,8 +589,9 @@ class PilgrimageRouteViewModelTest {
         vm.onRemoveTapped()
         assertEquals(PilgrimageRouteAlert.REMOVE, vm.alert.value)
         vm.confirmRemove()
+        assertFalse("a Remove dims nothing, as iOS's synchronous one", PilgrimageRouteModel.isBusy(vm.phase.value, pageOf(vm).isHeld))
 
-        waitUntil("the remove lands") { !pageOf(vm).isInstalled && !pageOf(vm).actionInFlight }
+        waitUntil("the remove lands") { !pageOf(vm).isInstalled }
         val page = pageOf(vm)
         assertNull(vm.alert.value)
         assertEquals(listOf(0, 1), page.stages.map { it.index })
@@ -597,9 +659,37 @@ class PilgrimageRouteViewModelTest {
     private fun settled(vm: PilgrimageRouteViewModel): PilgrimageRoutePage {
         waitUntil("the page settles") {
             val page = (vm.state.value as? PilgrimageRouteUiState.Ready)?.page
-            page != null && page.route != null && !page.isLoadingStages && !page.actionInFlight
+            page != null && page.route != null && !page.isLoadingStages && !page.isHeld
         }
         return pageOf(vm)
+    }
+
+    /** Two routes listed and the Norte on the phone, so a Download of the Francés has to ask "Replace?". */
+    private fun withNorteInstalled() {
+        world.stubIndex(PilgrimageScreensWorld.index(routes = listOf(ROUTE_ID to "Francés", NORTE_ID to "Norte")))
+        world.harness.stubNorte()
+        world.install(NORTE_ID)
+    }
+
+    /** While [busy] keeps the page's first reload waiting, its taps start nothing; once it lands, Download asks "Replace?". */
+    private fun assertTapsHeldUntilTheFirstReload(vm: PilgrimageRouteViewModel, busy: PilgrimageScreensWorld.ManagerHold) {
+        val opening = pageOf(vm)
+        assertNull("nothing is read yet", opening.installed)
+        assertTrue(PilgrimageRouteModel.isBusy(vm.phase.value, opening.isHeld))
+        vm.onDownloadTapped()
+        vm.onRemoveTapped()
+        assertNull(vm.alert.value)
+        assertEquals("only the opening's hold", 1, pageOf(vm).holds)
+
+        busy.release()
+
+        val page = settled(vm)
+        assertEquals(NORTE_ID, page.installed?.routeId)
+        assertEquals("no tap reached the guard", 1, busy.guardReads)
+        assertEquals(NORTE_ID, runBlocking { world.manager.installed() }?.routeId)
+        assertFalse("nothing landed beside the Norte", world.harness.wayStore.routeFile(ROUTE_ID)!!.exists())
+        vm.onDownloadTapped()
+        assertEquals(PilgrimageRouteAlert.REPLACE, vm.alert.value)
     }
 
     /** The stage Way [action] opens, subscribed before it runs, as the screen subscribes before any tap. */

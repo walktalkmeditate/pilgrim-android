@@ -43,7 +43,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
@@ -100,7 +102,7 @@ fun PilgrimageRouteContent(
     modifier: Modifier = Modifier,
 ) {
     val page = (state as? PilgrimageRouteUiState.Ready)?.page
-    val busy = page != null && PilgrimageRouteModel.isBusy(phase, page.actionInFlight)
+    val busy = page != null && PilgrimageRouteModel.isBusy(phase, page.isHeld)
     HonorSheetFrame(
         title = page?.entry?.name.orEmpty(),
         leading = {
@@ -290,12 +292,15 @@ private fun NextRow(page: PilgrimageRoutePage, units: UnitSystem, onClick: () ->
 /**
  * The circle, filled once the ledger has the stage completed, else hollow,
  * and never spoken (pilgrim-ios #121, matched); "1. <name>" over the facts
- * line. One button, live during a download as iOS's rows are.
+ * line. One button, live during a download as iOS's rows are. The circle
+ * is the caption's size, so it follows the font scale as iOS's
+ * caption-font symbol follows Dynamic Type.
  */
 @Composable
 private fun StageRow(stage: PilgrimageRouteStage, ledger: PilgrimageLedger?, units: UnitSystem, onClick: () -> Unit) {
     val resources = LocalResources.current
     val walked = ledger?.stages?.get(stage.index.toString())?.completed == true
+    val circleSize = with(LocalDensity.current) { pilgrimType.caption.fontSize.toDp() }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -311,7 +316,8 @@ private fun StageRow(stage: PilgrimageRouteStage, ledger: PilgrimageLedger?, uni
             tint = pilgrimColors.stone,
             modifier = Modifier
                 .padding(top = 4.dp)
-                .size(CIRCLE_SIZE),
+                .size(circleSize)
+                .testTag(STAGE_CIRCLE_TAG),
         )
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(text = PilgrimageRouteModel.stageTitle(resources, stage), style = pilgrimType.body, color = pilgrimColors.ink)
@@ -493,7 +499,6 @@ fun PilgrimageRouteSheet(
     }
 }
 
-/** iOS's caption-sized circle. */
-private val CIRCLE_SIZE = 12.dp
+internal const val STAGE_CIRCLE_TAG = "pilgrimage-stage-circle"
 
 private const val SPARSE_ALPHA = 0.7f

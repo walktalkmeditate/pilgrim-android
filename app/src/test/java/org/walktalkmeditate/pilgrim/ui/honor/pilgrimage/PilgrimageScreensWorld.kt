@@ -5,6 +5,10 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
@@ -66,7 +70,8 @@ internal class PilgrimageScreensWorld(private val root: File) {
     /** The service's own `load`, as the catalog screen leaves it held for the route page. */
     fun holdCatalog(): PilgrimageCatalog = runBlocking { catalogs.load() }
 
-    fun catalogViewModel() = PilgrimageCatalogViewModel(
+    fun catalogViewModel(saved: SavedStateHandle = SavedStateHandle()) = PilgrimageCatalogViewModel(
+        savedState = saved,
         catalogs = catalogs,
         packages = manager,
         ledgerStore = harness.ledgers,
@@ -91,7 +96,37 @@ internal class PilgrimageScreensWorld(private val root: File) {
         manager.download(harness.entry(routeId), release).awaitBlocking()
     }
 
+    /**
+     * The manager busy, as the launch sweep keeps it after a kill: a Remove
+     * of a route nothing installed, held at its guard's first read, so
+     * `installed()` waits behind it until [ManagerHold.release]. Every
+     * guard read from here on is counted, the holder's included.
+     */
+    fun holdManager(): ManagerHold {
+        val gate = CountDownLatch(1)
+        val reads = AtomicInteger()
+        harness.signals.onCheck = {
+            reads.incrementAndGet()
+            gate.await(10, TimeUnit.SECONDS)
+        }
+        val holder = manager.remove(UNLISTED_ROUTE_ID)
+        PilgrimagePackageHarness.waitUntil("the manager is held") { reads.get() == 1 }
+        return ManagerHold(gate, reads, holder)
+    }
+
+    class ManagerHold(private val gate: CountDownLatch, private val reads: AtomicInteger, private val holder: Deferred<Unit>) {
+        val guardReads: Int get() = reads.get()
+
+        fun release() {
+            gate.countDown()
+            holder.awaitBlocking()
+        }
+    }
+
     companion object {
+        /** A route no index lists and nothing installs. */
+        const val UNLISTED_ROUTE_ID = "camino-ingles"
+
         const val INDEX_PATH = "/gh/walktalkmeditate/open-pilgrimages@main/index.json"
         const val START_MILLIS = 3_000_000_000L
 

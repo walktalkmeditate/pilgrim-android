@@ -5,7 +5,12 @@ import android.app.Application
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
@@ -16,18 +21,25 @@ import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
+import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertLeftPositionInRootIsEqualTo
+import androidx.compose.ui.test.assertTopPositionInRootIsEqualTo
+import androidx.compose.ui.test.assertWidthIsEqualTo
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import java.time.Instant
 import org.junit.Assert.assertEquals
@@ -57,8 +69,9 @@ import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
  * What TalkBack reads on the third door's screens (pilgrimage-stage spec
  * P4 §2, §3.3, §4.2–§4.7, §12): the Ways sheet's third section, a catalog
  * row as one button with the badge's words and no plate, the catalog's
- * three faces, the route page's bar, button, footer lines, next row and
- * stage rows, and the three alerts with iOS's buttons. A window as tall as
+ * three faces and its rust line's place, the route page's bar, button,
+ * footer lines, next row and stage rows (the circle caption-sized), and
+ * the three alerts with iOS's buttons. A window as tall as
  * the content, so the lazy lists compose every row.
  */
 @RunWith(RobolectricTestRunner::class)
@@ -184,6 +197,25 @@ class PilgrimageScreensSemanticsTest {
         )
     }
 
+    /** iOS `PilgrimageCatalogView.swift:111-117@7c200bf`: `Padding.normal` from the edge, `Padding.small` above. */
+    @Test
+    fun `the failed retry's line stands 16 in from the sheet's edge and 8 under the bar`() {
+        var failure by mutableStateOf<PilgrimageError?>(null)
+        show {
+            CatalogContent(
+                catalog = PilgrimageCatalog(RELEASE, listOf(entry)),
+                state = PilgrimageCatalogUiState(isLoading = false, failure = failure),
+            )
+        }
+        val underTheBar = composeRule.onNodeWithText(entry.name, substring = true).getUnclippedBoundsInRoot().top
+
+        failure = PilgrimageError.CATALOG_UNREACHABLE
+
+        composeRule.onNodeWithText("the routes are out of reach right now")
+            .assertLeftPositionInRootIsEqualTo(16.dp)
+            .assertTopPositionInRootIsEqualTo(underTheBar + 8.dp)
+    }
+
     // ---- P4 §4: the route page ----
 
     @Test
@@ -198,7 +230,7 @@ class PilgrimageScreensSemanticsTest {
     }
 
     @Test
-    fun `the ellipsis opens Remove, held while busy`() {
+    fun `the ellipsis opens Remove`() {
         var removes = 0
         showRoute(page(installed = installed(release = RELEASE)), actions = actions(onRemove = { removes++ }))
 
@@ -253,6 +285,26 @@ class PilgrimageScreensSemanticsTest {
             .performClick()
         assertEquals(1, opened)
         composeRule.onNodeWithText("Stages").assert(isHeading())
+    }
+
+    /** iOS `PilgrimageRouteView.swift:290-294@7c200bf`: a caption-font symbol, which Dynamic Type grows. */
+    @Test
+    fun `a stage row's circle is the caption's size, so it grows with the font scale`() {
+        show {
+            CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale = 2f)) {
+                PilgrimageRouteContent(
+                    state = PilgrimageRouteUiState.Ready(page()),
+                    phase = PilgrimagePackageManager.Phase.Idle,
+                    units = UnitSystem.Metric,
+                    alert = null,
+                    actions = actions(),
+                )
+            }
+        }
+
+        composeRule.onAllNodesWithTag(STAGE_CIRCLE_TAG, useUnmergedTree = true)[0]
+            .assertWidthIsEqualTo(24.dp)
+            .assertHeightIsEqualTo(24.dp)
     }
 
     @Test
