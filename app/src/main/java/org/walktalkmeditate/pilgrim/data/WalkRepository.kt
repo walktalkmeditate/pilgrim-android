@@ -234,8 +234,9 @@ open class WalkRepository @Inject constructor(
 
     /**
      * Arrival's compare-and-set: on a walk still unfinished, flips the
-     * session's phase once and keeps the arrival numbers for the link, and
-     * only then writes HONOR_ARRIVAL and the reserved waypoint (iOS
+     * session's phase once and keeps the arrival numbers for the link and
+     * the [walkedMeters] for the stage arrival card, and only then writes
+     * HONOR_ARRIVAL and the reserved waypoint (iOS
      * `recordHonorArrival`, `ActiveWalkViewModel+Honor.swift:247-252@7c200bf`:
      * event, then waypoint). A [waypoint] is null when no fix exists yet;
      * the event still lands, as on iOS.
@@ -246,12 +247,13 @@ open class WalkRepository @Inject constructor(
         walkId: Long,
         theirSeconds: Double,
         yourSeconds: Double,
+        walkedMeters: Double,
         eventAt: Long,
         waypoint: Waypoint?,
     ): Boolean = database.withTransaction {
         val walk = walkDao.getById(walkId)
         if (walk == null || walk.endTimestamp != null) return@withTransaction false
-        if (database.honorDao().recordArrival(walkId, theirSeconds, yourSeconds) != 1) {
+        if (database.honorDao().recordArrival(walkId, theirSeconds, yourSeconds, walkedMeters) != 1) {
             return@withTransaction false
         }
         walkEventDao.insert(WalkEvent(walkId = walkId, timestamp = eventAt, eventType = WalkEventType.HONOR_ARRIVAL))

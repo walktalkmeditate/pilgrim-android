@@ -50,6 +50,7 @@ import org.walktalkmeditate.pilgrim.data.honor.dismissedAt
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.data.honor.isStagedPerWalk
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
@@ -65,6 +66,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.domain.wgs84MidLatitudeMeters
 import org.walktalkmeditate.pilgrim.honor.HonorReplies
+import org.walktalkmeditate.pilgrim.honor.HonorStageHandoff
 import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.honor.OwnWalkWays
 import org.walktalkmeditate.pilgrim.ui.honor.COMMAND_CONFIRM_WINDOW_MILLIS
@@ -237,6 +239,7 @@ class HonorWalkViewModel internal constructor(
     /** iOS's walk duration tick, the companion's and the player clock's read cadence. */
     private val tickMillis: Long,
     private val loadWaveform: suspend (File) -> FloatArray? = ::cardWaveform,
+    private val stageHandoff: HonorStageHandoff = HonorStageHandoff(),
 ) : ViewModel() {
 
     @Inject
@@ -252,6 +255,7 @@ class HonorWalkViewModel internal constructor(
         publisher: WalkActionPublisher,
         releaseFlags: ReleaseFlags,
         clock: Clock,
+        stageHandoff: HonorStageHandoff,
     ) : this(
         controller, honorDao, repository, wayStore, ownWalkWays, mediaFiles, replies,
         headings = heading::headings,
@@ -260,6 +264,7 @@ class HonorWalkViewModel internal constructor(
         clock = clock,
         ioDispatcher = Dispatchers.IO,
         tickMillis = COMPANION_TICK_MILLIS,
+        stageHandoff = stageHandoff,
     )
 
     private val enabled = releaseFlags.honor
@@ -383,7 +388,9 @@ class HonorWalkViewModel internal constructor(
 
     /**
      * The Way [choice] names, for the pre-walk screen, once per choice: an
-     * own walk's built from its source walk, a shared one read from the store.
+     * own walk's built from its source walk, a shared one read from the
+     * store, and a stage as its overview handed it over, the copy Start
+     * stages (owner decision 2), or else read from its package.
      */
     fun showWay(choice: HonorWayChoice) {
         if (!enabled || previewWay == choice) return
@@ -391,7 +398,8 @@ class HonorWalkViewModel internal constructor(
         viewModelScope.launch {
             val way = when (choice) {
                 is HonorWayChoice.OwnWalk -> (ownWalkWays.build(choice.sourceWalkId) as? OwnWalkWays.Built.Ready)?.way
-                is HonorWayChoice.Stored -> withContext(ioDispatcher) { wayStore.load(choice.wayId) }
+                is HonorWayChoice.Stored -> stageHandoff.stage(choice.wayId)
+                    ?: withContext(ioDispatcher) { wayStore.load(choice.wayId) }
             } ?: return@launch
             previewState.value = withContext(ioDispatcher) {
                 HonorWalkUiState(way, HonorWayLine.of(way), wayPins(way, heardVoiceIds = emptySet()), session = null)
@@ -615,10 +623,15 @@ class HonorWalkViewModel internal constructor(
         }.flowOn(ioDispatcher)
     }
 
-    /** The staged Way an own-walk session follows, else the listed one, as `:tracker`'s session loads it. */
+    /**
+     * The staged Way an own-walk or stage session follows, else the listed
+     * one, as `:tracker`'s session loads it. A stage without its staged copy
+     * reads its package, which the package guard holds still while this
+     * session's live row exists (see `HonorSession.prepare`).
+     */
     private suspend fun loadWay(walkId: Long, key: WayKey): LoadedWay? = withContext(ioDispatcher) {
         val walkUuid = repository.getWalk(walkId)?.uuid ?: return@withContext null
-        val staged = if (key.sourceKind == HonorSourceKind.OWN_WALK) wayStore.staged(walkUuid) else null
+        val staged = if (key.sourceKind.isStagedPerWalk) wayStore.staged(walkUuid) else null
         val way = staged?.takeIf { it.id == key.wayId } ?: wayStore.load(key.wayId) ?: return@withContext null
         LoadedWay(way, HonorWayLine.of(way), WayGeometry(way.route))
     }

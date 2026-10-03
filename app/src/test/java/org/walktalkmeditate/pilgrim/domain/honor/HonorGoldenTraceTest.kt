@@ -6,6 +6,7 @@ import kotlin.math.tan
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -15,12 +16,12 @@ import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.wgs84MidLatitudeMeters
 
 /**
- * The golden engine traces (plan U16): each trace in `honor/golden/corpus/`
- * run through Android's [HonorEngine] against what iOS's own engine did
- * with the same Way and the same inputs, `honor/golden/expected/`. The
- * README there says how `capture/capture.sh` drove `HonorEngine.swift`
- * @7c200bf (through its real `bind`, as `ActiveWalkViewModel+Honor.swift`
- * does) and what each trace proves.
+ * The golden engine traces (plan U16, and U35's water traces): each trace
+ * in `honor/golden/corpus/` run through Android's [HonorEngine] against
+ * what iOS's own engine did with the same Way and the same inputs,
+ * `honor/golden/expected/`. The README there says how `capture/capture.sh`
+ * drove `HonorEngine.swift` @7c200bf (through its real `bind`, as
+ * `ActiveWalkViewModel+Honor.swift` does) and what each trace proves.
  *
  * For every input, in order:
  * - the same events, with the same moment ids, the same fix index, and a
@@ -28,7 +29,8 @@ import org.walktalkmeditate.pilgrim.domain.wgs84MidLatitudeMeters
  *   view model does;
  * - the same state after it: the published values, and, read from private
  *   fields on both sides, the soft tap's state, the arrival count, the
- *   re-acquire clocks, and the voice queue;
+ *   re-acquire clocks, the voice queue, and a stage's water spoken and
+ *   quiet clock;
  * - the same `CLLocation.distance` calls (moment radii, voice drops,
  *   arrival), in the same order, to the same places.
  *
@@ -160,15 +162,142 @@ class HonorGoldenTraceTest {
         assertEquals(listOf("voiceResume"), ios.eventsAt(sitting[1]))
     }
 
+    // A pilgrimage stage's water (pilgrimage-stage spec P3 §17.3, W1–W9)
+
+    @Test
+    fun `W1 the Begin fix can be the first notice, at clock 0`() = golden("water-first-free-12n") { ios ->
+        assertEquals(listOf("markAhead w-a"), ios.eventsAt(0))
+        assertEquals(0.0, ios.records[0].state!!.lastNoticeSeconds!!, 0.0)
+        assertEquals(1, ios.count("markAhead"))
+    }
+
+    @Test
+    fun `W2 one water an hour, the one passed inside it never spoken`() = golden("water-quiet-hour-23n") { ios ->
+        val (first, third) = ios.water()
+        assertEquals(listOf("w-a", "w-c"), ios.water().map { it.id })
+        assertTrue("w-b is passed inside the hour", ios.clockAt(ios.firstFixPast("w-b")) - first.clock < QUIET)
+        assertEquals("w-c speaks on the first fix after the hour", ios.firstFixAfterTheHour(first), third.input)
+    }
+
+    @Test
+    fun `W3 a water skipped in the hour speaks once it ends, and the next is silenced`() =
+        golden("water-skipped-then-spoken-43n") { ios ->
+            val (free, late) = ios.water()
+            assertEquals(listOf("w-free", "w-late"), ios.water().map { it.id })
+            assertEquals("Begun off the line, the first speaks at the join", ios.firstOnWayFix(), free.input)
+            val reached = ios.clockAt(ios.firstFixWithin("w-late"))
+            assertTrue("w-late came within 300 m inside the hour", reached - free.clock < QUIET)
+            assertEquals(ios.firstFixAfterTheHour(free), late.input)
+            assertTrue("w-after was within 300 m when w-late spoke", ios.aheadAt(late.input, "w-after") in 0.0..300.0)
+            val wall = ios.trace.inputs[late.input].t - ios.trace.inputs[free.input].t
+            assertTrue("the 610 s pause stretched the hour in wall time: $wall s", wall > QUIET + 610)
+            assertTrue("the 600 s sitting is inside it: $wall s", wall < QUIET + 610 + 600)
+        }
+
+    @Test
+    fun `W4 only on-way water speaks`() = golden("water-off-line-and-kinds-38s") { ios ->
+        assertEquals("of eight marks, only water exactly 60 m off", listOf("w-60"), ios.water().map { it.id })
+    }
+
+    @Test
+    fun `W5 a water speaks once, walked past, back, and past again after the hour`() =
+        golden("water-once-per-mark-55n") { ios ->
+            val (spoken) = ios.water()
+            assertEquals(listOf("w-a"), ios.water().map { it.id })
+            val past = ios.firstFixPast("w-a")
+            val back = ios.fixes().first { it > past && ios.aheadAt(it, "w-a") > 0 }
+            val again = ios.fixes().first { it > back && ios.aheadAt(it, "w-a") < 0 }
+            assertTrue("walked back, it is ahead again within 300 m", ios.aheadAt(back, "w-a") in 0.0..300.0)
+            assertTrue("and passed again after the hour", ios.clockAt(again) - spoken.clock > QUIET)
+        }
+
+    @Test
+    fun `W6 water waits while the walker is off the Way, and speaks on the rejoining fix`() =
+        golden("water-off-way-gate-28s") { ios ->
+            val (first, second) = ios.water()
+            assertEquals(listOf("w-a", "w-b"), ios.water().map { it.id })
+            val hourEnds = ios.firstFixAfterTheHour(first)
+            assertFalse("off the Way when the hour ended", ios.records[hourEnds].state!!.isOnWay)
+            assertTrue("with w-b within 300 m of the progress held", ios.aheadAt(hourEnds, "w-b") in 0.0..300.0)
+            val rejoins = ios.fixes().first { it > hourEnds && ios.records[it].state!!.isOnWay }
+            assertEquals("spoken on the fix that rejoins", rejoins, second.input)
+        }
+
+    @Test
+    fun `W7 water reads no gate, and its hour runs on engine seconds`() = golden("water-pause-sitting-46n") { ios ->
+        val (paused, sitting) = ios.water()
+        assertEquals(setOf("paused", "recording"), ios.gatesAt(paused.input))
+        assertEquals("the clock frozen by the pause", 60.7, paused.clock, 0.0)
+        assertEquals(setOf("meditating", "externalAudio"), ios.gatesAt(sitting.input))
+        assertEquals(ios.firstFixAfterTheHour(paused), sitting.input)
+        // A fix sees the tick 0.6 s before it; past that, wall time runs ahead
+        // of the engine clock by the 610 s pause, and by nothing of the sitting.
+        assertEquals(610.6, ios.trace.inputs[sitting.input].t - sitting.clock, 1e-9)
+    }
+
+    @Test
+    fun `W8 begun off the line, the first water speaks at the join, free`() = golden("water-fallback-join-17s") { ios ->
+        assertFalse(ios.records[0].state!!.isAnchoredOnWay)
+        assertEquals(ios.firstOnWayFix(), ios.water().single().input)
+        assertTrue("not the Begin fix's clock", ios.water().single().clock > 0)
+    }
+
+    @Test
+    fun `W9 a re-acquire landing two waters within 300 m speaks only the nearer`() =
+        golden("water-two-in-one-fix-50n") { ios ->
+            val (_, landed) = ios.water()
+            assertEquals(listOf("w-a", "w-b"), ios.water().map { it.id })
+            val before = ios.fixes().last { it < landed.input }
+            assertFalse("the fix before was off the Way", ios.records[before].state!!.isOnWay)
+            assertTrue("w-c landed within 300 m too", ios.aheadAt(landed.input, "w-c") in 0.0..300.0)
+        }
+
+    /**
+     * W10, Android only: iOS never revives a walk, so the uninterrupted iOS
+     * trace is what a revival must go on to say. The engine is snapshotted
+     * just after the first water, and again inside the quiet hour, then
+     * rebuilt fresh, restored, and given the engine clock of the last tick,
+     * as `HonorSession`'s revival is; every later input must bring exactly
+     * iOS's events and water state.
+     */
+    @Test
+    fun `W10 a revived engine speaks exactly the water iOS went on to speak`() {
+        val ios = capture("water-skipped-then-spoken-43n")
+        val firstWater = ios.water().first().input
+        val insideTheHour = ios.trace.inputs.indexOfFirst { it.kind == "tick" && it.t > 3000.0 }
+        for (cut in listOf(firstWater + 1, insideTheHour + 1)) {
+            val live = AndroidRun(ios.way, ios.trace)
+            ios.trace.inputs.take(cut).forEach { live.step(it) }
+            val revived = AndroidRun(ios.way, ios.trace)
+            revived.engine.restore(live.engine.snapshot())
+            revived.engine.updateActiveDuration(ios.clockAt(cut))
+            for (i in cut until ios.trace.inputs.size) {
+                val at = "revived at input $cut, input $i"
+                val events = revived.step(ios.trace.inputs[i])
+                val expected = ios.records[i]
+                if (expected.kind == "tick") continue
+                assertEvents(at, expected.events!!, events)
+                assertEquals("$at firedMarks", expected.state!!.firedMarks.toSet(), revived.state().firedMarks.toSet())
+                val clock = revived.state().lastNoticeSeconds
+                assertClose("$at lastNoticeSeconds", expected.state.lastNoticeSeconds, clock, SECONDS)
+            }
+        }
+    }
+
     // The comparison
 
-    private fun golden(name: String, proves: (Capture) -> Unit) {
+    private fun capture(name: String): Capture {
         val way = WayJson.decode(resource("$ROOT/corpus/$name/way.json"))
         val trace = json.decodeFromString(GoldenTrace.serializer(), resource("$ROOT/corpus/$name/trace.json"))
         val records = resource("$ROOT/expected/$name.jsonl").lineSequence().filter { it.isNotBlank() }
             .map { json.decodeFromString(GoldenRecord.serializer(), it) }.toList()
         assertEquals("$name: one record per input", trace.inputs.size, records.size)
-        val capture = Capture(way, trace, records)
+        return Capture(way, trace, records)
+    }
+
+    private fun golden(name: String, proves: (Capture) -> Unit) {
+        val capture = capture(name)
+        val (way, trace, records) = Triple(capture.way, capture.trace, capture.records)
         proves(capture)
         val android = AndroidRun(way, trace)
         var fixes = 0
@@ -177,6 +306,7 @@ class HonorGoldenTraceTest {
             val at = "$name input $i (${input.kind} at t=${input.t})"
             assertEquals(at, i, expected.i)
             assertEquals(at, input.kind, expected.kind)
+            val before = android.tracker.snapshot()
             val events = android.step(input)
             if (input.kind == "tick") {
                 assertClose("$at companionFrac", expected.companionFrac!!, android.engine.companionFrac, FRAC)
@@ -185,7 +315,10 @@ class HonorGoldenTraceTest {
             if (input.kind == "fix") assertEquals(at, fixes++, expected.fix)
             assertEvents(at, expected.events!!, events)
             assertState(at, expected.state!!, android.state())
-            if (input.kind == "fix") assertCalls(at, input, way, expected.calls!!, android.calls)
+            if (input.kind == "fix") {
+                assertCalls(at, input, way, expected.calls!!, android.calls)
+                assertWaterMargins(at, android, before)
+            }
         }
     }
 
@@ -195,6 +328,7 @@ class HonorGoldenTraceTest {
             e.offWayMeters?.let { assertClose("$at softTap metres", it, a.offWayMeters!!, METERS) }
             e.theirSeconds?.let { assertClose("$at theirSeconds", it, a.theirSeconds!!, SECONDS) }
             e.yourSeconds?.let { assertClose("$at yourSeconds", it, a.yourSeconds!!, SECONDS) }
+            e.meters?.let { assertClose("$at markAhead metres", it, a.meters!!, METERS) }
         }
     }
 
@@ -216,6 +350,35 @@ class HonorGoldenTraceTest {
         assertEquals("$at playing", e.playing, a.playing)
         assertEquals("$at voicePaused", e.voicePaused, a.voicePaused)
         assertEquals("$at queue", e.queue, a.queue)
+        assertEquals("$at firedMarks", e.firedMarks.toSet(), a.firedMarks.toSet())
+        assertClose("$at lastNoticeSeconds", e.lastNoticeSeconds, a.lastNoticeSeconds, SECONDS)
+    }
+
+    /**
+     * Water decides by frac arithmetic, with no `CLLocation.distance` call
+     * (spec B's D10), so the cache bound doesn't apply; libm's last bit
+     * still moves the progress a walker projects to. So no unfired water
+     * may sit within [WATER_MARGIN_METERS] of either end of the 0–300 m
+     * look-ahead on an on-Way fix, and where one is inside it the quiet
+     * hour may not be within [WATER_MARGIN_SECONDS] of ending: every water
+     * event in the corpus is then what iOS produces whatever its last bit.
+     */
+    private fun assertWaterMargins(at: String, android: AndroidRun, before: HonorMomentTracker.Snapshot) {
+        val engine = android.engine
+        if (!engine.isOnWay) return
+        val unfired = android.tracker.privateField<List<WayMark>>("marks").filter { it.id !in before.firedMarks }
+        val aheads = unfired.map { it.id to (it.frac - engine.progressFrac) * engine.geometry.totalMeters }
+        for ((id, ahead) in aheads) {
+            val margin = minOf(abs(ahead), abs(ahead - HonorTuning.MARK_AHEAD_METERS))
+            assertTrue("$at: $id, $ahead m ahead, sits on a threshold", margin > WATER_MARGIN_METERS)
+        }
+        val last = before.lastNoticeSeconds ?: return
+        if (aheads.none { (_, ahead) -> ahead > 0 && ahead < HonorTuning.MARK_AHEAD_METERS }) return
+        val sinceLast = engine.privateField<Double>("activeDuration") - last
+        assertTrue(
+            "$at: the quiet hour is $sinceLast s old, within $WATER_MARGIN_SECONDS s of its end",
+            abs(sinceLast - HonorTuning.MARK_QUIET_SECONDS) > WATER_MARGIN_SECONDS,
+        )
     }
 
     private fun assertCalls(
@@ -263,6 +426,7 @@ class HonorGoldenTraceTest {
             clock = Clock { nowMillis },
             distance = { from, to -> WGS84_HONOR_DISTANCE(from, to).also { calls += DistanceCall(from, to, it) } },
         )
+        val tracker: HonorMomentTracker get() = engine.privateField("moments")
         private val gates = mutableMapOf(
             "paused" to false,
             "meditating" to false,
@@ -318,7 +482,6 @@ class HonorGoldenTraceTest {
         }
 
         fun state(): GoldenState {
-            val tracker = engine.privateField<HonorMomentTracker>("moments")
             val armed = engine.privateField<Boolean>("softTapArmed")
             val timing = engine.privateField<Long?>("softTapSinceMillis") != null
             return GoldenState(
@@ -340,6 +503,8 @@ class HonorGoldenTraceTest {
                 playing = tracker.playing?.id,
                 voicePaused = tracker.isVoicePaused,
                 queue = tracker.privateField<List<WayMoment>>("queue").map { it.id },
+                firedMarks = tracker.privateField<Set<String>>("firedMarks").toList(),
+                lastNoticeSeconds = tracker.privateField<Double?>("lastNoticeSeconds"),
             )
         }
     }
@@ -354,6 +519,43 @@ class HonorGoldenTraceTest {
             records.indices.single { i -> records[i].events.orEmpty().any { it.type == type } }
         fun eventInput(type: String, id: String): Int =
             records.indices.single { i -> records[i].events.orEmpty().any { it.type == type && it.id == id } }
+
+        /** A water notice iOS spoke: at which input, of which mark, and the engine clock it set. */
+        class Water(val input: Int, val id: String, val clock: Double)
+
+        fun water(): List<Water> = records.indices.flatMap { i ->
+            records[i].events.orEmpty().filter { it.type == "markAhead" }
+                .map { Water(i, it.id!!, records[i].state!!.lastNoticeSeconds!!) }
+        }
+
+        fun fixes(): List<Int> = trace.inputs.indices.filter { trace.inputs[it].kind == "fix" }
+
+        /** The engine clock an input sees: the last tick before it, or Begin's 0. */
+        fun clockAt(input: Int): Double =
+            trace.inputs.subList(0, input).lastOrNull { it.kind == "tick" }?.activeSeconds ?: 0.0
+
+        /** The gates closed after [input]. */
+        fun gatesAt(input: Int): Set<String> {
+            val closed = mutableSetOf<String>()
+            for (gate in trace.inputs.subList(0, input + 1).filter { it.kind == "gate" }) {
+                if (gate.value == true) closed += gate.gate!! else closed -= gate.gate!!
+            }
+            return closed
+        }
+
+        /** Metres from the walker's progress after [input] to the mark, along the line, as the tracker measures. */
+        fun aheadAt(input: Int, markId: String): Double {
+            val mark = way.marks!!.single { it.id == markId }
+            return (mark.frac - records[input].state!!.progressFrac) * WayGeometry(way.route).totalMeters
+        }
+
+        fun firstOnWayFix(): Int = fixes().first { records[it].state!!.isOnWay }
+
+        fun firstFixWithin(markId: String): Int = fixes().first { aheadAt(it, markId) in 0.0..300.0 }
+
+        fun firstFixPast(markId: String): Int = fixes().first { aheadAt(it, markId) < 0 }
+
+        fun firstFixAfterTheHour(since: Water): Int = fixes().first { clockAt(it) - since.clock >= QUIET }
     }
 
     private companion object {
@@ -363,6 +565,9 @@ class HonorGoldenTraceTest {
         const val SECONDS = 1e-9
         const val DEGREES = 1e-12
         const val PIN_RELATIVE = 1e-14
+        const val WATER_MARGIN_METERS = 1e-6
+        const val WATER_MARGIN_SECONDS = 1e-6
+        const val QUIET = HonorTuning.MARK_QUIET_SECONDS
 
         val json = Json { ignoreUnknownKeys = false }
 
@@ -410,6 +615,7 @@ class HonorGoldenTraceTest {
             HonorEngineEvent.VoiceResume -> GoldenEvent("voiceResume")
             is HonorEngineEvent.VoiceDropped -> GoldenEvent("voiceDropped", id = moment.id)
             is HonorEngineEvent.SoftTap -> GoldenEvent("softTap", offWayMeters = offWayMeters)
+            is HonorEngineEvent.MarkAhead -> GoldenEvent("markAhead", id = mark.id, meters = meters)
             is HonorEngineEvent.Arrived ->
                 GoldenEvent("arrived", theirSeconds = theirSeconds, yourSeconds = yourSeconds)
         }
@@ -462,6 +668,7 @@ private data class GoldenEvent(
     val offWayMeters: Double? = null,
     val theirSeconds: Double? = null,
     val yourSeconds: Double? = null,
+    val meters: Double? = null,
 ) {
     val label: String get() = listOfNotNull(type, id).joinToString(" ")
 }
@@ -491,4 +698,8 @@ private data class GoldenState(
     val playing: String? = null,
     val voicePaused: Boolean,
     val queue: List<String>,
+    /** A stage trace's water spoken, sorted; absent on an own walk's, as no mark is watched. */
+    val firedMarks: List<String> = emptyList(),
+    /** The engine clock at the last water notice; absent until the first. */
+    val lastNoticeSeconds: Double? = null,
 )

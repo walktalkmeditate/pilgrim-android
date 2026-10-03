@@ -52,7 +52,7 @@ import org.walktalkmeditate.pilgrim.walk.WalkController
 import org.walktalkmeditate.pilgrim.walk.WalkStartRequest
 import org.walktalkmeditate.pilgrim.walk.honor.HonorHarness
 
-/** The walk screen's Start on an honor walk: the minted uuid, the staged own-walk Way, and the start through the chain. */
+/** The walk screen's Start on an honor walk: the minted uuid, the staged own-walk or stage Way, and the start. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
 class BeginHonorWalkTest {
@@ -106,6 +106,7 @@ class BeginHonorWalkTest {
         honorEnabled: Boolean = true,
         begins: HonorBeginsInFlight = HonorBeginsInFlight(),
         awaitSessionRow: suspend (Long) -> Unit = {},
+        stageHandoff: HonorStageHandoff = HonorStageHandoff(),
     ) = BeginHonorWalk(
         repository = h.repository,
         wayStore = store,
@@ -118,6 +119,7 @@ class BeginHonorWalkTest {
         locale = { Locale.US },
         begins = begins,
         awaitSessionRow = awaitSessionRow,
+        stageHandoff = stageHandoff,
     )
 
     private fun storedRequest() =
@@ -325,6 +327,111 @@ class BeginHonorWalkTest {
         assertThrows(IllegalStateException::class.java) { runBlocking { begin(controller)(request()) } }
 
         assertNotNull(h.store.staged(mintedUuid))
+    }
+
+    // A pilgrimage stage (pilgrimage-stage spec P3 §9; owner decision 2)
+
+    private fun stageRequest(settings: HonorSettings) =
+        BeginHonorWalk.Request(way = HonorWayChoice.Stored(HonorHarness.STAGE_ID), intention = null, settings = settings)
+
+    @Test
+    fun `a stage's Start stages the stage under the minted uuid and leaves its package as it was`() = runBlocking {
+        val stage = HonorHarness.stage()
+        h.store.save(stage)
+
+        begin(RecordingController())(stageRequest(settings))
+
+        assertEquals(stage, h.store.staged(mintedUuid))
+        assertEquals(stage, h.store.load(HonorHarness.STAGE_ID))
+    }
+
+    // Owner decision 2: iOS walks the Way its overview captured at Begin (`MainCoordinatorView.swift:94@7c200bf`).
+
+    private val redrawn = HonorHarness.stage(marks = emptyList(), title = "Larrasoaña to Pamplona, redrawn")
+
+    @Test
+    fun `a stage's Start walks the copy its overview handed over, though an Update redrew the stage since`() = runBlocking {
+        val atTheDoor = HonorHarness.stage()
+        h.store.save(atTheDoor)
+        val handoff = HonorStageHandoff().apply { hand(atTheDoor) }
+        h.store.save(redrawn)
+
+        val result = begin(RecordingController(), stageHandoff = handoff)(stageRequest(settings))
+
+        assertTrue(result is BeginHonorWalk.Result.Started)
+        assertEquals(atTheDoor, h.store.staged(mintedUuid))
+    }
+
+    @Test
+    fun `a stage the Update dropped still walks the copy its overview handed over`() = runBlocking {
+        val atTheDoor = HonorHarness.stage()
+        h.store.save(atTheDoor)
+        val handoff = HonorStageHandoff().apply { hand(atTheDoor) }
+        h.store.delete(HonorHarness.STAGE_ID)
+
+        val result = begin(RecordingController(), stageHandoff = handoff)(stageRequest(settings))
+
+        assertTrue("not refused as gone", result is BeginHonorWalk.Result.Started)
+        assertEquals(atTheDoor, h.store.staged(mintedUuid))
+    }
+
+    @Test
+    fun `after a UI process death between Begin and Start, the stage is read from its package`() = runBlocking {
+        h.store.save(HonorHarness.stage())
+        h.store.save(redrawn)
+        val afterTheRestart = HonorStageHandoff()
+
+        begin(RecordingController(), stageHandoff = afterTheRestart)(stageRequest(settings))
+
+        assertEquals(redrawn, h.store.staged(mintedUuid))
+    }
+
+    @Test
+    fun `another stage's hand-off is never walked`() = runBlocking {
+        h.store.save(redrawn)
+        val otherStage = HonorHarness.stage(title = "Zubiri to Larrasoaña").copy(id = "pilgrimage:camino-frances:3")
+        val handoff = HonorStageHandoff().apply { hand(otherStage) }
+
+        begin(RecordingController(), stageHandoff = handoff)(stageRequest(settings))
+
+        assertEquals(redrawn, h.store.staged(mintedUuid))
+    }
+
+    @Test
+    fun `the hand-off is kept for another try when the start fails, and let go once its walk starts`() = runBlocking {
+        val atTheDoor = HonorHarness.stage()
+        val handoff = HonorStageHandoff().apply { hand(atTheDoor) }
+
+        assertThrows(IllegalStateException::class.java) {
+            runBlocking { begin(RecordingController(refuse = true), stageHandoff = handoff)(stageRequest(settings)) }
+        }
+        assertEquals("kept", atTheDoor, handoff.stage(HonorHarness.STAGE_ID))
+
+        begin(RecordingController(), stageHandoff = handoff)(stageRequest(settings))
+
+        assertNull("let go", handoff.stage(HonorHarness.STAGE_ID))
+    }
+
+    // iOS `testAStageWalksWithNoCompanionAndNoSoftTap` (`PilgrimageStageWalkTests.swift@7c200bf`).
+    @Test
+    fun `a stage walks with no soft tap, the preference on`() = runBlocking {
+        h.store.save(HonorHarness.stage())
+        val controller = RecordingController()
+
+        begin(controller)(stageRequest(HonorSettings(voicesEnabled = true, softTapEnabled = true)))
+
+        val sent = controller.requests.single().honor!!.settings
+        assertEquals(HonorSettings(voicesEnabled = true, softTapEnabled = false), sent)
+    }
+
+    // iOS `testAnOwnWalkWayKeepsItsCompanion`, the control: no stage, so the preference stands.
+    @Test
+    fun `an own walk keeps the soft tap the preference set`() = runBlocking {
+        val controller = RecordingController()
+
+        begin(controller)(request().copy(settings = HonorSettings(voicesEnabled = true, softTapEnabled = true)))
+
+        assertTrue(controller.requests.single().honor!!.settings.softTapEnabled)
     }
 
     @Test

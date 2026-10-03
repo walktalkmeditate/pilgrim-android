@@ -27,6 +27,7 @@ import org.walktalkmeditate.pilgrim.data.entity.Waypoint
 import org.walktalkmeditate.pilgrim.data.honor.HonorCardStateEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorDao
 import org.walktalkmeditate.pilgrim.data.honor.HonorMomentStateEntity
+import org.walktalkmeditate.pilgrim.data.honor.HonorNoticeEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorWalkMarkerEntity
 import org.walktalkmeditate.pilgrim.data.seek.SeekDao
@@ -47,8 +48,9 @@ import org.walktalkmeditate.pilgrim.data.seek.SeekSessionEntity
         HonorCardStateEntity::class,
         HonorWalkMarkerEntity::class,
         SeekSessionEntity::class,
+        HonorNoticeEntity::class,
     ],
-    version = 11,
+    version = 12,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
@@ -371,6 +373,44 @@ abstract class PilgrimDatabase : RoomDatabase() {
         }
 
         /**
+         * Phase 21 (U35): what a pilgrimage stage's walk persists for a
+         * `:tracker` revival and for the ledger (pilgrimage-stage spec P3
+         * §12, Annex A.5.2, owner decision 1). Purely additive: six nullable
+         * columns on `honor_sessions`, so a schema-11 row reads as no stage
+         * and nothing spoken, and one new table that starts empty. The DDL
+         * is Room's own for v12, copied from `app/schemas/.../12.json`.
+         *
+         * - `last_notice_seconds`: the engine clock at the last notice;
+         *   NULL means the first is free.
+         * - `arrival_walked_meters`: the walked distance arrival froze.
+         * - `stage_route_id`, `stage_index`, `stage_name`,
+         *   `stage_distance_km`: the stage walked, for the ledger.
+         * - `honor_notices`: one row per notice spoken, keyed by walk,
+         *   kind, and the id it names, cascading from `walks`.
+         *
+         * Schema 11 has run on a device, so it is never edited: this is
+         * the only way its tables change.
+         */
+        val MIGRATION_11_12: Migration = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `honor_sessions` ADD COLUMN `last_notice_seconds` REAL")
+                db.execSQL("ALTER TABLE `honor_sessions` ADD COLUMN `arrival_walked_meters` REAL")
+                db.execSQL("ALTER TABLE `honor_sessions` ADD COLUMN `stage_route_id` TEXT")
+                db.execSQL("ALTER TABLE `honor_sessions` ADD COLUMN `stage_index` INTEGER")
+                db.execSQL("ALTER TABLE `honor_sessions` ADD COLUMN `stage_name` TEXT")
+                db.execSQL("ALTER TABLE `honor_sessions` ADD COLUMN `stage_distance_km` REAL")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `honor_notices` (" +
+                        "`walk_id` INTEGER NOT NULL, `kind` TEXT NOT NULL, `ref_id` TEXT NOT NULL, " +
+                        "`meters` REAL NOT NULL, `fired_at` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`walk_id`, `kind`, `ref_id`), " +
+                        "FOREIGN KEY(`walk_id`) REFERENCES `walks`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE )",
+                )
+            }
+        }
+
+        /**
          * Every manual migration, in order — the one list the production
          * builder ([org.walktalkmeditate.pilgrim.di.DatabaseModule]) and the
          * migration tests register. 1→2 is the AutoMigration declared on
@@ -388,6 +428,7 @@ abstract class PilgrimDatabase : RoomDatabase() {
                 MIGRATION_8_9,
                 MIGRATION_9_10,
                 MIGRATION_10_11,
+                MIGRATION_11_12,
             )
     }
 }

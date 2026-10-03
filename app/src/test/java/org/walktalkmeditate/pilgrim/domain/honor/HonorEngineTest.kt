@@ -10,6 +10,7 @@ import org.junit.Test
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.honor.HonorEngineEvent.Arrived
+import org.walktalkmeditate.pilgrim.domain.honor.HonorEngineEvent.MarkAhead
 import org.walktalkmeditate.pilgrim.domain.honor.HonorEngineEvent.MomentReached
 import org.walktalkmeditate.pilgrim.domain.honor.HonorEngineEvent.SoftTap
 import org.walktalkmeditate.pilgrim.domain.honor.HonorEngineEvent.VoiceStart
@@ -24,7 +25,10 @@ import org.walktalkmeditate.pilgrim.domain.honor.HonorEngineEvent.VoiceStart
  * Then the Android scenarios the plan and parity spec B add: AE2 on a loop
  * longer than the tracking window, the short loop that arrives at Begin as
  * iOS ships it, the caller's paused clock, the per-fix order, and the
- * qualifiers of the spec's resolutions.
+ * qualifiers of the spec's resolutions. Last, a pilgrimage stage: iOS's
+ * `testTheEngineReportsWhetherItEverAnchoredOnTheWay`
+ * (`PilgrimageStageWalkTests.swift@7c200bf`) and the water event's place
+ * in a fix (pilgrimage-stage spec P3 §4–§5).
  */
 class HonorEngineTest {
 
@@ -792,6 +796,98 @@ class HonorEngineTest {
         for (i in 1..5) engine.process(fix(lon = 0.000898 * 10, at = 600.0 + i))
         assertEquals("projection still tracks on the Way's own geometry", 1.0, engine.progressFrac, 1e-9)
         assertTrue(arrivals().isEmpty())
+    }
+
+    // A pilgrimage stage
+
+    /** iOS's `stageWay()`: a 1 km stage east along the equator, with water at [waterFracs]. */
+    private fun stageWay(vararg waterFracs: Double, moments: List<WayMoment> = emptyList()) = straightWay(moments).copy(
+        id = "pilgrimage:camino-frances:0",
+        source = WaySource.Pilgrimage(routeId = "camino-frances", stageIndex = 0),
+        marks = waterFracs.mapIndexed { i, frac ->
+            WayMark(
+                id = "wp-osm-water-node$i",
+                kind = WayMarkKind.WATER,
+                name = "Fuente $i",
+                at = WayCoordinate(lat = 0.0, lon = frac * 1000 / 111_320),
+                frac = frac,
+                offLineMeters = 10.0,
+            )
+        },
+        stage = WayStage(
+            routeId = "camino-frances", index = 0, count = 33, name = "Saint-Jean-Pied-de-Port to Roncesvalles",
+            theme = "Initiation", narrative = "The Pyrenees are the first question the way asks.",
+            closing = "You crossed a border on foot.", warnings = emptyList(), distanceKm = 24.2, gainMeters = 1419.0,
+            hours = WayStageHours(min = 7.0, max = 9.0), difficulty = "hard",
+            start = WayStagePlace(name = "Saint-Jean-Pied-de-Port", at = WayCoordinate(lat = 0.0, lon = 0.0)),
+            end = WayStagePlace(name = "Roncesvalles", at = WayCoordinate(lat = 0.0, lon = 0.00898)),
+        ),
+    )
+
+    @Test
+    fun testTheEngineReportsWhetherItEverAnchoredOnTheWay() {
+        val engine = HonorEngine(way = stageWay(), softTapEnabled = false, voicesEnabled = false, clock = clock)
+        assertFalse("no fix yet", engine.isAnchoredOnWay)
+        // A kilometre north of the line: Begin falls back to frac 0.
+        engine.process(fix(lon = 0.0, lat = 0.01, at = 0.0))
+        assertFalse("the frac-0 fallback is not a stage joined", engine.isAnchoredOnWay)
+        clockAt(60.0)
+        engine.process(fix(lon = 0.000898, at = 60.0))
+        assertTrue(engine.isAnchoredOnWay)
+    }
+
+    @Test
+    fun `a stage's water comes after the places a fix reaches, with the metres left`() {
+        val orisson = WayMoment(
+            id = "wp-orisson",
+            frac = 0.3,
+            at = WayCoordinate(lat = 0.0, lon = 300.0 / 111_320),
+            kind = WayMomentKind.Waypoint(label = "Vierge d'Orisson", icon = "building.columns"),
+        )
+        val engine = HonorEngine(
+            way = stageWay(0.5, moments = listOf(orisson)),
+            softTapEnabled = false,
+            voicesEnabled = false,
+            clock = clock,
+        )
+
+        engine.process(fix(lon = 0.000898 * 3, at = 0.0))
+
+        assertEquals(listOf(MomentReached::class, MarkAhead::class), events.map { it::class })
+        val water = events.last() as MarkAhead
+        assertEquals("wp-osm-water-node0", water.mark.id)
+        assertEquals(200.0, water.meters, 2.0)
+    }
+
+    @Test
+    fun `water is weighed only on a fix, never on a tick or a gate`() {
+        val engine = HonorEngine(way = stageWay(0.2, 0.6), softTapEnabled = false, voicesEnabled = false, clock = clock)
+        for (i in 0..4) {
+            clockAt(i * 100.0)
+            engine.process(fix(lon = 0.000898 * i, at = i * 100.0))
+        }
+        val spoken = events.filterIsInstance<MarkAhead>().map { it.mark.id }
+        assertEquals("the first is free, at clock 0", listOf("wp-osm-water-node0"), spoken)
+        events.clear()
+
+        engine.updateActiveDuration(3_700.0)
+        events += engine.setGates(paused = false, meditating = true, recording = false, externalAudio = false)
+        assertTrue("the hour ended on a tick, and nothing spoke", events.isEmpty())
+
+        clockAt(410.0)
+        engine.process(fix(lon = 0.000898 * 4, at = 410.0))
+        assertEquals(listOf("wp-osm-water-node1"), events.filterIsInstance<MarkAhead>().map { it.mark.id })
+    }
+
+    @Test
+    fun `an own walk's Way carries no marks and never speaks of water`() {
+        val engine = makeEngine(way = straightWay())
+        for (i in 0..10) {
+            clockAt(i * 60.0)
+            engine.updateActiveDuration(i * 4_000.0)
+            engine.process(fix(lon = 0.000898 * i, at = i * 60.0))
+        }
+        assertTrue(events.none { it is MarkAhead })
     }
 
     @Test

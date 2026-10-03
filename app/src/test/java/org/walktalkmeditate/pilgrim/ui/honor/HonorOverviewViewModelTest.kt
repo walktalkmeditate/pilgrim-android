@@ -70,6 +70,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.domain.honor.WayWeather
 import org.walktalkmeditate.pilgrim.honor.HonorImportCoordinator
 import org.walktalkmeditate.pilgrim.honor.HonorImportState
+import org.walktalkmeditate.pilgrim.honor.HonorStageHandoff
 import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.honor.OwnWalkWays
 import org.walktalkmeditate.pilgrim.honor.WayMediaDownloader
@@ -79,6 +80,7 @@ import org.walktalkmeditate.pilgrim.ui.walk.map.CameraFitDecision
 import org.walktalkmeditate.pilgrim.ui.walk.map.CameraFitPaddingDp
 import org.walktalkmeditate.pilgrim.ui.walk.map.decideCameraFit
 import org.walktalkmeditate.pilgrim.ui.walk.summary.MapCameraBounds
+import org.walktalkmeditate.pilgrim.walk.honor.HonorHarness
 
 /** The overview's Way, lines, framing inputs, toggle, and preview player (parity spec F §8–§14). */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -187,6 +189,7 @@ class HonorOverviewViewModelTest {
         preferences: FakeHonorPreferencesRepository = FakeHonorPreferencesRepository(),
         playback: FakeVoicePlaybackController = FakeVoicePlaybackController(),
         savedStateHandle: SavedStateHandle = SavedStateHandle(mapOf(HonorOverviewViewModel.ARG_SOURCE_WALK_ID to walkId)),
+        stageHandoff: HonorStageHandoff = HonorStageHandoff(),
     ) = HonorOverviewViewModel(
         savedStateHandle = savedStateHandle,
         ownWalkWays = OwnWalkWays(repository, VoiceRecordingFileSystem(context), dispatcher, { utc }, { Locale.US }),
@@ -200,6 +203,7 @@ class HonorOverviewViewModelTest {
         recordingFiles = VoiceRecordingFileSystem(context),
         waveformCache = WaveformCache(),
         ioDispatcher = dispatcher,
+        stageHandoff = stageHandoff,
         loadSharedWaveform = { sharedWaveform },
     ).also { viewModels += it }
 
@@ -220,6 +224,34 @@ class HonorOverviewViewModelTest {
         assertEquals(overview.way.moments.map { it.id }, overview.pins.map { it.momentId })
         assertEquals(MapCameraBounds(swLat = 0.0, swLng = 0.0, neLat = 0.0, neLng = 10 * 0.001), overview.bounds)
         assertEquals(overview.way.id, overview.line.wayId)
+    }
+
+    // Owner decision 2: iOS's Begin hands its captured `way` on (`MainCoordinatorView.swift:94@7c200bf`).
+    @Test
+    fun `Begin on a stage's overview hands over the stage it loaded, whatever the package holds since`() =
+        runTest(dispatcher) {
+            val loaded = HonorHarness.stage()
+            store.save(loaded)
+            val handoff = HonorStageHandoff()
+            val vm = overview(
+                savedStateHandle = SavedStateHandle(mapOf(HonorOverviewViewModel.ARG_WAY_ID to HonorHarness.STAGE_ID)),
+                stageHandoff = handoff,
+            )
+            ready(vm)
+            store.save(HonorHarness.stage(marks = emptyList(), title = "Larrasoaña to Pamplona, redrawn"))
+
+            assertEquals(HonorWayChoice.Stored(HonorHarness.STAGE_ID), vm.begin())
+            assertEquals(loaded, handoff.stage(HonorHarness.STAGE_ID))
+        }
+
+    @Test
+    fun `Begin on an own walk's overview hands nothing over`() = runTest(dispatcher) {
+        val handoff = HonorStageHandoff()
+        val vm = overview(stageHandoff = handoff)
+        val way = ready(vm).way
+
+        assertEquals(HonorWayChoice.OwnWalk(sourceId), vm.begin())
+        assertNull(handoff.stage(way.id))
     }
 
     @Test

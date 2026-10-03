@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.data
 
 import androidx.room.TypeConverter
 import org.walktalkmeditate.pilgrim.data.honor.HonorFinishKind
+import org.walktalkmeditate.pilgrim.data.honor.HonorNoticeKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorVoiceEnd
 import org.walktalkmeditate.pilgrim.domain.ActivityType
@@ -21,8 +22,9 @@ import org.walktalkmeditate.pilgrim.domain.seek.SeekEnginePhase
  * unsupported). Activity types keep the conservative WALKING default.
  * The Honor enums fall back to the reading that claims least: a walk
  * still walking, an own-walk source, a recovered finish (no delta), and
- * a voice that failed. A seek phase falls back to guiding, which a
- * revival can still arrive from.
+ * a voice that failed. A notice kind falls back to unknown, which every
+ * reader ignores. A seek phase falls back to guiding, which a revival can
+ * still arrive from.
  */
 class Converters {
     @TypeConverter
@@ -66,6 +68,13 @@ class Converters {
     @TypeConverter
     fun stringToHonorVoiceEnd(name: String): HonorVoiceEnd =
         HonorVoiceEnd.entries.firstOrNull { it.name == name } ?: HonorVoiceEnd.FAILED
+
+    @TypeConverter
+    fun honorNoticeKindToString(kind: HonorNoticeKind): String = kind.name
+
+    @TypeConverter
+    fun stringToHonorNoticeKind(name: String): HonorNoticeKind =
+        HonorNoticeKind.entries.firstOrNull { it.name == name } ?: HonorNoticeKind.UNKNOWN
 
     @TypeConverter
     fun seekEnginePhaseToString(phase: SeekEnginePhase): String = phase.name

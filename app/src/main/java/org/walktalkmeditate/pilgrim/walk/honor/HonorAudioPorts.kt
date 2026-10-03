@@ -97,8 +97,18 @@ interface HonorHapticsPort {
     /** iOS `.honorOffWay`, a soft impact. */
     fun softTap()
 
+    /** iOS `.honorWaterAhead`, one soft tap at the whisper's intensity, after the notice's rows commit. */
+    fun waterAhead()
+
     /** Seek's three rising taps, after arrival's rows commit. */
     fun arrival()
+
+    /**
+     * How long [arrival]'s taps play, from the first onset to the last
+     * tap's end. Android's vibrator cuts a pattern still playing when the
+     * next one starts, where iOS's haptic engine layers the two.
+     */
+    val arrivalMillis: Long
 }
 
 /**

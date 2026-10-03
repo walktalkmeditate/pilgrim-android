@@ -27,6 +27,9 @@ sealed class HonorEngineEvent {
     data object VoiceResume : HonorEngineEvent()
     data class VoiceDropped(val moment: WayMoment) : HonorEngineEvent()
     data class SoftTap(val offWayMeters: Double) : HonorEngineEvent()
+
+    /** A stage's water source [meters] ahead on the line, unrounded (pilgrimage-stage spec P3 §4). */
+    data class MarkAhead(val mark: WayMark, val meters: Double) : HonorEngineEvent()
     data class Arrived(val theirSeconds: Double, val yourSeconds: Double) : HonorEngineEvent()
 }
 
@@ -47,9 +50,6 @@ sealed class HonorEngineEvent {
  * time minus pauses, the pause in progress included, with sittings left
  * in (spec B §7, owner decision 1). `WalkStats.activeWalkingMillis` also
  * takes out meditation, so it must not feed it.
- *
- * The stage-only water caption (`HonorEngineEvent.markAhead`) is not
- * ported; see [HonorMomentTracker].
  */
 class HonorEngine(
     val way: Way,
@@ -95,6 +95,7 @@ class HonorEngine(
     )
     private val moments = HonorMomentTracker(
         moments = way.moments,
+        marks = way.marks ?: emptyList(),
         geometry = geometry,
         voicesEnabled = voicesEnabled,
         distance = distance,
@@ -221,8 +222,14 @@ class HonorEngine(
 
         val speed = point.speedMetersPerSecond?.toDouble()
         val stationary = speed != null && speed >= 0 && speed < HonorTuning.STATIONARY_SPEED
-        moments.update(coordinate, progressFrac = progressFrac, gates = gates, isStationary = stationary)
-            .mapTo(events) { it.toEvent() }
+        moments.update(
+            coordinate,
+            progressFrac = progressFrac,
+            gates = gates,
+            isStationary = stationary,
+            activeSeconds = activeDuration,
+            isOnWay = isOnWay,
+        ).mapTo(events) { it.toEvent() }
         return events
     }
 
@@ -372,6 +379,7 @@ class HonorEngine(
         HonorMomentTracker.Action.VoicePause -> HonorEngineEvent.VoicePause
         HonorMomentTracker.Action.VoiceResume -> HonorEngineEvent.VoiceResume
         is HonorMomentTracker.Action.VoiceDropped -> HonorEngineEvent.VoiceDropped(moment)
+        is HonorMomentTracker.Action.MarkAhead -> HonorEngineEvent.MarkAhead(mark, meters)
     }
 
     private companion object {
