@@ -10,9 +10,12 @@ import org.walktalkmeditate.pilgrim.data.honor.HonorNoticeKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorVoiceState
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.HonorStageOutcome
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageStageIdentity
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.honor.HonorEngine
 import org.walktalkmeditate.pilgrim.domain.honor.HonorMomentTracker
+import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPhase
 import org.walktalkmeditate.pilgrim.domain.honor.VoiceKind
 import org.walktalkmeditate.pilgrim.domain.honor.WayMoment
@@ -42,7 +45,11 @@ sealed interface HonorCommand {
     /** 1× → 1.25× → 1.5× → 2× → 1× (iOS `cycleVoiceRate`). */
     data object CycleRate : HonorCommand
 
-    /** The walker's earlier reply to a voice, from a previous honoring (iOS `playReply(url:)`). */
+    /**
+     * The walker's earlier reply to a voice, from a previous honoring, or
+     * to a stage's closing line by [HonorPersistence.STAGE_REFLECTION_MOMENT_ID]
+     * (iOS `playReply(url:)`).
+     */
     data class PlayReply(val momentId: String) : HonorCommand
 }
 
@@ -112,12 +119,45 @@ internal fun honorSourceKind(wayId: String): HonorSourceKind? = when {
 }
 
 /**
- * The `n` of a `voice-n` moment, the index a reply is filed under (iOS
- * `originIndex(of:)`, `ActiveWalkViewModel+Replies.swift:79-88@7c200bf`).
- * The stage reflection's reserved index is stage-only.
+ * The index a reply is filed under (iOS `originIndex(of:)`,
+ * `ActiveWalkViewModel+Replies.swift:79-88@7c200bf`): the `n` of a
+ * `voice-n` moment, and the reserved [HonorPersistence.STAGE_REFLECTION_ORIGIN]
+ * for the stage reflection's id on any Way, as iOS maps it. Whether the
+ * Way is a stage is for the callers that look a reply up to decide.
  */
-internal fun voiceOriginIndex(momentId: String): Int? =
-    momentId.takeIf { it.startsWith(VOICE_ID_PREFIX) }?.removePrefix(VOICE_ID_PREFIX)?.toIntOrNull()
+internal fun voiceOriginIndex(momentId: String): Int? {
+    if (momentId == HonorPersistence.STAGE_REFLECTION_MOMENT_ID) return HonorPersistence.STAGE_REFLECTION_ORIGIN
+    return momentId.takeIf { it.startsWith(VOICE_ID_PREFIX) }?.removePrefix(VOICE_ID_PREFIX)?.toIntOrNull()
+}
+
+/**
+ * The stage walked, as this row took it at Start: the ledger's record
+ * reads it here, never from the stage's `way.json` (pilgrimage-stage spec
+ * P2 A-7). Null on a walk that isn't a stage.
+ */
+internal fun HonorSessionEntity.stageIdentity(): PilgrimageStageIdentity? {
+    val routeId = stageRouteId ?: return null
+    val index = stageIndex ?: return null
+    val name = stageName ?: return null
+    val distanceKm = stageDistanceKm ?: return null
+    return PilgrimageStageIdentity(routeId = routeId, index = index, name = name, distanceKm = distanceKm)
+}
+
+/**
+ * What the engine had to say about the stage (iOS `teardownHonor`'s
+ * outcome, `ActiveWalkViewModel+Honor.swift:128-133@7c200bf`), read from
+ * the row its every step commits (P3 §10.2): the walker's current place,
+ * not the farthest (pilgrim-ios #120, matched as shipped), and whether
+ * arrival fired. Null unless the engine anchored on the Way, as
+ * `HonorEngine.isAnchoredOnWay` reads it: no fix yet, or Begin's frac-0
+ * fallback still standing, is an approach, not a stage walked.
+ */
+internal fun HonorSessionEntity.stageOutcome(): HonorStageOutcome? =
+    if (startFrac == null || anchoredByFallback) {
+        null
+    } else {
+        HonorStageOutcome(progressFrac = progressFrac, arrived = phase == HonorPhase.ARRIVED)
+    }
 
 internal fun WayMoment.voiceGain(): Float =
     if ((kind as? WayMomentKind.Voice)?.kind == VoiceKind.AMBIENT) AMBIENT_GAIN else 1f

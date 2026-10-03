@@ -10,8 +10,10 @@ import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Provider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.After
@@ -40,17 +42,22 @@ import org.walktalkmeditate.pilgrim.data.honor.WayArrival
 import org.walktalkmeditate.pilgrim.data.honor.WayLink
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.FakeWalkSignals
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.HonorStageOutcome
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageCatalogService
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageLedger
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageLedgerStore
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageStageIdentity
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPhase
 import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.honor.WaySweeper
+import org.walktalkmeditate.pilgrim.walk.honor.HonorHarness.Companion.STAGE_ID
 import org.walktalkmeditate.pilgrim.walk.honor.HonorHarness.Companion.WAY_ID
+import org.walktalkmeditate.pilgrim.walk.honor.HonorHarness.Companion.fix
 
-/** The Honor step after the walk's finish is recorded, its retry at launch, and the staging sweep. */
+/** The Honor step after the walk's finish is recorded, a stage's ledger record, its retry at launch, and the staging sweep. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
 class HonorFinalizerTest {
@@ -257,6 +264,229 @@ class HonorFinalizerTest {
         assertEquals(HonorFinalizeOutcome.DONE, h.finalizer.finalize(walkId = 424_242L))
     }
 
+    // A pilgrimage stage's ledger record (pilgrimage-stage spec P2 §9–§10, C-7, C-17; P3 §10.2)
+
+    private val stage = HonorHarness.stage()
+
+    /**
+     * A stage walk as `finishWalkAtomic` leaves it: its row naming the stage
+     * as Start recorded it and holding the engine's last word ([outcome]
+     * null when it never anchored), its copy staged at Begin, and no package
+     * installed unless the test saves one.
+     */
+    private suspend fun finishedStageWalk(
+        kind: HonorFinishKind = HonorFinishKind.CLEAN,
+        outcome: HonorStageOutcome? = HonorStageOutcome(progressFrac = 0.5, arrived = false),
+        endTimestamp: Long = 9_000L,
+        routeId: String = "camino-frances",
+    ): Walk {
+        val uuid = UUID.randomUUID().toString()
+        val id = h.db.walkDao().insert(Walk(uuid = uuid, startTimestamp = 1_000L, endTimestamp = endTimestamp))
+        dao.insertSession(
+            HonorSessionEntity(
+                walkId = id,
+                wayId = STAGE_ID,
+                sourceKind = HonorSourceKind.PILGRIMAGE,
+                voicesEnabled = true,
+                softTapEnabled = false,
+                phase = if (outcome?.arrived == true) HonorPhase.ARRIVED else HonorPhase.WALKING,
+                startFrac = outcome?.let { 0.1 },
+                progressFrac = outcome?.progressFrac ?: 0.0,
+                finishKind = kind,
+                stageRouteId = routeId,
+                stageIndex = 4,
+                stageName = "Larrasoaña to Pamplona",
+                stageDistanceKm = 15.6,
+            ),
+        )
+        h.store.stage(uuid, stage)
+        return h.db.walkDao().getById(id)!!
+    }
+
+    private val ledgerFile get() = File(folder.root, "Ways/pilgrimage/camino-frances/ledger.json")
+
+    /** A folder where the ledger's file goes, so its write fails (U33's `a failed write throws`). */
+    private fun blockTheLedger(): File = File(ledgerFile, "in-the-way").apply {
+        parentFile!!.mkdirs()
+        writeText("x")
+    }
+
+    private fun entry(): PilgrimageLedger.Entry? = h.ledgers.load("camino-frances")?.stages?.get("4")
+
+    private suspend fun HonorSession.beginAt(walk: Walk, lon: Double, lat: Double = 0.0, scope: CoroutineScope = h.serviceScope) =
+        start(scope, walk.id, h.controller.state, fix(lon, h.clock.millis, lat = lat)).also { awaitIdle() }
+
+    private suspend fun HonorSession.walkTo(vararg lons: Double, lat: Double = 0.0) {
+        for (lon in lons) {
+            h.clock.millis += 1_000
+            onFix(fix(lon, h.clock.millis, lat = lat))
+        }
+        awaitIdle()
+    }
+
+    @Test
+    fun `a clean stage finish links, then records the stage its row took at Start, with no package to read`() = runBlocking {
+        val walk = finishedStageWalk()
+
+        assertEquals(HonorFinalizeOutcome.DONE, h.finalizer.finalize(walk.id))
+
+        assertEquals(WayLink(STAGE_ID), h.store.wayLink(walk.uuid))
+        assertEquals(
+            PilgrimageLedger.Entry(
+                name = "Larrasoaña to Pamplona",
+                distanceKm = 15.6,
+                walkedAt = Instant.ofEpochSecond(9),
+                kmWalked = 15.6 * 0.5,
+                completed = false,
+                stoppedAtFrac = 0.5,
+            ),
+            entry(),
+        )
+        assertNotNull(dao.getMarker(walk.uuid))
+        assertNoLiveRows(walk)
+        assertNull("a package Way is never listed at walk end", h.store.load(STAGE_ID))
+    }
+
+    @Test
+    fun `an arrived stage is recorded completed, credited its whole distance`() = runBlocking {
+        val walk = finishedStageWalk(outcome = HonorStageOutcome(progressFrac = 0.97, arrived = true))
+
+        h.finalizer.finalize(walk.id)
+
+        assertEquals(Triple(true, 15.6, null), entry()!!.let { Triple(it.completed, it.kmWalked, it.stoppedAtFrac) })
+    }
+
+    @Test
+    fun `AE8 a stage begun more than 60 m away and never anchored writes no ledger entry, but the walk is linked`() =
+        runBlocking {
+            h.store.save(stage)
+            val walk = h.startHonorWalk(stage)
+            val session = h.newSession(FakePorts())
+            session.beginAt(walk, lon = 0.0, lat = A_KILOMETRE_NORTH)
+            session.walkTo(0.001, 0.002, 0.003, 0.004, lat = A_KILOMETRE_NORTH)
+            assertNull("an approach, not a stage walked", dao.getSession(walk.id)!!.stageOutcome())
+            assertTrue("no water caption", dao.getNotices(walk.id).isEmpty())
+            assertTrue("no place reached, so no card", dao.getMomentStates(walk.id).none { it.reachedAt != null })
+
+            h.controller.finishWalk()
+            session.awaitIdle()
+
+            assertEquals(WayLink(STAGE_ID), h.store.wayLink(walk.uuid))
+            assertNotNull(dao.getMarker(walk.uuid))
+            assertTrue("no arrival", h.repository.eventsFor(walk.id).none { it.eventType == WalkEventType.HONOR_ARRIVAL })
+            assertNull(h.ledgers.load("camino-frances"))
+            assertFalse("nor any ledger folder", ledgerFile.parentFile!!.exists())
+        }
+
+    @Test
+    fun `AE8 a stage anchored midway, then ended early with the UI process dead, offers to continue from where it stopped`() =
+        runBlocking {
+            (0..3).forEach { index ->
+                h.ledgers.record(
+                    PilgrimageStageIdentity("camino-frances", index, "stage $index", 20.0),
+                    HonorStageOutcome(progressFrac = 1.0, arrived = true),
+                    Instant.ofEpochSecond(1_600_000_000L + index * 86_400L),
+                )
+            }
+            h.store.save(stage)
+            val walk = h.startHonorWalk(stage)
+            val session = h.newSession(FakePorts())
+            session.beginAt(walk, lon = 0.003)
+            session.walkTo(0.004, 0.005)
+
+            // The notification's Finish, handled in `:tracker` alone.
+            h.controller.finishWalk()
+            session.awaitIdle()
+
+            val next = h.ledgers.load("camino-frances")!!.next(stageCount = 33)!!
+            assertEquals(4, next.index)
+            assertEquals("a stop the route page reads as \"continue from where you stopped\"", 0.5, next.resumeFrac!!, 0.01)
+        }
+
+    @Test
+    fun `a tracker killed after finishWalkAtomic leaves the record to the next launch's retry, which writes it once`() =
+        runBlocking {
+            h.store.save(stage)
+            val walk = h.startHonorWalk(stage)
+            val trackerProcess = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            val session = h.newSession(FakePorts())
+            session.beginAt(walk, lon = 0.005, scope = trackerProcess)
+            // Finish's first write lands, then the kill, before any Honor step.
+            h.repository.finishWalkAtomic(walk.id, endTimestamp = h.clock.millis, finishKind = HonorFinishKind.CLEAN)
+            trackerProcess.coroutineContext[Job]!!.cancelAndJoin()
+            assertNull(h.ledgers.load("camino-frances"))
+
+            h.finalizer.runAtLaunch()
+            val recorded = ledgerFile.readText()
+            ledgerFile.setLastModified(LONG_AGO_MILLIS)
+            h.finalizer.runAtLaunch()
+            h.finalizer.finalize(walk.id)
+
+            assertEquals(0.5, entry()!!.stoppedAtFrac!!, 0.01)
+            assertNotNull(dao.getMarker(walk.uuid))
+            assertNull(dao.getSession(walk.id))
+            assertEquals("no second write", LONG_AGO_MILLIS to recorded, ledgerFile.lastModified() to ledgerFile.readText())
+        }
+
+    @Test
+    fun `a failed ledger write leaves no marker, keeps the outcome and the staged copy, and the launch retry records it`() =
+        runBlocking {
+            val walk = finishedStageWalk()
+            val blocked = blockTheLedger()
+
+            assertEquals(HonorFinalizeOutcome.PENDING, h.finalizer.finalize(walk.id))
+            assertNull(dao.getMarker(walk.uuid))
+            assertEquals(HonorStageOutcome(0.5, arrived = false), dao.getSession(walk.id)!!.stageOutcome())
+            assertEquals("the link lands first", WayLink(STAGE_ID), h.store.wayLink(walk.uuid))
+            assertNotNull(h.store.staged(walk.uuid))
+
+            blocked.parentFile!!.deleteRecursively()
+            h.finalizer.runAtLaunch()
+
+            assertEquals(0.5, entry()!!.stoppedAtFrac!!, 0.0)
+            assertNotNull(dao.getMarker(walk.uuid))
+            assertNoLiveRows(walk)
+            assertNull(h.store.staged(walk.uuid))
+        }
+
+    @Test
+    fun `a stage's record is dated the walk's end, never the clock`() = runBlocking {
+        h.clock.millis = 1_800_000_000_000L
+        val walk = finishedStageWalk(endTimestamp = 1_700_000_123_456L)
+
+        h.finalizer.finalize(walk.id)
+
+        assertEquals(Instant.ofEpochSecond(1_700_000_123L), entry()!!.walkedAt)
+    }
+
+    @Test
+    fun `a record the store can never write counts as done`() = runBlocking {
+        val walk = finishedStageWalk(routeId = "Camino Francés")
+
+        assertEquals(HonorFinalizeOutcome.DONE, h.finalizer.finalize(walk.id))
+
+        assertNotNull(dao.getMarker(walk.uuid))
+        assertNoLiveRows(walk)
+        assertFalse(File(folder.root, "Ways/pilgrimage").exists())
+    }
+
+    @Test
+    fun `a recovered stage walk is linked and recorded only when its stage still loads`() = runBlocking {
+        val gone = finishedStageWalk(kind = HonorFinishKind.RECOVERED)
+        assertEquals(HonorFinalizeOutcome.DONE, h.finalizer.finalize(gone.id))
+        assertNull(h.store.wayLink(gone.uuid))
+        assertNull(h.ledgers.load("camino-frances"))
+        assertNull("its staged copy is no stand-in for the package", h.store.staged(gone.uuid))
+
+        h.store.save(stage)
+        val kept = finishedStageWalk(kind = HonorFinishKind.RECOVERED, outcome = HonorStageOutcome(0.4, arrived = false))
+        h.finalizer.finalize(kept.id)
+
+        assertEquals(WayLink(STAGE_ID), h.store.wayLink(kept.uuid))
+        assertEquals(0.4, entry()!!.stoppedAtFrac!!, 0.0)
+        assertEquals(HonorFinishKind.RECOVERED, dao.getMarker(kept.uuid)!!.finishKind)
+    }
+
     // The staging sweep
 
     private fun stagingDir(uuid: String) = File(folder.root, "Ways/staging/$uuid")
@@ -297,26 +527,38 @@ class HonorFinalizerTest {
         assertNotNull("a pending step still needs it", h.store.staged(pending.uuid))
     }
 
+    // Owner decision 2 of the pilgrimage-stage spec: the copy Begin staged is discarded, never promoted.
     @Test
-    fun `a stage walk's staging is never listed over its package, and the sweep takes it as it takes an own walk's`() =
+    fun `a stage walk's staged copy is discarded at its finish, clean or recovered, and never listed over its package`() =
         runBlocking {
             h.store.save(HonorHarness.stage())
-            val packageWay = File(folder.root, "Ways/${HonorHarness.STAGE_ID}/way.json")
+            val packageWay = File(folder.root, "Ways/$STAGE_ID/way.json")
             val installed = packageWay.readText()
-            val walk = finishedHonorWalk(
-                HonorFinishKind.CLEAN,
-                staged = HonorHarness.stage(title = "as it stood at Begin"),
-                sourceKind = HonorSourceKind.PILGRIMAGE,
-            )
+            val atTheDoor = HonorHarness.stage(title = "as it stood at Begin")
+            val clean = finishedHonorWalk(HonorFinishKind.CLEAN, staged = atTheDoor, sourceKind = HonorSourceKind.PILGRIMAGE)
+            val recovered = finishedHonorWalk(HonorFinishKind.RECOVERED, staged = atTheDoor, sourceKind = HonorSourceKind.PILGRIMAGE)
 
-            h.finalizer.finalize(walk.id)
-            age(stagingDir(walk.uuid))
-            h.finalizer.sweepStaging()
+            h.finalizer.finalize(clean.id)
+            h.finalizer.finalize(recovered.id)
 
-            assertEquals(WayLink(HonorHarness.STAGE_ID, 600.0, 540.0), h.store.wayLink(walk.uuid))
+            assertEquals(WayLink(STAGE_ID, 600.0, 540.0), h.store.wayLink(clean.uuid))
+            assertEquals(WayLink(STAGE_ID), h.store.wayLink(recovered.uuid))
             assertEquals("the package's own file", installed, packageWay.readText())
-            assertFalse(stagingDir(walk.uuid).exists())
+            assertFalse(stagingDir(clean.uuid).exists())
+            assertFalse(stagingDir(recovered.uuid).exists())
         }
+
+    @Test
+    fun `the sweep holds a stage walk's staging while its step is pending, as it holds an own walk's`() = runBlocking {
+        val walk = finishedStageWalk()
+        blockTheLedger()
+        h.finalizer.finalize(walk.id)
+        age(stagingDir(walk.uuid))
+
+        assertEquals(0, h.finalizer.sweepStaging())
+
+        assertNotNull(h.store.staged(walk.uuid))
+    }
 
     @Test
     fun `the sweep clears old temp files a killed write left, and spares young ones`() = runBlocking {
@@ -503,6 +745,7 @@ class HonorFinalizerTest {
                 h.db,
                 h.store,
                 h.clock,
+                ledgers = h.ledgers,
                 waySweeper = Provider { noSweep() },
                 releaseFlags = FixedReleaseFlags(honor),
                 packageManager = Provider {
@@ -551,5 +794,11 @@ class HonorFinalizerTest {
 
     private companion object {
         const val SHARE_ID = "share:Qoi4YmPHLN"
+
+        /** About 1.1 km north of the stage's line, which runs along the equator. */
+        const val A_KILOMETRE_NORTH = 0.01
+
+        /** A whole second, so every file system keeps it exactly. */
+        const val LONG_AGO_MILLIS = 1_600_000_000_000L
     }
 }
