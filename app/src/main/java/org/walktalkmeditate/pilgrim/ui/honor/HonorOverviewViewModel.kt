@@ -2,9 +2,11 @@
 package org.walktalkmeditate.pilgrim.ui.honor
 
 import android.net.Uri
+import android.util.Log
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Immutable
 import java.io.File
+import java.io.IOException
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -234,6 +236,10 @@ class HonorOverviewViewModel internal constructor(
      * and it is written as the note shows. One reading, as iOS takes its
      * monitor's first report. A rotation keeps this model and its note; an
      * overview restored after a process death reads the note as said.
+     *
+     * A save that fails (a full disk, a corrupt preferences file) costs only
+     * the flag, so the note may say itself again; the distance to the start
+     * and today's weather still come.
      */
     private suspend fun sayOfflineNoteOnce() {
         if (honorPreferences.awaitPilgrimageOfflineNoteShown()) return
@@ -243,7 +249,11 @@ class HonorOverviewViewModel internal constructor(
             alreadyShown = false,
         ) ?: return
         updateOverview { it.copy(offlineNote = note) }
-        honorPreferences.setPilgrimageOfflineNoteShown()
+        try {
+            honorPreferences.setPilgrimageOfflineNoteShown()
+        } catch (e: IOException) {
+            Log.w(TAG, "the offline note's flag wasn't saved; it may show again", e)
+        }
     }
 
     /**
@@ -487,6 +497,7 @@ class HonorOverviewViewModel internal constructor(
             )
         }
 
+        private const val TAG = "HonorOverview"
         private const val WAVEFORM_BARS = 64
         private const val MILLIS_PER_SECOND = 1000.0
 

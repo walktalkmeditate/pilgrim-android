@@ -52,6 +52,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.domain.honor.WayStage
@@ -427,16 +428,21 @@ private fun SoundscapeOptionRow(
                 tint = if (isPlaying) pilgrimColors.moss else pilgrimColors.fog,
                 modifier = Modifier.size(24.dp),
             )
+            // iOS draws this row through the same `optionRow`, one line each.
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = stringResource(R.string.walk_options_soundscape_title),
                     style = pilgrimType.body,
                     color = pilgrimColors.ink,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = if (isPlaying) name else stringResource(R.string.walk_options_soundscape_off),
                     style = pilgrimType.caption,
                     color = pilgrimColors.fog,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             Icon(
@@ -508,10 +514,23 @@ private fun OptionRow(
             tint = tint,
             modifier = Modifier.size(24.dp),
         )
+        // iOS `optionRow` (`WalkOptionsSheet.swift:310-325@7c200bf`): title and subtitle each `.lineLimit(1)`.
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = title, style = pilgrimType.body, color = titleColor)
+            Text(
+                text = title,
+                style = pilgrimType.body,
+                color = titleColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             if (!subtitle.isNullOrBlank()) {
-                Text(text = subtitle, style = pilgrimType.caption, color = pilgrimColors.fog)
+                Text(
+                    text = subtitle,
+                    style = pilgrimType.caption,
+                    color = pilgrimColors.fog,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
         Icon(

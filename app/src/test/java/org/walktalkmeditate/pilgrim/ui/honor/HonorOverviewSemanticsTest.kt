@@ -29,6 +29,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
 import java.time.Instant
 import org.junit.Assert.assertEquals
@@ -39,6 +40,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.honor.WayError
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
@@ -553,6 +555,22 @@ class HonorOverviewSemanticsTest {
         listOf("house lodge", "seal", "building columns", "book closed")
             .forEach { composeRule.onNodeWithContentDescription(it).assertExists() }
         composeRule.onAllNodesWithContentDescription("mappin").assertCountEquals(0)
+    }
+
+    // iOS `.lineLimit(1)` (`WayMomentHeader.swift:25-30@7c200bf`) cuts the name's end with "…".
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `a local name too long for its line ends in an ellipsis`() {
+        val name = "Catedral de Santa María la Real de Pamplona, Iglesia Catedral Metropolitana"
+        val way = stageWay(text = null)
+        val moment = way.moments.single().copy(names = mapOf("es" to name))
+        show { Box(Modifier.size(240.dp, 400.dp)) { WayMomentHeader(way = way, moment = moment, units = UnitSystem.Metric) } }
+
+        val layouts = mutableListOf<TextLayoutResult>()
+        composeRule.onNodeWithText(name).fetchSemanticsNode()
+            .config[SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts)
+
+        assertTrue(layouts.single().isLineEllipsized(0))
     }
 
     // §17.6 — the moment preview.

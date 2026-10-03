@@ -14,6 +14,7 @@ import org.walktalkmeditate.pilgrim.data.practice.ZodiacSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.weather.WeatherCondition
 import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
+import org.walktalkmeditate.pilgrim.ui.walk.formatTemperature
 
 /**
  * Verbatim port of iOS `ContextFormatter.swift`. Produces LLM-facing
@@ -326,13 +327,6 @@ object ContextFormatter {
 
     private fun formatShortDate(timestamp: Long, zone: ZoneId): String =
         shortDateFormatter.format(Instant.ofEpochMilli(timestamp).atZone(zone))
-
-    private fun formatTemperature(celsius: Double, imperial: Boolean): String =
-        if (imperial) {
-            String.format(Locale.US, "%.0f°F", celsius * 9.0 / 5.0 + 32.0)
-        } else {
-            String.format(Locale.US, "%.0f°C", celsius)
-        }
 
     private fun describeWind(metersPerSecond: Double): String = when {
         metersPerSecond < 2.0 -> "calm"

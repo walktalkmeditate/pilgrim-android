@@ -2,22 +2,27 @@
 package org.walktalkmeditate.pilgrim.ui.walk
 
 import android.app.Application
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.text.TextLayoutResult
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.honor.WayCoordinate
 import org.walktalkmeditate.pilgrim.domain.honor.WayStage
 import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
 import org.walktalkmeditate.pilgrim.domain.honor.WayStagePlace
+import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -389,17 +394,19 @@ class WalkOptionsSheetTest {
 
     private fun showStageOptions(beforeStart: Boolean, stageDay: WayStage?, onOpenStageDay: () -> Unit = {}) {
         composeRule.setContent {
-            WalkOptionsSheet(
-                canSetIntention = beforeStart,
-                intention = null,
-                onSetIntention = {},
-                waypointCount = 0,
-                canDropWaypoint = !beforeStart,
-                onDropWaypoint = {},
-                onDismiss = {},
-                stageDay = stageDay,
-                onOpenStageDay = onOpenStageDay,
-            )
+            PilgrimTheme {
+                WalkOptionsSheet(
+                    canSetIntention = beforeStart,
+                    intention = null,
+                    onSetIntention = {},
+                    waypointCount = 0,
+                    canDropWaypoint = !beforeStart,
+                    onDropWaypoint = {},
+                    onDismiss = {},
+                    stageDay = stageDay,
+                    onOpenStageDay = onOpenStageDay,
+                )
+            }
         }
     }
 
@@ -423,6 +430,24 @@ class WalkOptionsSheetTest {
         val day = composeRule.onNodeWithText("the day").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
         val waypoint = composeRule.onNodeWithText("Drop Waypoint").fetchSemanticsNode().boundsInRoot
         assertTrue("before Drop Waypoint", day.top < waypoint.top)
+    }
+
+    // iOS's shared `optionRow` (`WalkOptionsSheet.swift:320-325@7c200bf`):
+    // `.lineLimit(1)`, so the dataset's longest theme ends in "…" on one line.
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `a long stage theme stays on one line and ends in an ellipsis`() {
+        val longest = "Nine temples, and a hundred and seventeen metres between the first two"
+        showStageOptions(beforeStart = true, stageDay = stage().copy(theme = longest))
+
+        val layouts = mutableListOf<TextLayoutResult>()
+        // The row is one button, its texts merged; the theme's own layout is in the unmerged tree.
+        composeRule.onNodeWithText(longest, useUnmergedTree = true).fetchSemanticsNode()
+            .config[SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts)
+
+        val layout = layouts.single()
+        assertEquals(1, layout.lineCount)
+        assertTrue("ends in an ellipsis", layout.isLineEllipsized(0))
     }
 
     @Test

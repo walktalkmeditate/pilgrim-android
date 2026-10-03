@@ -25,6 +25,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import java.time.DateTimeException
 import java.time.ZoneId
@@ -227,7 +228,13 @@ fun WayMomentHeader(
                 Text(text = it, style = pilgrimType.heading, color = pilgrimColors.ink)
             }
             WayMomentCopy.localName(resources, moment)?.let {
-                Text(text = it, style = pilgrimType.caption, color = pilgrimColors.fog, maxLines = 1)
+                Text(
+                    text = it,
+                    style = pilgrimType.caption,
+                    color = pilgrimColors.fog,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
             Text(
                 text = WayMomentCopy.subline(resources, way, moment, units, locale),
@@ -280,7 +287,13 @@ fun WayMomentCompactHeader(
                 Text(text = it, style = pilgrimType.body, color = pilgrimColors.ink)
             }
             WayMomentCopy.localName(resources, moment)?.let {
-                Text(text = it, style = pilgrimType.caption, color = pilgrimColors.fog, maxLines = 1)
+                Text(
+                    text = it,
+                    style = pilgrimType.caption,
+                    color = pilgrimColors.fog,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
             if (subline != null) {
                 Row(

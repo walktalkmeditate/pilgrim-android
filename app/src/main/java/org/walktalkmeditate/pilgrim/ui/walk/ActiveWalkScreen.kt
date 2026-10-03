@@ -558,16 +558,11 @@ fun ActiveWalkScreen(
     val hemisphere = LocalPilgrimHemisphere.current
     val activeTurning = remember(hemisphere) { turningMarkerForToday().forHemisphere(hemisphere) }
     var showTurningCard by rememberSaveable { mutableStateOf(false) }
-    // Composition-scoped scope for the 300ms sheet handoff delay
-    // (D9). Tied to the screen's composition lifetime — cancels on
-    // back-pop / discard so a pending handoff doesn't surface a sheet
-    // after the user has left the screen. `handoffJob` tracks the
-    // single in-flight delay so a re-tap during the 300ms window
-    // cancels the prior handoff (no double-sheet-pop on re-tap).
+    // The options sheet's 300 ms hand-off to the next sheet (D9), on a
+    // composition-scoped scope so a back-pop drops one still waiting; a
+    // walk leaving Active or Paused drops it too (see [SheetHandoff]).
     val handoffScope = rememberCoroutineScope()
-    val handoffJob = remember {
-        androidx.compose.runtime.mutableStateOf<kotlinx.coroutines.Job?>(null)
-    }
+    val sheetHandoff = remember(handoffScope) { SheetHandoff(handoffScope) }
     // iOS parity (`ActiveWalkView.swift:362-379@v1.6.0`): the
     // auto-intention prompt opens the SAME pre-walk intention sheet
     // the manual "Set Intention" ellipsis row opens
@@ -642,6 +637,7 @@ fun ActiveWalkScreen(
             // follow the same rule — they must NOT survive a walk-ending
             // transition since their onPlace callbacks fire
             // viewModel.placeX on a now-Finished walk.
+            sheetHandoff.cancel()
             showOptions = false
             showWaypointMarking = false
             showTurningCard = false
@@ -1046,21 +1042,13 @@ fun ActiveWalkScreen(
                     // present animations don't fight. Android's overlay
                     // system doesn't strictly need this (single overlay
                     // layer), but the user-perceived rhythm matches.
-                    handoffJob.value?.cancel()
-                    handoffJob.value = handoffScope.launch {
-                        kotlinx.coroutines.delay(SHEET_HANDOFF_DELAY_MS)
-                        showPreWalkIntention = true
-                    }
+                    sheetHandoff.open { showPreWalkIntention = true }
                 },
                 waypointCount = waypointCount,
                 canDropWaypoint = activeWalk?.lastLocation != null,
                 onDropWaypoint = {
                     showOptions = false
-                    handoffJob.value?.cancel()
-                    handoffJob.value = handoffScope.launch {
-                        kotlinx.coroutines.delay(SHEET_HANDOFF_DELAY_MS)
-                        showWaypointMarking = true
-                    }
+                    sheetHandoff.open { showWaypointMarking = true }
                 },
                 onDismiss = { showOptions = false },
                 isWhisperUnlocked = isWhisperUnlocked,
@@ -1068,22 +1056,14 @@ fun ActiveWalkScreen(
                 whispersRemaining = (7 - whispersPlacedThisWalk).coerceAtLeast(0),
                 onLeaveWhisper = {
                     showOptions = false
-                    handoffJob.value?.cancel()
-                    handoffJob.value = handoffScope.launch {
-                        kotlinx.coroutines.delay(SHEET_HANDOFF_DELAY_MS)
-                        showWhisperSheet = true
-                    }
+                    sheetHandoff.open { showWhisperSheet = true }
                 },
                 isStoneUnlocked = isStoneUnlocked,
                 canPlaceStone = canPlaceStone,
                 stonePlaced = stonePlacedThisWalk,
                 onPlaceStone = {
                     showOptions = false
-                    handoffJob.value?.cancel()
-                    handoffJob.value = handoffScope.launch {
-                        kotlinx.coroutines.delay(SHEET_HANDOFF_DELAY_MS)
-                        showStoneSheet = true
-                    }
+                    sheetHandoff.open { showStoneSheet = true }
                 },
                 soundscapeName = soundscapeName,
                 isSoundscapePlaying = soundscapeEnabled,
@@ -1113,11 +1093,7 @@ fun ActiveWalkScreen(
                 stageDay = honor?.way?.stage,
                 onOpenStageDay = {
                     showOptions = false
-                    handoffJob.value?.cancel()
-                    handoffJob.value = handoffScope.launch {
-                        kotlinx.coroutines.delay(SHEET_HANDOFF_DELAY_MS)
-                        showStageDay = true
-                    }
+                    sheetHandoff.open { showStageDay = true }
                 },
             )
         }

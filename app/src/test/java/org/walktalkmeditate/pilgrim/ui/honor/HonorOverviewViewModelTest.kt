@@ -8,6 +8,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import androidx.test.core.app.ApplicationProvider
 import java.io.File
+import java.io.IOException
 import java.time.Instant
 import java.time.ZoneId
 import java.util.Locale
@@ -36,6 +37,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -52,6 +54,7 @@ import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.honor.FakeHonorPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.honor.FakeWayMediaDownloadScheduler
+import org.walktalkmeditate.pilgrim.data.honor.HonorPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.honor.InternetConnectionProbe
 import org.walktalkmeditate.pilgrim.data.honor.WayMediaReport
 import org.walktalkmeditate.pilgrim.data.honor.WayMediaWork
@@ -200,7 +203,7 @@ class HonorOverviewViewModelTest {
         walkId: Long = sourceId,
         location: FakeLocationSource = FakeLocationSource(),
         weather: FakeWeatherFetching = FakeWeatherFetching(),
-        preferences: FakeHonorPreferencesRepository = FakeHonorPreferencesRepository(),
+        preferences: HonorPreferencesRepository = FakeHonorPreferencesRepository(),
         playback: FakeVoicePlaybackController = FakeVoicePlaybackController(),
         savedStateHandle: SavedStateHandle = SavedStateHandle(mapOf(HonorOverviewViewModel.ARG_SOURCE_WALK_ID to walkId)),
         stageHandoff: HonorStageHandoff = HonorStageHandoff(),
@@ -907,6 +910,32 @@ class HonorOverviewViewModelTest {
         ready(overview(savedStateHandle = stageArgs(), preferences = unsaid, connectivity = offline))
         assertEquals(1, readings)
     }
+
+    // A full disk or a corrupt preferences file costs the note's flag, never the rest of the overview.
+    @Test
+    fun `a note whose flag can't be saved still shows, and the distance and today's weather still come`() =
+        runTest(dispatcher) {
+            store.save(HonorHarness.stage())
+            val unwritable = object : HonorPreferencesRepository by FakeHonorPreferencesRepository() {
+                override suspend fun setPilgrimageOfflineNoteShown() {
+                    throw IOException("No space left on device")
+                }
+            }
+            val today = WeatherSnapshot(WeatherCondition.CLEAR, temperatureCelsius = 9.0, humidityFraction = null, windSpeedMps = null)
+            val vm = overview(
+                savedStateHandle = stageArgs(),
+                preferences = unwritable,
+                connectivity = { false },
+                location = FakeLocationSource(lastKnown = LocationPoint(timestamp = 1L, latitude = 0.0, longitude = -0.001)),
+                weather = FakeWeatherFetching(today),
+            )
+
+            val overview = ready(vm)
+
+            assertEquals(R.string.honor_overview_offline_note, overview.offlineNote)
+            assertNotNull("the distance to the start", overview.distanceToStartMeters)
+            assertEquals(today, overview.todayWeather)
+        }
 
     private fun stageArgs() = SavedStateHandle(mapOf(HonorOverviewViewModel.ARG_WAY_ID to HonorHarness.STAGE_ID))
 
