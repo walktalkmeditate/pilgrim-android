@@ -39,6 +39,10 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayGeometry
 import org.walktalkmeditate.pilgrim.domain.honor.WayMoment
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
+import org.walktalkmeditate.pilgrim.domain.honor.WayStage
+import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.STAGE_SEPARATOR
+import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.StageFormat
+import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.digits
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
@@ -78,25 +82,40 @@ object WayMomentCopy {
      * names one. The hour is in the Way's `tzIdentifier`, which an own walk
      * stamps with the zone the phone was in when the Way was built, not the
      * walk's own (pilgrim-ios #110, matched).
+     *
+     * A stage drops the hour, its clock being the build's, and reads
+     * `"1.2 km along the stage"` in the stage surfaces' numbers
+     * (`WayMomentPreview.swift:49-64@7c200bf`, pilgrimage-stage spec P4 §8.1,
+     * owner decision 7). Its moments carry no place.
      */
     fun subline(resources: Resources, way: Way, moment: WayMoment, units: UnitSystem, locale: Locale): String {
-        val distance = WalkFormat.distance(moment.frac * way.totalDistanceMeters, units)
-        val elapsedSeconds = WayGeometry(way.route).elapsed(atFrac = moment.frac)
-        val hour = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
-            .withLocale(locale)
-            .withZone(wayZone(way))
-            .format(way.departedAt.plusMillis((elapsedSeconds * 1000).toLong()))
+        val meters = moment.frac * way.totalDistanceMeters
         val parts = buildList {
-            add(resources.getString(R.string.honor_moment_along_their_way, distance))
-            add(hour)
+            if (way.isPilgrimageStage) {
+                add(resources.getString(R.string.honor_moment_along_the_stage, StageFormat.distance(meters, units)))
+            } else {
+                val elapsedSeconds = WayGeometry(way.route).elapsed(atFrac = moment.frac)
+                val hour = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
+                    .withLocale(locale)
+                    .withZone(wayZone(way))
+                    .format(way.departedAt.plusMillis((elapsedSeconds * 1000).toLong()))
+                add(resources.getString(R.string.honor_moment_along_their_way, WalkFormat.distance(meters, units)))
+                add(hour)
+            }
             moment.place?.takeIf { it.isNotEmpty() }?.let(::add)
         }
         return parts.joinToString(" · ")
     }
 
-    /** iOS `placeCopy(for:isStage:)` for an own walk, which is never a stage. */
-    fun placeCopy(resources: Resources, moment: WayMoment): String =
-        moment.text?.takeIf { it.isNotEmpty() } ?: resources.getString(R.string.honor_moment_place_marked)
+    /**
+     * iOS `placeCopy(for:isStage:)` (`WayMomentHeader.swift:86-89@7c200bf`):
+     * the dataset's or the walker's own words when there are any, else the
+     * shortest true thing. A stage has no "they".
+     */
+    fun placeCopy(resources: Resources, moment: WayMoment, isStage: Boolean): String =
+        moment.text?.takeIf { it.isNotEmpty() } ?: resources.getString(
+            if (isStage) R.string.honor_moment_place_on_the_way else R.string.honor_moment_place_marked,
+        )
 
     /**
      * iOS `localName(for:)` (`WayMomentHeader.swift:72-82@7c200bf`): the
@@ -145,8 +164,32 @@ object WayMomentCopy {
 }
 
 /**
+ * iOS `WayStageLine` (`WayMomentHeader.swift:123-135@7c200bf`,
+ * pilgrimage-stage spec P4 §5.2): "stage 1 of 33 · 24.2 km · hard", what
+ * stands where any other Way shows the day it was walked, a stage's own
+ * date being the build's. Its one live caller is the overview's date slot.
+ */
+object WayStageLine {
+
+    /** Null for a Way that isn't a stage, which keeps its date. */
+    fun line(resources: Resources, way: Way, units: UnitSystem): String? =
+        way.stage?.let { line(resources, it, units) }
+
+    /** The dataset's distance and difficulty; an empty difficulty adds no part. */
+    fun line(resources: Resources, stage: WayStage, units: UnitSystem): String {
+        val parts = mutableListOf(
+            resources.getString(R.string.honor_overview_stage_of, digits(stage.index + 1), digits(stage.count)),
+            StageFormat.distance(stage.distanceKm * 1000, units),
+        )
+        if (stage.difficulty.isNotEmpty()) parts += stage.difficulty
+        return parts.joinToString(STAGE_SEPARATOR)
+    }
+}
+
+/**
  * iOS `WayMomentHeader` in its full size (`WayMomentHeader.swift:14-45@7c200bf`):
- * a 52 dp parchment disc with the glyph in stone, then the kicker and the
+ * a 52 dp parchment disc with the glyph in stone, then the kicker, a
+ * stage's local name on one line (pilgrimage-stage spec P4 §8.2), and the
  * subline. The disc is parchment on a parchment sheet, so only the glyph
  * shows there. The compact size and the heading tick are U22's.
  */
@@ -182,6 +225,9 @@ fun WayMomentHeader(
         Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs)) {
             WayMomentCopy.kicker(resources, moment, keepsEmpty = way.source !is WaySource.OwnWalk)?.let {
                 Text(text = it, style = pilgrimType.heading, color = pilgrimColors.ink)
+            }
+            WayMomentCopy.localName(resources, moment)?.let {
+                Text(text = it, style = pilgrimType.caption, color = pilgrimColors.fog, maxLines = 1)
             }
             Text(
                 text = WayMomentCopy.subline(resources, way, moment, units, locale),

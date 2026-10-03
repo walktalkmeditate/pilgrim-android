@@ -1205,7 +1205,13 @@ fun WalkSummaryWeatherLine(
     }
 }
 
-private fun formatTemperature(celsius: Double, imperial: Boolean): String {
+/**
+ * iOS `WeatherSnapshot.formatTemperature(_:imperial:)` (`WeatherService.swift:61-66@7c200bf`):
+ * `%.0f°C`, or `%.0f°F` for an imperial walker. Java rounds a tie half up
+ * where Foundation rounds it half to even, the recorded weather-source
+ * difference. The summary's line and a stage's morning card share it.
+ */
+internal fun formatTemperature(celsius: Double, imperial: Boolean): String {
     val rounded = if (imperial) celsius * 9.0 / 5.0 + 32.0 else celsius
     return String.format(Locale.US, "%.0f°%s", rounded, if (imperial) "F" else "C")
 }

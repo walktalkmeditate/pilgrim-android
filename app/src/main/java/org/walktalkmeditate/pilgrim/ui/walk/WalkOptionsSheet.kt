@@ -25,6 +25,7 @@ import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.MusicOff
 import androidx.compose.material.icons.outlined.Sensors
 import androidx.compose.material.icons.outlined.Terrain
+import androidx.compose.material.icons.outlined.WbTwilight
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -53,6 +54,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.domain.honor.WayStage
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
@@ -68,6 +70,7 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
  *  - **In-walk (Active|Paused)**: only "Drop Waypoint" is shown.
  *    Intention is committed at startWalk time and is no longer editable
  *    once a walk is in progress.
+ *  - **A pilgrimage stage, either way**: "the day" too, between the two.
  *
  * If neither flag is true (e.g., Meditating, Finished), no options
  * render — the parent's auto-dismiss LaunchedEffect closes the sheet
@@ -122,6 +125,12 @@ fun WalkOptionsSheet(
     onToggleSonar: (Boolean) -> Unit = {},
     onSonarVolumeChange: (Float) -> Unit = {},
     onSeekAnew: () -> Unit = {},
+    // iOS parity `WalkOptionsSheet.swift:67-71@7c200bf` — "the day":
+    // the stage being walked, whenever the walk screen's Way is a
+    // pilgrimage stage, before Start as well as during the walk
+    // (pilgrimage-stage spec P5 §10). Null on every other walk.
+    stageDay: WayStage? = null,
+    onOpenStageDay: () -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -152,6 +161,15 @@ fun WalkOptionsSheet(
                     // placeholder). Match: null when unset.
                     subtitle = intention?.takeIf { it.isNotBlank() },
                     onClick = onSetIntention,
+                )
+            }
+            if (stageDay != null) {
+                OptionRow(
+                    // iOS `sun.horizon`.
+                    icon = Icons.Outlined.WbTwilight,
+                    title = stringResource(R.string.walk_options_the_day),
+                    subtitle = stageDay.theme,
+                    onClick = onOpenStageDay,
                 )
             }
             if (canDropWaypoint) {

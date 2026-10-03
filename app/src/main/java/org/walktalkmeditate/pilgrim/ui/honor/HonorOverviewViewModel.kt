@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.honor
 
 import android.net.Uri
+import androidx.annotation.StringRes
 import androidx.compose.runtime.Immutable
 import java.io.File
 import androidx.lifecycle.SavedStateHandle
@@ -25,11 +26,13 @@ import org.walktalkmeditate.pilgrim.audio.VoicePlaybackController
 import org.walktalkmeditate.pilgrim.audio.WaveformGenerator
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.honor.HonorPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.honor.InternetConnectionProbe
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 import org.walktalkmeditate.pilgrim.data.weather.WeatherFetching
+import org.walktalkmeditate.pilgrim.data.weather.WeatherSnapshot
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.domain.honor.WayMedia
@@ -68,8 +71,12 @@ data class HonorOverview(
     val photoUris: Map<String, String>,
     /** "Today is …": a `WeatherCondition` raw value, once the one fetch lands. */
     val todayCondition: String? = null,
+    /** The same fetch's whole snapshot, which a stage's morning card reads (pilgrimage-stage spec P4 §6.5). */
+    val todayWeather: WeatherSnapshot? = null,
     /** From the phone's last fix to the Way's start, measured once; null until a fix is there. */
     val distanceToStartMeters: Double? = null,
+    /** The once-ever offline note a stage says under the status line (P4 §6.4); null otherwise. */
+    @StringRes val offlineNote: Int? = null,
 )
 
 /** A voice the preview can play, by file, through the app's one voice player. */
@@ -126,6 +133,7 @@ class HonorOverviewViewModel internal constructor(
     private val waveformCache: WaveformCache,
     private val ioDispatcher: CoroutineDispatcher,
     private val stageHandoff: HonorStageHandoff = HonorStageHandoff(),
+    private val connectivity: InternetConnectionProbe = InternetConnectionProbe { true },
     /** A shared voice's bars: iOS's peaks, read from its `.m4a` (S4 §9.3). */
     private val loadSharedWaveform: suspend (File) -> FloatArray? = { WaveformGenerator.generate(it, WAVEFORM_BARS) },
 ) : ViewModel() {
@@ -144,9 +152,10 @@ class HonorOverviewViewModel internal constructor(
         recordingFiles: VoiceRecordingFileSystem,
         waveformCache: WaveformCache,
         stageHandoff: HonorStageHandoff,
+        connectivity: InternetConnectionProbe,
     ) : this(
         savedStateHandle, ownWalkWays, wayStore, imports, honorPreferences, unitsPreferences, locationSource,
-        weatherFetching, playback, recordingFiles, waveformCache, Dispatchers.IO, stageHandoff,
+        weatherFetching, playback, recordingFiles, waveformCache, Dispatchers.IO, stageHandoff, connectivity,
     )
 
     private val choice: HonorWayChoice = choiceOf(savedStateHandle)
@@ -206,12 +215,35 @@ class HonorOverviewViewModel internal constructor(
             ),
         )
         if (way.source is WaySource.Share) followLandingMedia(way)
+        if (way.isPilgrimageStage) sayOfflineNoteOnce()
         val here = awaitLastKnownFix() ?: return
         updateOverview { it.copy(distanceToStartMeters = HonorOverviewModel.distanceToStartMeters(here, way)) }
         // "Today is …": the walk's own weather source, on the walker's
-        // current fix; silent offline or without a fix (F §10.5).
+        // current fix; silent offline or without a fix (F §10.5). A
+        // stage's morning card reads the whole snapshot.
         val today = weatherFetching.fetchCurrent(here.latitude, here.longitude) ?: return
-        updateOverview { it.copy(todayCondition = today.condition.rawValue) }
+        updateOverview { it.copy(todayCondition = today.condition.rawValue, todayWeather = today) }
+    }
+
+    /**
+     * iOS `checkConnectivity()` (`HonorOverviewView.swift:382-402@7c200bf`,
+     * pilgrimage-stage spec P4 §6.4): the first stage overview opened
+     * offline says its map tiles need a connection, and none says it again
+     * on this install. The preference is awaited, since a read before
+     * DataStore has loaded would be its default and say the note twice,
+     * and it is written as the note shows. One reading, as iOS takes its
+     * monitor's first report. A rotation keeps this model and its note; an
+     * overview restored after a process death reads the note as said.
+     */
+    private suspend fun sayOfflineNoteOnce() {
+        if (honorPreferences.awaitPilgrimageOfflineNoteShown()) return
+        val note = HonorOverviewModel.offlineNote(
+            isStage = true,
+            isConnected = connectivity.isConnected(),
+            alreadyShown = false,
+        ) ?: return
+        updateOverview { it.copy(offlineNote = note) }
+        honorPreferences.setPilgrimageOfflineNoteShown()
     }
 
     /**

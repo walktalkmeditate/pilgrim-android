@@ -71,10 +71,21 @@ sealed interface WayGlyph {
         fun resolvedWaypointIcon(icon: String): String =
             if (icon in DRAWABLE_WAYPOINT_ICONS) icon else WAYPOINT_CUSTOM_ICON_KEY
 
-        private val DRAWABLE_WAYPOINT_ICONS: Set<String> =
-            PRESET_CHIPS.map { it.iconKey }.toSet() + WAYPOINT_CUSTOM_ICON_KEY
+        private val DRAWABLE_WAYPOINT_ICONS: Set<String> = DRAWABLE_WAYPOINT_ICON_KEYS.toSet()
     }
 }
+
+/**
+ * The SF symbols a pilgrimage stage's waypoints name beyond the walker's
+ * own chips (`eye` is one of those): 470 of the live dataset's 505 stage
+ * moments. iOS draws each; Android has a Material stand-in for each in
+ * [iconKeyToVector] (pilgrimage-stage spec P5 §5.6, C6, owner decision 10).
+ */
+internal val STAGE_MOMENT_ICON_KEYS: List<String> = listOf("house.lodge", "seal", "building.columns", "book.closed")
+
+/** Every waypoint icon a Way's pin or header can draw; any other is drawn as `mappin`, iOS's own fallback. */
+private val DRAWABLE_WAYPOINT_ICON_KEYS: List<String> =
+    PRESET_CHIPS.map { it.iconKey } + STAGE_MOMENT_ICON_KEYS + WAYPOINT_CUSTOM_ICON_KEY
 
 /** The SF symbols' Material stand-ins. */
 fun wayGlyphVector(glyph: WayGlyph): ImageVector = when (glyph) {
@@ -209,7 +220,7 @@ private val PIN_GLYPHS: List<WayGlyph> = listOf(
     WayGlyph.Photo,
     WayGlyph.Rest,
     WayGlyph.Sitting,
-) + (PRESET_CHIPS.map { it.iconKey } + WAYPOINT_CUSTOM_ICON_KEY).map { WayGlyph.Waypoint(it) }
+) + DRAWABLE_WAYPOINT_ICON_KEYS.map { WayGlyph.Waypoint(it) }
 
 private const val PIN_DISC_ARGB = 0xFFF5F0E8
 private const val PIN_DISC_ALPHA = 0.9f

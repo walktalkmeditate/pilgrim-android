@@ -5,6 +5,10 @@ import android.app.Application
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Signpost
+import androidx.compose.material.icons.outlined.AccountBalance
+import androidx.compose.material.icons.outlined.Book
+import androidx.compose.material.icons.outlined.Cottage
+import androidx.compose.material.icons.outlined.Verified
 import androidx.compose.material.icons.outlined.WbTwilight
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
@@ -26,6 +30,9 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPersistence
+import org.walktalkmeditate.pilgrim.ui.walk.map.STAGE_MOMENT_ICON_KEYS
+import org.walktalkmeditate.pilgrim.ui.walk.map.WayGlyph
+import org.walktalkmeditate.pilgrim.ui.walk.map.wayGlyphVector
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -150,6 +157,19 @@ class WaypointMarkingSheetTest {
             Icons.Outlined.WbTwilight,
             iconKeyToVector(SeekPersistence.ARRIVAL_WAYPOINT_ICON),
         )
+    }
+
+    // Pilgrimage-stage spec P5 §5.6, owner decision 10: the dataset's four
+    // stage icons as their Material stand-ins, outlined like the unfilled SF names.
+    @Test fun `iconKeyToVector draws a stage's lodge, seal, columns and book as their stand-ins`() {
+        assertEquals(
+            listOf(Icons.Outlined.Cottage, Icons.Outlined.Verified, Icons.Outlined.AccountBalance, Icons.Outlined.Book),
+            STAGE_MOMENT_ICON_KEYS.map(::iconKeyToVector),
+        )
+        STAGE_MOMENT_ICON_KEYS.forEach { key ->
+            assertEquals("$key is drawn, not resolved to mappin", key, WayGlyph.resolvedWaypointIcon(key))
+            assertEquals(iconKeyToVector(key), wayGlyphVector(WayGlyph.Waypoint(key)))
+        }
     }
 
     @Test fun `iconKeyToVector draws the honor arrival icon as a signpost`() {
