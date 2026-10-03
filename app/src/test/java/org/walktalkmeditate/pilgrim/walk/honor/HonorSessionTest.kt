@@ -636,6 +636,8 @@ class HonorSessionTest {
         assertEquals("the frac-0 fallback is not a stage joined", 0.0 to true, approach.startFrac to approach.anchoredByFallback)
         assertFalse(joined.anchoredByFallback)
         assertEquals(0.1, joined.startFrac!!, 1e-9)
+        assertNull("a walk still on the fallback has no outcome for the ledger", approach.stageOutcome())
+        assertNotNull("one fix on the line gives it one", joined.stageOutcome())
     }
 
     // Correctness review P3-1: a vibration still playing is cut by the next one, where iOS layers the two.

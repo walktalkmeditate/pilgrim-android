@@ -428,6 +428,21 @@ class HonorFinalizerTest {
             assertEquals("no second write", LONG_AGO_MILLIS to recorded, ledgerFile.lastModified() to ledgerFile.readText())
         }
 
+    /** A kill after the record but before the marker: the retry records again, and the file comes out the same. */
+    @Test
+    fun `a record that landed without its marker is replayed by the launch retry to the same bytes`() = runBlocking {
+        val walk = finishedStageWalk()
+        val row = dao.getSession(walk.id)!!
+        h.ledgers.record(row.stageIdentity()!!, row.stageOutcome(), Instant.ofEpochMilli(walk.endTimestamp!!))
+        val recorded = ledgerFile.readText()
+
+        h.finalizer.runAtLaunch()
+
+        assertNotNull(dao.getMarker(walk.uuid))
+        assertNoLiveRows(walk)
+        assertEquals("the replay writes what the first record wrote", recorded, ledgerFile.readText())
+    }
+
     @Test
     fun `a failed ledger write leaves no marker, keeps the outcome and the staged copy, and the launch retry records it`() =
         runBlocking {
