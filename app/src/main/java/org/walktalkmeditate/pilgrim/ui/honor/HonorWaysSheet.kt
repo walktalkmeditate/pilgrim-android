@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.honor
 
 import android.view.WindowManager
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ModalBottomSheetProperties
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -48,6 +50,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -71,7 +74,8 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
  * parity spec F §4, shared-walk spec S4 §6–§7). iOS's four sections, in order:
  *  1. "Shared with you": the accepted shared Ways, newest acceptance first;
  *  2. "Your own walks": one nav row into the "Walk again" picker;
- *  3. "A pilgrimage" (Stage 21-2, not shown yet);
+ *  3. "A pilgrimage": one nav row into the catalog (pilgrimage-stage spec
+ *     P4 §2), always there, with no flag or empty state of its own;
  *  4. "From a shared walk": the paste field and "Open". The clipboard is
  *     never read: the walker pastes, or types (S2 §8.2).
  */
@@ -82,6 +86,7 @@ fun HonorWaysSheetContent(
     onClose: () -> Unit,
     onChooseShared: (wayId: String) -> Unit,
     onWalkOneOfYours: () -> Unit,
+    onWalkAPilgrimage: () -> Unit,
     onOpenPasted: (text: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -98,6 +103,18 @@ fun HonorWaysSheetContent(
             SettingNavRow(
                 label = stringResource(R.string.honor_ways_own_row),
                 onClick = onWalkOneOfYours,
+                modifier = Modifier.fillMaxWidth(),
+                role = Role.Button,
+                onClickLabel = null,
+            )
+        }
+        HonorSheetSection(
+            header = stringResource(R.string.honor_ways_pilgrimage_header),
+            footer = stringResource(R.string.honor_ways_pilgrimage_footer),
+        ) {
+            SettingNavRow(
+                label = stringResource(R.string.honor_ways_pilgrimage_row),
+                onClick = onWalkAPilgrimage,
                 modifier = Modifier.fillMaxWidth(),
                 role = Role.Button,
                 onClickLabel = null,
@@ -223,10 +240,13 @@ private fun PasteField(importState: HonorImportState, onOpen: (text: String) -> 
 private const val ROW_SEPARATOR = "·"
 
 /** The system's dimming of a disabled button. */
-private const val DISABLED_ALPHA = 0.38f
+internal const val DISABLED_ALPHA = 0.38f
+
+/** Room either side of the bar's title for the controls at its ends. */
+private val TITLE_INSET = 72.dp
 
 /**
- * The chrome both Honor sheets share: iOS's inline navigation bar, "Close"
+ * The chrome the Honor sheets share: iOS's inline navigation bar, "Close"
  * leading in stone and the title centred in heading ink, over sections.
  */
 @Composable
@@ -234,6 +254,37 @@ internal fun HonorSheetScaffold(
     title: String,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    scrollable: Boolean = true,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    HonorSheetFrame(
+        title = title,
+        leading = {
+            TextButton(onClick = onClose) {
+                Text(
+                    text = stringResource(R.string.honor_close),
+                    style = pilgrimType.button,
+                    color = pilgrimColors.stone,
+                )
+            }
+        },
+        modifier = modifier,
+        scrollable = scrollable,
+        content = content,
+    )
+}
+
+/**
+ * [HonorSheetScaffold]'s bar with its own controls: [leading] at the start,
+ * [trailing] at the end, and the title centred between them on one line,
+ * cut short as iOS's principal slot cuts a long one.
+ */
+@Composable
+internal fun HonorSheetFrame(
+    title: String,
+    leading: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+    trailing: @Composable () -> Unit = {},
     scrollable: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -249,21 +300,19 @@ internal fun HonorSheetScaffold(
                 .heightIn(min = 52.dp)
                 .padding(horizontal = PilgrimSpacing.small),
         ) {
-            TextButton(onClick = onClose, modifier = Modifier.align(Alignment.CenterStart)) {
-                Text(
-                    text = stringResource(R.string.honor_close),
-                    style = pilgrimType.button,
-                    color = pilgrimColors.stone,
-                )
-            }
+            Box(modifier = Modifier.align(Alignment.CenterStart)) { leading() }
             Text(
                 text = title,
                 style = pilgrimType.heading,
                 color = pilgrimColors.ink,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .align(Alignment.Center)
+                    .padding(horizontal = TITLE_INSET)
                     .semantics { heading() },
             )
+            Box(modifier = Modifier.align(Alignment.CenterEnd)) { trailing() }
         }
         Column(
             modifier = Modifier
@@ -277,22 +326,19 @@ internal fun HonorSheetScaffold(
     }
 }
 
-/** A grouped-list section: its caption header over one rounded group, and a caption footer under it. */
+/**
+ * A grouped-list section: its caption header over one rounded group, and a
+ * caption footer under it. A section with no [header] has none, as the
+ * route page's first two and the catalog's unclaimed routes have none.
+ */
 @Composable
 internal fun HonorSheetSection(
-    header: String,
+    header: String?,
     footer: String? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs)) {
-        Text(
-            text = header,
-            style = pilgrimType.caption,
-            color = pilgrimColors.fog,
-            modifier = Modifier
-                .padding(horizontal = PilgrimSpacing.small)
-                .semantics { heading() },
-        )
+        if (header != null) HonorSheetSectionHeader(header)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -312,11 +358,60 @@ internal fun HonorSheetSection(
     }
 }
 
+/** A section's caption header, read by TalkBack as a heading. */
+@Composable
+internal fun HonorSheetSectionHeader(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text = text,
+        style = pilgrimType.caption,
+        color = pilgrimColors.fog,
+        modifier = modifier
+            .padding(horizontal = PilgrimSpacing.small)
+            .semantics { heading() },
+    )
+}
+
+/**
+ * One row of a section drawn row by row in a lazy list: the group's
+ * rounded corners on its first and last rows, and a hairline between rows.
+ */
+@Composable
+internal fun HonorSheetGroupRow(
+    isFirst: Boolean,
+    isLast: Boolean,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val corner = PilgrimCornerRadius.normal
+    val shape = RoundedCornerShape(
+        topStart = if (isFirst) corner else 0.dp,
+        topEnd = if (isFirst) corner else 0.dp,
+        bottomStart = if (isLast) corner else 0.dp,
+        bottomEnd = if (isLast) corner else 0.dp,
+    )
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(pilgrimColors.parchmentSecondary),
+    ) {
+        content()
+        if (!isLast) {
+            HorizontalDivider(
+                color = pilgrimColors.fog.copy(alpha = 0.15f),
+                modifier = Modifier.padding(start = PilgrimSpacing.normal),
+            )
+        }
+    }
+}
+
 /**
  * A full-height sheet with no drag handle, as iOS's large-detent sheets
  * show none. [content] gets a `hideThen` that slides the sheet down
  * before running its action, so the sheet is gone before whatever opens
- * next; a swipe or Back closes it through [onDismissed].
+ * next; a swipe or Back closes it through [onDismissed]. With [onBack],
+ * Back is told apart from a swipe: it slides the sheet down and runs
+ * [onBack], as the route page's Back returns to the catalog while a swipe
+ * closes both (P4 §1.3).
  *
  * Its route is a dialog (`honorSheet`): the route's own window lies under
  * the sheet's and doesn't dim, so only the sheet's scrim shades Path
@@ -327,6 +422,7 @@ internal fun HonorSheetSection(
 @Composable
 internal fun HonorSheetHost(
     onDismissed: () -> Unit,
+    onBack: (() -> Unit)? = null,
     content: @Composable (hideThen: (() -> Unit) -> Unit) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -351,20 +447,24 @@ internal fun HonorSheetHost(
         shape = RoundedCornerShape(topStart = PilgrimCornerRadius.big, topEnd = PilgrimCornerRadius.big),
         dragHandle = null,
         containerColor = pilgrimColors.parchment,
+        properties = ModalBottomSheetProperties(shouldDismissOnBackPress = onBack == null),
     ) {
+        if (onBack != null) BackHandler { hideThen(onBack) }
         content(hideThen)
     }
 }
 
 /**
- * The Ways sheet as a route. "Walk one of yours again" leaves the sheet
- * for the picker; a shared row, and a paste once its import lands, close
- * the sheet and then open the Way's overview (S4 §6.5, §7.4).
+ * The Ways sheet as a route. "Walk one of yours again" and "Walk a
+ * pilgrimage" leave the sheet for the picker and the catalog; a shared
+ * row, and a paste once its import lands, close the sheet and then open
+ * the Way's overview (S4 §6.5, §7.4).
  */
 @Composable
 fun HonorWaysSheetRoute(
     onClosed: () -> Unit,
     onOpenOwnWalks: () -> Unit,
+    onOpenPilgrimages: () -> Unit,
     onOpenOverview: (wayId: String) -> Unit,
     viewModel: HonorWaysViewModel = hiltViewModel(),
 ) {
@@ -384,6 +484,7 @@ fun HonorWaysSheetRoute(
             onClose = { hideThen(onClosed) },
             onChooseShared = { wayId -> hideThen { openOverview(wayId) } },
             onWalkOneOfYours = { hideThen(onOpenOwnWalks) },
+            onWalkAPilgrimage = { hideThen(onOpenPilgrimages) },
             onOpenPasted = viewModel::open,
         )
     }

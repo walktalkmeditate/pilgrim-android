@@ -7,7 +7,6 @@ import androidx.test.core.app.ApplicationProvider
 import java.io.File
 import java.io.IOException
 import java.time.Instant
-import java.util.Locale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -22,10 +21,12 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.honor.WayCoordinate
 import org.walktalkmeditate.pilgrim.domain.honor.WayStage
 import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
 import org.walktalkmeditate.pilgrim.domain.honor.WayStagePlace
+import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.StageFormat
 
 /**
  * Port of iOS `PilgrimageLedgerTests.swift@7c200bf` (11, names kept), then
@@ -89,8 +90,8 @@ class PilgrimageLedgerTest {
 
     private val ledgerFile get() = File(dir, "pilgrimage/camino-frances/ledger.json")
 
-    /** The stage surfaces' formatter is U37's (owner decision 7); the line spells whatever it is given. */
-    private val kilometres = { meters: Double -> String.format(Locale.US, "%.2f km", meters / 1000) }
+    /** The stage surfaces' formatter (owner decision 7), which every caller of the line passes. */
+    private val kilometres = { meters: Double -> StageFormat.distance(meters, UnitSystem.Metric) }
 
     // ---- iOS PilgrimageLedgerTests: recording ----
 
@@ -152,7 +153,7 @@ class PilgrimageLedgerTest {
         }
 
         assertEquals(
-            "stage 5 of 33 · ${kilometres(112_000.0)} walked",
+            "stage 5 of 33 · 112 km walked",
             PilgrimageLedger.progressLine(resources, led, stageCount = 33, kilometres),
         )
 
@@ -433,7 +434,7 @@ class PilgrimageLedgerTest {
         val carried = ledger().copy(carriedKm = 20.4)
 
         assertEquals(
-            "stage 1 of 3 · ${kilometres(20_400.0)} walked",
+            "stage 1 of 3 · 20.4 km walked",
             PilgrimageLedger.progressLine(resources, carried, stageCount = 3, kilometres),
         )
     }

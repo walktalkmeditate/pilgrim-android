@@ -122,7 +122,7 @@ class HonorOverviewSemanticsTest {
     // §17.2 — the Ways sheet.
 
     @Test
-    fun `the Ways sheet shows iOS's own-walk section and its empty shared section`() {
+    fun `the Ways sheet shows iOS's own-walk section, its pilgrimage section, and its empty shared section`() {
         var opened = false
         show {
             HonorWaysSheetContent(
@@ -131,6 +131,7 @@ class HonorOverviewSemanticsTest {
                 onClose = {},
                 onChooseShared = {},
                 onWalkOneOfYours = { opened = true },
+                onWalkAPilgrimage = {},
                 onOpenPasted = {},
             )
         }
@@ -141,9 +142,9 @@ class HonorOverviewSemanticsTest {
             "Shared with you",
             "no ways yet. Accept a shared walk, or walk one of yours again.",
             "Your own walks",
+            "A pilgrimage",
             "From a shared walk",
-        ).forEach { composeRule.onNodeWithText(it).assertIsDisplayed() }
-        composeRule.onAllNodesWithText("A pilgrimage").assertCountEquals(0)
+        ).forEach { composeRule.onNodeWithText(it).assertExists() }
 
         composeRule.onNodeWithText("Walk one of yours again")
             .assert(isButton())
