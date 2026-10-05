@@ -54,7 +54,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.WaySpanKind
 import org.walktalkmeditate.pilgrim.domain.honor.WayWeather
 import org.walktalkmeditate.pilgrim.domain.honor.prefixCharacters
 import org.walktalkmeditate.pilgrim.domain.honor.swiftCompareTo
-import org.walktalkmeditate.pilgrim.domain.honor.trimmingWhitespacesAndNewlines
+import org.walktalkmeditate.pilgrim.domain.honor.trimmedOrNull
 
 /** iOS `WayError` (`WayImporter.swift:3@7c200bf`). The importer raises the first three; [DISK_FULL] is the media download's. */
 enum class WayError { NOT_FOUND, RETURNED_TO_TRAIL, UNAVAILABLE, DISK_FULL }
@@ -67,6 +67,81 @@ internal fun OkHttpClient.Builder.stayingOnTheHost(base: HttpUrl): OkHttpClient.
     followRedirects(false)
         .followSslRedirects(false)
         .addInterceptor(WayImporter.StaysOnTheHost(base))
+
+/**
+ * The client an iOS ephemeral session stands for: the caller's timeouts (a
+ * write's the same as a read's), a failed connection never retried, no
+ * cache (OkHttp keeps none unless one is set), and redirects held to
+ * [base]'s host by [stayingOnTheHost].
+ */
+internal fun ephemeralClient(base: HttpUrl, connectSeconds: Long, readSeconds: Long, callSeconds: Long): OkHttpClient =
+    OkHttpClient.Builder()
+        .connectTimeout(connectSeconds, TimeUnit.SECONDS)
+        .readTimeout(readSeconds, TimeUnit.SECONDS)
+        .writeTimeout(readSeconds, TimeUnit.SECONDS)
+        .callTimeout(callSeconds, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(false)
+        .stayingOnTheHost(base)
+        .build()
+
+/** A plain GET, as iOS's `session.bytes(from:)` sends. */
+internal fun plainGet(url: HttpUrl): Request = Request.Builder().url(url).build()
+
+/**
+ * The pilgrimage CDN's capped GET (iOS's two `fetch(_:cap:session:)`, the
+ * catalog's and the package manager's): [url]'s path on [cdn]'s scheme,
+ * host and port, the call cancelled with the caller, and the body read by
+ * [cappedBody]. [refused] names an answer [cappedBody] refuses; [failed]
+ * maps a transport failure, or anything else thrown while the body is read.
+ */
+internal suspend fun OkHttpClient.fetchCapped(
+    url: HttpUrl,
+    cdn: HttpUrl,
+    cap: Long,
+    refused: () -> Exception,
+    failed: (Throwable) -> Exception,
+): ByteArray = suspendCancellableCoroutine { continuation ->
+    val call = newCall(plainGet(url.newBuilder().scheme(cdn.scheme).host(cdn.host).port(cdn.port).build()))
+    continuation.invokeOnCancellation { call.cancel() }
+    call.enqueue(
+        object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                continuation.resumeWith(Result.failure(failed(e)))
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                val result: Result<ByteArray> = try {
+                    val body = response.use { cappedBody(it, cap) }
+                    if (body != null) Result.success(body) else Result.failure(refused())
+                } catch (e: Exception) {
+                    Result.failure(failed(e))
+                }
+                continuation.resumeWith(result)
+            }
+        },
+    )
+}
+
+/**
+ * An HTTP 200's body within [cap], else null: the declared length checked
+ * before the body (`<=` passes), so an oversized one costs no download,
+ * then the bytes counted as they arrive (`>` refuses), so exactly [cap]
+ * bytes pass.
+ */
+internal fun cappedBody(response: Response, cap: Long): ByteArray? {
+    if (response.code != HTTP_OK) return null
+    val body = response.body
+    if (body.contentLength() > cap) return null
+    val source = body.source()
+    val buffer = Buffer()
+    while (source.read(buffer, READ_CHUNK_BYTES) != -1L) {
+        if (buffer.size > cap) return null
+    }
+    return buffer.readByteArray()
+}
+
+private const val READ_CHUNK_BYTES = 8_192L
+private const val HTTP_OK = 200
 
 /**
  * A shared walk's manifest becomes a listed Way: iOS `WayImporter`
@@ -225,8 +300,6 @@ class WayImporter internal constructor(
 
         private const val TOUR_FILE = "tour.json"
         internal const val DEFAULT_WAYPOINT_ICON = "mappin"
-        private const val READ_CHUNK_BYTES = 8_192L
-        private const val HTTP_OK = 200
         private const val HTTP_NOT_FOUND = 404
 
         private val ID = Regex("[A-Za-z0-9_-]{10}")
@@ -283,14 +356,8 @@ class WayImporter internal constructor(
          * 15 s and the whole fetch after 30 s, retries nothing, and keeps no
          * cache. OkHttp has no cache unless one is set.
          */
-        fun httpClient(base: HttpUrl): OkHttpClient = OkHttpClient.Builder()
-            .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .writeTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .callTimeout(CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .retryOnConnectionFailure(false)
-            .stayingOnTheHost(base)
-            .build()
+        fun httpClient(base: HttpUrl): OkHttpClient =
+            ephemeralClient(base, CONNECT_TIMEOUT_SECONDS, READ_TIMEOUT_SECONDS, CALL_TIMEOUT_SECONDS)
 
         /**
          * iOS `isoDate`: RFC 3339 with or without a fraction, kept to the
@@ -529,11 +596,7 @@ class WayImporter internal constructor(
         }
 
         /** Blank after Swift's trim reads as no place at all. */
-        private fun trimmedPlace(raw: String?): String? {
-            val trimmed = raw?.trimmingWhitespacesAndNewlines()
-            if (trimmed.isNullOrEmpty()) return null
-            return trimmed.prefixCharacters(MAX_TITLE_PLACE_CHARACTERS)
-        }
+        private fun trimmedPlace(raw: String?): String? = raw.trimmedOrNull(MAX_TITLE_PLACE_CHARACTERS)
 
         /** Swift's `<` and `==` on two fracs: `-0.0` and `0.0` tie, where `compareTo` orders them. */
         private fun Double.compareFracTo(other: Double): Int = when {

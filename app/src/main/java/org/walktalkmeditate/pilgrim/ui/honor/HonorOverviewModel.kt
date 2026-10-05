@@ -17,6 +17,7 @@ import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.honor.HonorTuning
 import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.domain.honor.WayWeather
+import org.walktalkmeditate.pilgrim.domain.honor.countString
 import org.walktalkmeditate.pilgrim.domain.wgs84MidLatitudeMeters
 import org.walktalkmeditate.pilgrim.ui.walk.summary.MapCameraBounds
 
@@ -158,7 +159,7 @@ object HonorOverviewModel {
             ?: condition
 
     private fun count(resources: Resources, count: Int, one: Int, other: Int): String =
-        resources.getString(if (count == 1) one else other, String.format(Locale.US, "%d", count))
+        resources.countString(count, one, other)
 
     /** Swift's `rounded()`. */
     private fun roundedHalfAwayFromZero(value: Double): Double = sign(value) * floor(abs(value) + 0.5)

@@ -548,10 +548,12 @@ internal fun PilgrimMap(
     DisposableEffect(mapView, hasCameraReport) {
         val view = mapView
         if (view == null || !hasCameraReport) return@DisposableEffect onDispose {}
-        val report: (Boolean) -> Unit = { throttled ->
+        val report: (Boolean) -> Unit = report@{ throttled ->
+            val now = android.os.SystemClock.uptimeMillis()
+            // Most frames of a follow-puck walk fall inside the window: dropped before the camera is read.
+            if (cameraReportThrottle.inWindow(throttled, now)) return@report
             val camera = view.mapboxMap.cameraState
             val center = WayCoordinate(lat = camera.center.latitude(), lon = camera.center.longitude())
-            val now = android.os.SystemClock.uptimeMillis()
             if (cameraReportThrottle.report(center, camera.zoom, throttled, now)) {
                 onCameraChangedState.value?.invoke(center, camera.zoom)
             }
@@ -1483,14 +1485,15 @@ internal fun PilgrimMap(
             val wayMgr = wayPinManager
             if (wayMgr != null && renderedWayPins != wayPinLayer) {
                 wayMgr.deleteAll()
-                wayPinLayer.points.forEach { pin ->
-                    wayMgr.create(
+                // One batch, one source update; a create per pin would rebuild the source for each.
+                wayMgr.create(
+                    wayPinLayer.points.map { pin ->
                         PointAnnotationOptions()
                             .withPoint(Point.fromLngLat(pin.longitude, pin.latitude))
                             .withIconImage(pin.image)
-                            .withIconSize(1.0),
-                    )
-                }
+                            .withIconSize(1.0)
+                    },
+                )
                 renderedWayPins = wayPinLayer
             }
         },

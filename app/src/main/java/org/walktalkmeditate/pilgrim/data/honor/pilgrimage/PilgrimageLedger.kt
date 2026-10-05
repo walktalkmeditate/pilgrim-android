@@ -8,7 +8,6 @@ import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.StandardOpenOption
 import java.time.Instant
-import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantLock
 import javax.inject.Inject
@@ -22,6 +21,8 @@ import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.domain.honor.WayDateSerializer
 import org.walktalkmeditate.pilgrim.domain.honor.WayJson
 import org.walktalkmeditate.pilgrim.domain.honor.WayStage
+import org.walktalkmeditate.pilgrim.domain.honor.countString
+import org.walktalkmeditate.pilgrim.domain.honor.digits
 import org.walktalkmeditate.pilgrim.domain.honor.swiftCompareTo
 
 /**
@@ -216,12 +217,8 @@ data class PilgrimageLedger(
         }
 
         /** "1 stage" or "33 stages": the singular only at 1, as iOS picks it, whatever the phone's plural rules. */
-        fun stageCountLine(resources: Resources, stageCount: Int): String = resources.getString(
-            if (stageCount == 1) R.string.pilgrimage_stage_count_one else R.string.pilgrimage_stage_count,
-            digits(stageCount),
-        )
-
-        private fun digits(count: Int): String = String.format(Locale.US, "%d", count)
+        fun stageCountLine(resources: Resources, stageCount: Int): String =
+            resources.countString(stageCount, R.string.pilgrimage_stage_count_one, R.string.pilgrimage_stage_count)
     }
 }
 

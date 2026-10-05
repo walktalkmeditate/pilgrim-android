@@ -221,7 +221,7 @@ private fun HeaderSection(
 private fun DownloadButton(page: PilgrimageRoutePage, busy: Boolean, onDownload: () -> Unit) {
     Button(
         onClick = onDownload,
-        enabled = !busy && !(page.isInstalled && !page.hasUpdate),
+        enabled = !busy && !page.isCurrent,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(PilgrimCornerRadius.normal),
         contentPadding = PaddingValues(vertical = 12.dp),

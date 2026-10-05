@@ -11,6 +11,7 @@ import kotlin.math.roundToInt
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
+import org.walktalkmeditate.pilgrim.domain.honor.digits
 
 /** The stage surfaces' joiner, U+00B7 with a space each side. */
 internal const val STAGE_SEPARATOR = " · "
@@ -104,6 +105,3 @@ object WayStageFacts {
 
     private const val MAX_HOURS = 100.0
 }
-
-/** A count as iOS interpolates an `Int`: plain ASCII digits, no grouping. */
-internal fun digits(count: Int): String = String.format(Locale.US, "%d", count)

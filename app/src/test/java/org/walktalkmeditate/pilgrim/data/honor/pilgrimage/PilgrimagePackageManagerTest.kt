@@ -26,6 +26,7 @@ import kotlinx.serialization.json.jsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.mockwebserver.MockResponse
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -54,6 +55,7 @@ import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarne
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager.Phase
 import org.walktalkmeditate.pilgrim.di.NetworkModule
 import org.walktalkmeditate.pilgrim.domain.honor.WayJson
+import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.PilgrimageRouteModel
 
 /**
  * Port of iOS `PilgrimagePackageManagerTests.swift@7c200bf`, names kept
@@ -221,12 +223,12 @@ class PilgrimagePackageManagerTest {
         manager.download(h.entry, RELEASE).awaitBlocking()
         assertNotNull(manager.installedBlocking())
         val saves = AtomicInteger()
-        manager.saveStage = { way ->
+        manager.saveStage = { id, wayJson ->
             if (saves.incrementAndGet() == 2) {
                 h.signals.liveIdsFailure = IOException("database closed")
                 throw IOException("write failed: ENOSPC (No space left on device)")
             }
-            h.wayStore.save(way)
+            h.wayStore.saveEncoded(id, wayJson)
         }
 
         assertRefused(PilgrimageError.DISK_FULL) { manager.download(h.entry, RELEASE).awaitBlocking() }
@@ -471,6 +473,29 @@ class PilgrimagePackageManagerTest {
         assertTrue("v1.7.0".toByteArray(Charsets.UTF_8).contentEquals(releaseFile().readBytes()))
     }
 
+    /**
+     * The commit lands each stage's temp text as it stands. Before, it
+     * decoded that text and saved the Way, so the bytes it now writes must
+     * be the ones a save of the decoded Way writes.
+     */
+    @Test
+    fun `each stage's way json is committed as the bytes a save of the decoded Way writes`() {
+        h.makeManager().download(h.entry, RELEASE).awaitBlocking()
+        val reference = WayStore({ File(folder.root, "reference") }, syncDirectory = { true })
+
+        for (index in 0 until h.entry.stageCount) {
+            val stageFile = fixture(PilgrimagePackageManager.stageFileName(index))
+            val imported = PilgrimageWayImporter.way(from = stageFile, routeId = ROUTE_ID, stageIndex = index)
+            reference.save(WayJson.decode(WayJson.encode(imported)))
+            val id = WayStore.stageWayId(ROUTE_ID, index)
+            assertArrayEquals(
+                "stage $index",
+                wayFile(reference, id).readBytes(),
+                wayFile(h.wayStore, id).readBytes(),
+            )
+        }
+    }
+
     @Test
     fun `a release outside the tag rule is not walkable, and nothing is asked for`() {
         val manager = h.makeManager()
@@ -572,22 +597,19 @@ class PilgrimagePackageManagerTest {
         assertEquals("camino-frances", manager.installedBlocking()?.routeId)
     }
 
+    /** The route page's own rule, read from this manager's phase; a map save joins it in Stage 21-3. */
     @Test
-    fun `the route page is busy while a download runs, or a map save does`() {
+    fun `the route page is busy while a download runs`() {
         val routeFile = h.hold("route.json")
-        val tiles = FakeTiles()
-        val manager = h.makeManager(tiles)
-        assertFalse(manager.isBusy)
+        val manager = h.makeManager()
+        assertFalse(PilgrimageRouteModel.isBusy(manager.phase.value, held = false))
         val download = manager.download(h.entry, RELEASE)
         routeFile.awaitArrival()
-        assertTrue(manager.isBusy)
+        assertTrue(PilgrimageRouteModel.isBusy(manager.phase.value, held = false))
         routeFile.release()
         download.awaitBlocking()
-        assertFalse(manager.isBusy)
 
-        tiles.saving = true
-
-        assertTrue(manager.isBusy)
+        assertFalse(PilgrimageRouteModel.isBusy(manager.phase.value, held = false))
     }
 
     // ---- The owned download (P4 correction 2) ----------------------------------------
@@ -719,12 +741,14 @@ class PilgrimagePackageManagerTest {
 
     private fun releaseFile(): File = requireNotNull(h.wayStore.releaseFile(ROUTE_ID))
 
+    private fun wayFile(store: WayStore, id: String): File = File(File(store.baseDirectory, id), "way.json")
+
     /** The second stage is where the disk runs out, as iOS's `CocoaError(.fileWriteOutOfSpace)`. */
-    private fun failingOnTheSecondSave(): (org.walktalkmeditate.pilgrim.domain.honor.Way) -> Unit {
+    private fun failingOnTheSecondSave(): (String, String) -> Unit {
         val saves = AtomicInteger()
-        return { way ->
+        return { id, wayJson ->
             if (saves.incrementAndGet() == 2) throw IOException("write failed: ENOSPC (No space left on device)")
-            h.wayStore.save(way)
+            h.wayStore.saveEncoded(id, wayJson)
         }
     }
 }

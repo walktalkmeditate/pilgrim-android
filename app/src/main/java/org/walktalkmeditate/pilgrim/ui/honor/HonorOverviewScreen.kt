@@ -130,7 +130,8 @@ fun HonorOverviewScreen(
                     wayPins = mapPins,
                     onWayPinTap = { momentId -> previewMomentId = momentId },
                     wayMarks = mapMarks,
-                    onCameraChanged = viewModel::onCameraChanged,
+                    // A Way with no marks has nothing a camera report could select, as on the walk screen.
+                    onCameraChanged = if (overview.way.marks.isNullOrEmpty()) null else viewModel::onCameraChanged,
                 )
             },
             card = {

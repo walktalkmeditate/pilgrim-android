@@ -52,7 +52,6 @@ import org.walktalkmeditate.pilgrim.data.honor.dismissedAt
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
-import org.walktalkmeditate.pilgrim.data.honor.isStagedPerWalk
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
@@ -68,6 +67,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayMedia
 import org.walktalkmeditate.pilgrim.domain.honor.WayMoment
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
+import org.walktalkmeditate.pilgrim.domain.inProgressWalkId
 import org.walktalkmeditate.pilgrim.domain.wgs84MidLatitudeMeters
 import org.walktalkmeditate.pilgrim.honor.HonorReplies
 import org.walktalkmeditate.pilgrim.honor.HonorStageHandoff
@@ -386,7 +386,12 @@ class HonorWalkViewModel internal constructor(
         val placement = combine(here(), headingFlow(), _focus, touches) { here, heading, focus, touches ->
             Placement(here, heading, focus, touches)
         }
-        val files = combine(mediaFlow(), stageReplyFlow()) { media, stageReply -> CardFiles(media, stageReply) }
+        // One observer of the walk's recordings, which both of the card's file reads follow.
+        val recordingCounts = recordingCounts()
+            .shareIn(viewModelScope, SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS), replay = 1)
+        val files = combine(mediaFlow(recordingCounts), stageReplyFlow(recordingCounts)) { media, stageReply ->
+            CardFiles(media, stageReply)
+        }
         combine(live, queue, voiceNow, files, placement) { live, queue, voice, files, placement ->
             live?.let { cardsUi(it, queue, voice, files, placement) }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS), null)
@@ -456,8 +461,7 @@ class HonorWalkViewModel internal constructor(
         viewModelScope.launch {
             val way = when (choice) {
                 is HonorWayChoice.OwnWalk -> (ownWalkWays.build(choice.sourceWalkId) as? OwnWalkWays.Built.Ready)?.way
-                is HonorWayChoice.Stored -> stageHandoff.stage(choice.wayId)
-                    ?: withContext(ioDispatcher) { wayStore.load(choice.wayId) }
+                is HonorWayChoice.Stored -> stageHandoff.storedWay(choice.wayId, wayStore, ioDispatcher)
             } ?: return@launch
             previewState.value = withContext(ioDispatcher) {
                 HonorWalkUiState(way, HonorWayLine.of(way), wayPins(way, heardVoiceIds = emptySet()), session = null)
@@ -702,16 +706,10 @@ class HonorWalkViewModel internal constructor(
         }.flowOn(ioDispatcher)
     }
 
-    /**
-     * The staged Way an own-walk or stage session follows, else the listed
-     * one, as `:tracker`'s session loads it. A stage without its staged copy
-     * reads its package, which the package guard holds still while this
-     * session's live row exists (see `HonorSession.prepare`).
-     */
+    /** The copy of the Way this session walks, as `:tracker`'s session loads it ([WayStore.sessionWay]). */
     private suspend fun loadWay(walkId: Long, key: WayKey): LoadedWay? = withContext(ioDispatcher) {
         val walkUuid = repository.getWalk(walkId)?.uuid ?: return@withContext null
-        val staged = if (key.sourceKind.isStagedPerWalk) wayStore.staged(walkUuid) else null
-        val way = staged?.takeIf { it.id == key.wayId } ?: wayStore.load(key.wayId) ?: return@withContext null
+        val way = wayStore.sessionWay(key.sourceKind, walkUuid, key.wayId) ?: return@withContext null
         LoadedWay(way, HonorWayLine.of(way), WayGeometry(way.route))
     }
 
@@ -791,8 +789,7 @@ class HonorWalkViewModel internal constructor(
      * one main-queue turn before the card's lookup re-runs
      * (`ActiveWalkViewModel.swift:600-603@7c200bf`).
      */
-    private fun mediaFlow(): Flow<HonorCardMedia?> {
-        val recordingCounts = recordingCounts()
+    private fun mediaFlow(recordingCounts: Flow<Int>): Flow<HonorCardMedia?> {
         val tops = combine(live.map { it?.loaded }.distinctUntilChanged { a, b -> a === b }, queue.map { it?.top }) { loaded, top ->
             loaded?.let { l -> top?.let { id -> l.way.moments.firstOrNull { it.id == id } }?.let { l.way to it } }
         }.distinctUntilChanged { a, b -> a?.first === b?.first && a?.second?.id == b?.second?.id }
@@ -814,11 +811,11 @@ class HonorWalkViewModel internal constructor(
      * saved recording and each reply filed. Always false on a Way that
      * isn't a stage, and before arrival.
      */
-    private fun stageReplyFlow(): Flow<Boolean> {
+    private fun stageReplyFlow(recordingCounts: Flow<Int>): Flow<Boolean> {
         val arrivedStage = live
             .map { live -> live?.loaded?.way?.takeIf { it.isPilgrimageStage && live.session.phase == HonorPhase.ARRIVED } }
             .distinctUntilChanged { a, b -> a === b }
-        return combine(arrivedStage, recordingCounts(), replies.filed) { way, _, _ -> way }
+        return combine(arrivedStage, recordingCounts, replies.filed) { way, _, _ -> way }
             .mapLatest { way -> way != null && withContext(ioDispatcher) { mediaFiles.stageReflectionReply(way) } != null }
             .onStart { emit(false) }
             .distinctUntilChanged()
@@ -888,7 +885,7 @@ class HonorWalkViewModel internal constructor(
             way.id,
             arrival = arrival,
             place = place.takeIf { arrival == null },
-            hasStageReply = arrival?.isStage == true && files.hasStageReply,
+            hasStageReply = files.hasStageReply,
         )
     }
 
@@ -1208,13 +1205,6 @@ private fun Flow<WayCoordinate?>.companionJumps(nowMillis: () -> Long, intervalM
             lastAt = now
         }
     }
-
-private fun WalkState.inProgressWalkId(): Long? = when (this) {
-    is WalkState.Active -> walk.walkId
-    is WalkState.Paused -> walk.walkId
-    is WalkState.Meditating -> walk.walkId
-    WalkState.Idle, is WalkState.Finished -> null
-}
 
 /** The walker's last fix, as iOS's `currentLocation` feeds the card's distance and tick. */
 private fun WalkState.lastFix(): WayCoordinate? {

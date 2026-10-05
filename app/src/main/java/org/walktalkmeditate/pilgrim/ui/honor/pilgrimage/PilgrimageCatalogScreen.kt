@@ -152,7 +152,7 @@ internal fun CatalogRow(
     onClick: () -> Unit,
 ) {
     val resources = LocalResources.current
-    val isInstalled = installed?.routeId == entry.id
+    val isInstalled = PilgrimageCatalogModel.isInstalled(installed, entry)
     val badge = PilgrimageCatalogModel.installBadge(
         isInstalled = isInstalled,
         hasUpdate = PilgrimageCatalogModel.hasUpdate(installed, entry, catalogRelease),

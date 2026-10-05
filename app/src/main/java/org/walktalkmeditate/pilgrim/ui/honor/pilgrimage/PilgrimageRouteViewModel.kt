@@ -36,6 +36,7 @@ import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageRoute
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageRouteStage
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
+import org.walktalkmeditate.pilgrim.domain.honor.digits
 
 /** The route page's three alerts (P4 §4.7); "finish your walk first" is a footer line, not one of them. */
 enum class PilgrimageRouteAlert { REPLACE, REMOVE, DOWNLOAD_FIRST }
@@ -71,10 +72,13 @@ data class PilgrimageRoutePage(
 ) {
     val isHeld: Boolean get() = holds > 0
 
-    val isInstalled: Boolean get() = installed?.routeId == entry.id
+    val isInstalled: Boolean get() = PilgrimageCatalogModel.isInstalled(installed, entry)
 
-    /** Against the release the page was opened under, by inequality (pilgrim-ios #121, matched). */
-    val hasUpdate: Boolean get() = installed?.let { it.routeId == entry.id && it.release != release } ?: false
+    /** The catalog's rule, against the release the page was opened under (pilgrim-ios #121, matched). */
+    val hasUpdate: Boolean get() = PilgrimageCatalogModel.hasUpdate(installed, entry, release)
+
+    /** This release already on the phone: the download button's gate, drawn and tapped alike. */
+    val isCurrent: Boolean get() = isInstalled && !hasUpdate
 
     /** The installed `route.json`'s, else the preview's; a Remove leaves the removed package's in place. */
     val stages: List<PilgrimageRouteStage> get() = route?.stages.orEmpty()
@@ -277,8 +281,7 @@ class PilgrimageRouteViewModel internal constructor(
     /** The download button: nothing while busy or with this release on the phone, as iOS's disabled button. */
     fun onDownloadTapped() {
         val page = page ?: return
-        if (PilgrimageRouteModel.isBusy(phase.value, page.isHeld)) return
-        if (page.isInstalled && !page.hasUpdate) return
+        if (PilgrimageRouteModel.isBusy(phase.value, page.isHeld) || page.isCurrent) return
         beginInstall()
     }
 
@@ -361,7 +364,7 @@ class PilgrimageRouteViewModel internal constructor(
         }
         viewModelScope.launch {
             try {
-                val failure = failureOf { operation.await() }
+                val failure = failureOf(PilgrimageError.INCOMPLETE) { operation.await() }
                 updatePage { it.copy(failure = failure) }
                 reload()
             } finally {
@@ -375,25 +378,13 @@ class PilgrimageRouteViewModel internal constructor(
         val page = page ?: return
         val operation = packages.remove(page.entry.id)
         viewModelScope.launch {
-            val failure = failureOf { operation.await() }
+            val failure = failureOf(PilgrimageError.INCOMPLETE) { operation.await() }
             if (failure == null) reload() else updatePage { it.copy(failure = failure) }
         }
     }
 
     private fun releaseHold() {
         updatePage { it.copy(holds = it.holds - 1) }
-    }
-
-    /** iOS's `(error as? PilgrimageError) ?? .incomplete`, the page's going rethrown. */
-    private suspend fun failureOf(action: suspend () -> Unit): PilgrimageError? = try {
-        action()
-        null
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: PilgrimageException) {
-        e.error
-    } catch (e: Exception) {
-        PilgrimageError.INCOMPLETE
     }
 
     /**
@@ -448,16 +439,11 @@ class PilgrimageRouteViewModel internal constructor(
         val page = page ?: return
         if (!(force || page.route == null) || page.release.isEmpty()) return
         updatePage { it.copy(isLoadingStages = true, stagesFailure = null) }
-        try {
+        val failure = failureOf(PilgrimageError.CATALOG_UNREACHABLE) {
             val route = catalogs.routePreview(page.entry, page.release)
             updatePage { it.copy(route = route) }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: PilgrimageException) {
-            updatePage { it.copy(stagesFailure = e.error) }
-        } catch (e: Exception) {
-            updatePage { it.copy(stagesFailure = PilgrimageError.CATALOG_UNREACHABLE) }
         }
+        if (failure != null) updatePage { it.copy(stagesFailure = failure) }
         updatePage { it.copy(isLoadingStages = false) }
     }
 
@@ -498,4 +484,20 @@ class PilgrimageRouteViewModel internal constructor(
         const val ARG_ROUTE_ID = "routeId"
         internal const val KEY_REDRAW_NOTICE = "showRedrawNotice"
     }
+}
+
+/**
+ * iOS's `(error as? PilgrimageError) ?? fallback`: null when [action]
+ * ends, the error a [PilgrimageException] carries, or [fallback] for any
+ * other failure. Cancellation is rethrown: the screen's going is no failure.
+ */
+internal suspend fun failureOf(fallback: PilgrimageError, action: suspend () -> Unit): PilgrimageError? = try {
+    action()
+    null
+} catch (e: CancellationException) {
+    throw e
+} catch (e: PilgrimageException) {
+    e.error
+} catch (e: Exception) {
+    fallback
 }

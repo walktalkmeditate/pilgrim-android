@@ -21,7 +21,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
 import org.walktalkmeditate.pilgrim.domain.honor.WayStagePlace
 import org.walktalkmeditate.pilgrim.domain.honor.prefixCharacters
 import org.walktalkmeditate.pilgrim.domain.honor.swiftCompareTo
-import org.walktalkmeditate.pilgrim.domain.honor.trimmingWhitespacesAndNewlines
+import org.walktalkmeditate.pilgrim.domain.honor.trimmedOrNull
 
 /**
  * The sibling of [WayImporter] for the dataset's packaged stages: iOS
@@ -139,7 +139,7 @@ object PilgrimageWayImporter {
             distanceKm = file.distanceKm,
             stageCount = file.stageCount.toInt(),
             tradition = file.tradition?.prefixCharacters(WayImporter.MAX_LABEL_CHARACTERS),
-            summary = trimmed(file.summary, MAX_SUMMARY_CHARACTERS),
+            summary = file.summary.trimmedOrNull(MAX_SUMMARY_CHARACTERS),
             stages = file.stages.sortedBy { it.index }.map { row ->
                 PilgrimageRouteStage(
                     index = row.index.toInt(),
@@ -243,7 +243,7 @@ object PilgrimageWayImporter {
                     label = entry.label.orEmpty().prefixCharacters(WayImporter.MAX_LABEL_CHARACTERS),
                     icon = (entry.icon ?: WayImporter.DEFAULT_WAYPOINT_ICON).prefixCharacters(WayImporter.MAX_ICON_CHARACTERS),
                 ),
-                text = trimmed(entry.text, WayMoment.MAX_TRANSCRIPT_CHARACTERS),
+                text = WayMoment.trimmedTranscript(entry.text),
                 names = localNames(entry.names),
                 sitMinutes = entry.sitMinutes?.toInt(),
                 pin = entry.pin?.let { WayCoordinate(lat = it.lat, lon = it.lon) },
@@ -285,13 +285,6 @@ object PilgrimageWayImporter {
         at = WayCoordinate(lat = raw.at.lat, lon = raw.at.lon),
     )
 
-    /** Swift's whitespace trim, nil when nothing is left, then the cut. */
-    private fun trimmed(raw: String?, maxCharacters: Int): String? {
-        val trimmed = raw?.trimmingWhitespacesAndNewlines()
-        if (trimmed.isNullOrEmpty()) return null
-        return trimmed.prefixCharacters(maxCharacters)
-    }
-
     /**
      * iOS `localNames` (`PilgrimageWayImporter.swift:359-369@7c200bf`), in
      * its order: sort the raw pairs by key, cut to the first
@@ -308,7 +301,7 @@ object PilgrimageWayImporter {
             .take(MAX_LOCAL_NAMES)
             .mapNotNull { (key, value) ->
                 if (!LANGUAGE_CODE.matches(key)) return@mapNotNull null
-                val name = trimmed(value, MAX_STAGE_NAME_CHARACTERS) ?: return@mapNotNull null
+                val name = value.trimmedOrNull(MAX_STAGE_NAME_CHARACTERS) ?: return@mapNotNull null
                 key to name
             }
         return if (pairs.isEmpty()) null else pairs.toMap()

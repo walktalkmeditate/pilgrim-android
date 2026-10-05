@@ -14,7 +14,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,7 +27,6 @@ import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageCatalog
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageCatalogEntry
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageCatalogService
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageError
-import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageException
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageLedger
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageLedgerStore
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager
@@ -101,6 +99,10 @@ object PilgrimageCatalogModel {
     /** Its own quiet line under the card line, never inside it. */
     fun sparseNote(resources: Resources, entry: PilgrimageCatalogEntry): String? =
         if (entry.sparse) resources.getString(R.string.pilgrimage_sparse_note) else null
+
+    /** The route on the phone is [entry]'s, whatever its release. */
+    fun isInstalled(installed: PilgrimagePackageManager.Installed?, entry: PilgrimageCatalogEntry): Boolean =
+        installed?.routeId == entry.id
 
     /**
      * iOS's `hasUpdate(for:)` (`PilgrimageCatalogView.swift:200-202@7c200bf`):
@@ -223,22 +225,20 @@ class PilgrimageCatalogViewModel internal constructor(
         }
     }
 
-    private suspend fun read(force: Boolean): LoadResult = try {
-        val catalog = catalogs.load(force)
-        val installed = packages.installed()
-        val ledgers = withContext(ioDispatcher) {
-            LinkedHashMap<String, PilgrimageLedger>().apply {
-                catalog.routes.forEach { entry -> ledgerStore.load(entry.id)?.let { putIfAbsent(entry.id, it) } }
+    private suspend fun read(force: Boolean): LoadResult {
+        var read: LoadResult.Read? = null
+        // iOS's `?? .catalogUnreachable`: `installed()`'s own reads can fail here.
+        val failure = failureOf(PilgrimageError.CATALOG_UNREACHABLE) {
+            val catalog = catalogs.load(force)
+            val installed = packages.installed()
+            val ledgers = withContext(ioDispatcher) {
+                LinkedHashMap<String, PilgrimageLedger>().apply {
+                    catalog.routes.forEach { entry -> ledgerStore.load(entry.id)?.let { putIfAbsent(entry.id, it) } }
+                }
             }
+            read = LoadResult.Read(installed, ledgers)
         }
-        LoadResult.Read(installed, ledgers)
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: PilgrimageException) {
-        LoadResult.Failed(e.error)
-    } catch (e: Exception) {
-        // iOS's `(error as? PilgrimageError) ?? .catalogUnreachable`: `installed()`'s own reads can fail here.
-        LoadResult.Failed(PilgrimageError.CATALOG_UNREACHABLE)
+        return failure?.let(LoadResult::Failed) ?: checkNotNull(read)
     }
 
     private sealed interface LoadResult {

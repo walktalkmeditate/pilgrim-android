@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk.map
 
+import org.walktalkmeditate.pilgrim.domain.honor.HonorDistance
 import org.walktalkmeditate.pilgrim.domain.honor.HonorTuning
+import org.walktalkmeditate.pilgrim.domain.honor.WGS84_HONOR_DISTANCE
 import org.walktalkmeditate.pilgrim.domain.honor.WayCoordinate
-import org.walktalkmeditate.pilgrim.domain.wgs84MidLatitudeMeters
 
 /**
  * iOS `reportCamera(on:coordinator:throttled:)`
@@ -25,16 +26,20 @@ import org.walktalkmeditate.pilgrim.domain.wgs84MidLatitudeMeters
  * test that needs exactly 200 m.
  */
 internal class CameraReportThrottle(
-    private val metersBetween: (from: WayCoordinate, to: WayCoordinate) -> Double = ::wayMeters,
+    private val metersBetween: HonorDistance = WGS84_HONOR_DISTANCE,
 ) {
 
     private var lastLevel: Int? = null
     private var lastCenter: WayCoordinate? = null
     private var lastReportUptimeMillis = 0L
 
+    /** Rule 1 alone, which reads neither centre nor zoom: true when the event is dropped by the window. */
+    fun inWindow(throttled: Boolean, nowUptimeMillis: Long): Boolean =
+        throttled && nowUptimeMillis - lastReportUptimeMillis < MIN_INTERVAL_MILLIS
+
     /** True when this event is reported, with the camera's [center] and raw [zoom]. */
     fun report(center: WayCoordinate, zoom: Double, throttled: Boolean, nowUptimeMillis: Long): Boolean {
-        if (throttled && nowUptimeMillis - lastReportUptimeMillis < MIN_INTERVAL_MILLIS) return false
+        if (inWindow(throttled, nowUptimeMillis)) return false
         if (!zoom.isFinite()) return false
         val level = zoom.toInt()
         val movedFar = lastCenter?.let { last ->
@@ -52,7 +57,3 @@ internal class CameraReportThrottle(
         const val MIN_INTERVAL_MILLIS = 250L
     }
 }
-
-/** Metres from [from] to [to] as `CLLocation.distance` measures them: both 200 m rules' ruler. */
-internal fun wayMeters(from: WayCoordinate, to: WayCoordinate): Double =
-    wgs84MidLatitudeMeters(from.lat, from.lon, to.lat, to.lon)

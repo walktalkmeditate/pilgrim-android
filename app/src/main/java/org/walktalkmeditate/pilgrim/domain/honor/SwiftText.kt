@@ -35,6 +35,13 @@ private fun Char.isSwiftWhitespaceOrNewline(): Boolean = when (code) {
     else -> false
 }
 
+/** Swift's whitespace trim, null when nothing is left, then the cut to [maxCharacters] ([prefixCharacters]). */
+internal fun String?.trimmedOrNull(maxCharacters: Int): String? {
+    val trimmed = this?.trimmingWhitespacesAndNewlines()
+    if (trimmed.isNullOrEmpty()) return null
+    return trimmed.prefixCharacters(maxCharacters)
+}
+
 /** Characters as Swift counts them: grapheme clusters, not UTF-16 units. */
 internal fun String.characterCount(): Int {
     val characters = BreakIterator.getCharacterInstance(Locale.ROOT)

@@ -73,7 +73,11 @@ class HonorWalkRecords internal constructor(
     constructor(honorDao: HonorDao, wayStore: WayStore, ledgers: PilgrimageLedgerStore) :
         this(honorDao, wayStore, ledgers, Dispatchers.IO)
 
-    /** Listed Ways [honoredWays] decoded, each kept until its `way.json` changes. */
+    /**
+     * Listed Ways decoded, each kept until its `way.json` changes: the
+     * seals' lines, and a summary's record, which reads its Way again on
+     * every session or marker change, a stage's of up to 2 MB.
+     */
     private val listedWays = ConcurrentHashMap<String, StampedWay>()
 
     /** Ticks when this process deletes a Way, whose line a seal then loses (owner decision 3). */
@@ -141,7 +145,7 @@ class HonorWalkRecords internal constructor(
             )
         }
         val link = wayStore.wayLink(walkUuid) ?: return HonorWalkRecord.NONE
-        val way = wayStore.load(link.wayId)
+        val way = listedWay(link.wayId)
         return HonorWalkRecord(
             way = way,
             arrival = link.arrival(),
@@ -162,9 +166,9 @@ class HonorWalkRecords internal constructor(
         val listsStagedBuild = session.finishKind == HonorFinishKind.CLEAN &&
             session.sourceKind == HonorSourceKind.OWN_WALK
         return if (listsStagedBuild) {
-            wayStore.staged(walkUuid) ?: wayStore.load(session.wayId)
+            wayStore.staged(walkUuid) ?: listedWay(session.wayId)
         } else {
-            wayStore.load(session.wayId)
+            listedWay(session.wayId)
         }
     }
 

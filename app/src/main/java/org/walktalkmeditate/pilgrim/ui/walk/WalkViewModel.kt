@@ -73,6 +73,7 @@ import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.WalkStats
+import org.walktalkmeditate.pilgrim.domain.inProgressWalkId
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.service.WalkTrackingService
 import org.walktalkmeditate.pilgrim.walk.HonorSettings
@@ -182,7 +183,7 @@ class WalkViewModel @Inject constructor(
      */
     val stageDayWeather: StateFlow<WeatherSnapshot?> = combine(
         _activeWeather,
-        controller.state.map { inProgressWalkIdOrNull(it) }.distinctUntilChanged().flatMapLatest { walkId ->
+        controller.state.map { it.inProgressWalkId() }.distinctUntilChanged().flatMapLatest { walkId ->
             if (walkId == null) flowOf<WeatherSnapshot?>(null) else flow { emit(storedWeather(repository.getWalk(walkId))) }
         },
     ) { live, stored -> live ?: stored }
@@ -1301,10 +1302,6 @@ class WalkViewModel @Inject constructor(
         is WalkState.Meditating -> state.walk.walkId
         is WalkState.Finished -> state.walk.walkId
     }
-
-    /** A finished walk is the pre-walk screen's past, not the walk on screen. */
-    private fun inProgressWalkIdOrNull(state: WalkState): Long? =
-        if (state is WalkState.Finished) null else walkIdOrNull(state)
 
     /** The snapshot [fetchAndPersistWeather] wrote to the walk row, read back; null until it has. */
     private fun storedWeather(walk: Walk?): WeatherSnapshot? {

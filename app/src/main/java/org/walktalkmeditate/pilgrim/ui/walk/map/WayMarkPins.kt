@@ -17,11 +17,12 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalDensity
+import org.walktalkmeditate.pilgrim.domain.honor.HonorDistance
 import org.walktalkmeditate.pilgrim.domain.honor.HonorTuning
+import org.walktalkmeditate.pilgrim.domain.honor.WGS84_HONOR_DISTANCE
 import org.walktalkmeditate.pilgrim.domain.honor.WayCoordinate
 import org.walktalkmeditate.pilgrim.domain.honor.WayMark
 import org.walktalkmeditate.pilgrim.domain.honor.WayMarkKind
-import org.walktalkmeditate.pilgrim.domain.wgs84MidLatitudeMeters
 import org.walktalkmeditate.pilgrim.ui.walk.MapCameraSeed
 
 /*
@@ -69,7 +70,7 @@ object WayMarkPins {
         if (!(zoom >= DRAW_FROM_ZOOM) || marks.isEmpty()) return emptyList()
         val chosen = if (near != null) {
             marks
-                .map { mark -> mark to wgs84MidLatitudeMeters(near.lat, near.lon, mark.at.lat, mark.at.lon) }
+                .map { mark -> mark to WGS84_HONOR_DISTANCE(near, mark.at) }
                 .sortedWith(compareBy<Pair<WayMark, Double>> { it.second }.thenBy { it.first.id })
                 .take(MAX_PER_SCREEN)
                 .map { it.first }
@@ -101,7 +102,7 @@ fun markGlyphVector(kind: WayMarkKind): ImageVector = when (kind) {
  * 200 m.
  */
 internal class WalkMarkSelection(
-    private val metersBetween: (from: WayCoordinate, to: WayCoordinate) -> Double = ::wayMeters,
+    private val metersBetween: HonorDistance = WGS84_HONOR_DISTANCE,
 ) {
 
     var anchor: WayCoordinate? = null

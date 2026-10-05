@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.honor
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -10,9 +9,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -20,14 +17,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.walktalkmeditate.pilgrim.R
-import org.walktalkmeditate.pilgrim.ui.theme.PilgrimCornerRadius
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
@@ -80,19 +75,7 @@ private fun OwnWalkRow(
     isLast: Boolean,
     onClick: () -> Unit,
 ) {
-    val corner = PilgrimCornerRadius.normal
-    val shape = RoundedCornerShape(
-        topStart = if (isFirst) corner else 0.dp,
-        topEnd = if (isFirst) corner else 0.dp,
-        bottomStart = if (isLast) corner else 0.dp,
-        bottomEnd = if (isLast) corner else 0.dp,
-    )
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .background(pilgrimColors.parchmentSecondary),
-    ) {
+    HonorSheetGroupRow(isFirst = isFirst, isLast = isLast) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -103,12 +86,6 @@ private fun OwnWalkRow(
         ) {
             Text(text = row.title, style = pilgrimType.body, color = pilgrimColors.ink)
             Text(text = row.distance, style = pilgrimType.caption, color = pilgrimColors.fog)
-        }
-        if (!isLast) {
-            HorizontalDivider(
-                color = pilgrimColors.fog.copy(alpha = 0.15f),
-                modifier = Modifier.padding(start = PilgrimSpacing.normal),
-            )
         }
     }
 }

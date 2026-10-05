@@ -49,7 +49,7 @@ import org.walktalkmeditate.pilgrim.ui.theme.PilgrimCornerRadius
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
-import org.walktalkmeditate.pilgrim.ui.walk.formatTemperature
+import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
 
 /** iOS `StageMorningCardModel` (`StageMorningCard.swift:3-27@7c200bf`, pilgrimage-stage spec P4 §7.1). */
 object StageMorningCardModel {
@@ -66,7 +66,7 @@ object StageMorningCardModel {
     fun weatherLine(resources: Resources, snapshot: WeatherSnapshot?, units: UnitSystem, locale: Locale): String? {
         snapshot ?: return null
         val condition = resources.getString(snapshot.condition.labelRes).lowercase(locale)
-        val temperature = formatTemperature(snapshot.temperatureCelsius, imperial = units == UnitSystem.Imperial)
+        val temperature = WalkFormat.temperature(snapshot.temperatureCelsius, units)
         return resources.getString(R.string.pilgrimage_morning_weather, condition, temperature)
     }
 }

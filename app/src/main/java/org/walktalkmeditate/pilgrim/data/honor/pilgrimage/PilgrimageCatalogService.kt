@@ -9,7 +9,6 @@ import java.nio.charset.CharacterCodingException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.UUID
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineDispatcher
@@ -17,24 +16,21 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import okhttp3.Call
-import okhttp3.Callback
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.Response
-import okio.Buffer
 import org.walktalkmeditate.pilgrim.data.honor.WayImporter
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
-import org.walktalkmeditate.pilgrim.data.honor.stayingOnTheHost
+import org.walktalkmeditate.pilgrim.data.honor.ephemeralClient
+import org.walktalkmeditate.pilgrim.data.honor.fetchCapped
+import org.walktalkmeditate.pilgrim.data.honor.plainGet
 import org.walktalkmeditate.pilgrim.di.PilgrimageCatalogHttpClient
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.honor.prefixCharacters
@@ -169,9 +165,7 @@ class PilgrimageCatalogService internal constructor(
         val url = packageUrl(release, entry.id, ROUTE_FILE) ?: throw PilgrimageException(PilgrimageError.NOT_WALKABLE)
         val data = fetch(url, PilgrimageWayImporter.MAX_ROUTE_BYTES.toLong())
         val route = PilgrimageWayImporter.route(from = data)
-        if (route.id != entry.id || route.stageCount != entry.stageCount || route.stages.size != entry.stageCount) {
-            throw PilgrimageException(PilgrimageError.NOT_WALKABLE)
-        }
+        if (!route.describes(entry)) throw PilgrimageException(PilgrimageError.NOT_WALKABLE)
         routePreviewFile(entry.id, release)?.let { writeQuietly(it, data) }
         route
     }
@@ -186,33 +180,12 @@ class PilgrimageCatalogService internal constructor(
      * P1 §3.1): HTTP 200 only, the declared length checked before the
      * body (`<=` passes), then the bytes counted as they arrive (`>`
      * refuses), so exactly [cap] bytes pass. Every failure is
-     * [PilgrimageError.CATALOG_UNREACHABLE]; the call is cancelled with the
-     * caller.
+     * [PilgrimageError.CATALOG_UNREACHABLE], anything else mid-fetch
+     * included, as iOS's `catch { throw PilgrimageError.catalogUnreachable }`;
+     * the call is cancelled with the caller.
      */
-    private suspend fun fetch(url: HttpUrl, cap: Long): ByteArray = suspendCancellableCoroutine { continuation ->
-        val call = client.newCall(request(onCdn(url)))
-        continuation.invokeOnCancellation { call.cancel() }
-        call.enqueue(
-            object : Callback {
-                override fun onFailure(call: Call, e: IOException) {
-                    continuation.resumeWith(Result.failure(unreachable()))
-                }
-
-                override fun onResponse(call: Call, response: Response) {
-                    val result = try {
-                        Result.success(response.use { readCapped(it, cap) })
-                    } catch (e: Exception) {
-                        // iOS's `catch { throw PilgrimageError.catalogUnreachable }`: anything else mid-fetch.
-                        Result.failure(unreachable())
-                    }
-                    continuation.resumeWith(result)
-                }
-            },
-        )
-    }
-
-    /** The same path on this service's CDN: the production CDN itself, or a test's server. */
-    private fun onCdn(url: HttpUrl): HttpUrl = url.newBuilder().scheme(cdn.scheme).host(cdn.host).port(cdn.port).build()
+    private suspend fun fetch(url: HttpUrl, cap: Long): ByteArray =
+        client.fetchCapped(url, cdn, cap, refused = { unreachable() }, failed = { unreachable() })
 
     /**
      * iOS `readCache` (`PilgrimageCatalogService.swift:364-372@7c200bf`): a
@@ -307,8 +280,6 @@ class PilgrimageCatalogService internal constructor(
         private const val CACHE_FILE = "catalog.json"
         private const val ROUTE_FILE = "route.json"
         private const val TEMP_SUFFIX = ".tmp"
-        private const val READ_CHUNK_BYTES = 8_192L
-        private const val HTTP_OK = 200
 
         private val INDEX = INDEX_URL.toHttpUrl()
 
@@ -349,14 +320,8 @@ class PilgrimageCatalogService internal constructor(
          * request reads the 503 as out of reach. A recorded platform
          * difference, not fought: the CDN isn't known to send one.
          */
-        fun httpClient(cdn: HttpUrl): OkHttpClient = OkHttpClient.Builder()
-            .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .writeTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .callTimeout(CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .retryOnConnectionFailure(false)
-            .stayingOnTheHost(cdn)
-            .build()
+        fun httpClient(cdn: HttpUrl): OkHttpClient =
+            ephemeralClient(cdn, CONNECT_TIMEOUT_SECONDS, READ_TIMEOUT_SECONDS, CALL_TIMEOUT_SECONDS)
 
         /** A name no other write shares, beside [target] so the rename stays in one folder (`WayStore`'s temp names). */
         internal fun tempFile(target: File): File = File(target.parentFile, ".${target.name}.${UUID.randomUUID()}$TEMP_SUFFIX")
@@ -366,20 +331,8 @@ class PilgrimageCatalogService internal constructor(
                 ?.forEach { it.delete() }
         }
 
-        /** A plain GET, as iOS's `session.bytes(from:)` sends. */
-        internal fun request(url: HttpUrl): Request = Request.Builder().url(url).build()
-
-        private fun readCapped(response: Response, cap: Long): ByteArray {
-            if (response.code != HTTP_OK) throw unreachable()
-            val body = response.body
-            if (body.contentLength() > cap) throw unreachable()
-            val source = body.source()
-            val buffer = Buffer()
-            while (source.read(buffer, READ_CHUNK_BYTES) != -1L) {
-                if (buffer.size > cap) throw unreachable()
-            }
-            return buffer.readByteArray()
-        }
+        /** The GET [fetch] sends. */
+        internal fun request(url: HttpUrl): Request = plainGet(url)
 
         /**
          * iOS `parse` (`PilgrimageCatalogService.swift:281-312@7c200bf`, P1 §7):
