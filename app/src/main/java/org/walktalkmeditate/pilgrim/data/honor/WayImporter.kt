@@ -62,11 +62,11 @@ enum class WayError { NOT_FOUND, RETURNED_TO_TRAIL, UNAVAILABLE, DISK_FULL }
 /** A [WayError], thrown. It carries no message: nothing from a share may reach a log. */
 class WayImportException(val error: WayError) : Exception()
 
-/** The manifest's and the media's redirect rule: see [WayImporter.StaysOnTheWalkHost]. */
-internal fun OkHttpClient.Builder.stayingOnTheWalkHost(base: HttpUrl): OkHttpClient.Builder =
+/** The manifest's, the media's and the pilgrimage catalog's redirect rule: see [WayImporter.StaysOnTheHost]. */
+internal fun OkHttpClient.Builder.stayingOnTheHost(base: HttpUrl): OkHttpClient.Builder =
     followRedirects(false)
         .followSslRedirects(false)
-        .addInterceptor(WayImporter.StaysOnTheWalkHost(base))
+        .addInterceptor(WayImporter.StaysOnTheHost(base))
 
 /**
  * A shared walk's manifest becomes a listed Way: iOS `WayImporter`
@@ -161,17 +161,18 @@ class WayImporter internal constructor(
     }
 
     /**
-     * Follows a redirect only to the walk host's own scheme, host, and
-     * port, as OkHttp would (its codes, its 20 hops), and refuses any
-     * other before anything connects to it: no DNS, socket, or handshake
-     * reaches it (an R6 addition: iOS follows any HTTPS redirect, S1 §3.2).
-     * The media download refuses the same way (S3 §2). Both requests are
-     * GETs, so a followed hop keeps its method and headers (a `Range`
-     * included). Installed by [stayingOnTheWalkHost], which turns off
+     * Follows a redirect only to [base]'s own scheme, host, and port, as
+     * OkHttp would (its codes, its 20 hops), and refuses any other before
+     * anything connects to it: no DNS, socket, or handshake reaches it (an
+     * R6 addition: iOS follows any HTTPS redirect, S1 §3.2). The walk host
+     * for the manifest and the media download (S3 §2); the CDN for the
+     * pilgrimage catalog (pilgrimage spec P1 A2, owner decision 6). Every
+     * request is a GET, so a followed hop keeps its method and headers (a
+     * `Range` included). Installed by [stayingOnTheHost], which turns off
      * OkHttp's own following: a check of OkHttp's hop could only run once
      * the connection to its target was made.
      */
-    internal class StaysOnTheWalkHost(private val base: HttpUrl) : Interceptor {
+    internal class StaysOnTheHost(private val base: HttpUrl) : Interceptor {
         override fun intercept(chain: Interceptor.Chain): Response {
             var request = chain.request()
             repeat(MAX_REDIRECTS + 1) {
@@ -179,7 +180,7 @@ class WayImporter internal constructor(
                 val target = redirectTarget(response) ?: return response
                 response.close()
                 if (target.scheme != base.scheme || target.host != base.host || target.port != base.port) {
-                    throw IOException("a redirect off the walk host was refused")
+                    throw IOException("a redirect off the host was refused")
                 }
                 request = request.newBuilder().url(target).build()
             }
@@ -288,7 +289,7 @@ class WayImporter internal constructor(
             .writeTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .callTimeout(CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .retryOnConnectionFailure(false)
-            .stayingOnTheWalkHost(base)
+            .stayingOnTheHost(base)
             .build()
 
         /**
