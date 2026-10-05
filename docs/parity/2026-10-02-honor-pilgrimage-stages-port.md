@@ -138,8 +138,8 @@ Gathered from the clusters; the gate records each with its reason.
 - **Owner decision 2 (decided):** the stage Way is staged per walk at Start from the copy the door loaded, discarded at finalize and never promoted. The plan's file-stamp refusal and Start's wait (P2 A-8, A-9) are not built.
 - **The water haptic in the pocket** (P3 addition 2, R6's existing addition).
 - **Files and caches:** no HTTP cache on the CDN clients (P1 A1); redirects kept on the CDN host (P1 A2, owner decision 6); the temp set under `noBackupFilesDir`, swept at launch (P2 A-6); `list()` skipping stage ids (P2 A-11); `retireMany` bumping the deletion counter (P2 A-10).
-- **Kotlin and Compose mechanics, no visible change:** cancellation rethrown (P1 A3); a single-flight `load` (P1 A4); millisecond `fetchedAt` (P1 A5); list keys by id and position (P1 A6); wire integers as `Long` (P1 A7); work on `Dispatchers.IO` (P1 A8); kotlinx's decoding differences, recorded and not emulated (P1 A9); NFC-normalized name comparisons (P1 A10); the camera subscriptions only where marks exist (P5 A5).
-- **Screens:** the route page as a second sheet (P4 A-1, owner decision 8); the catalog plate in parchment (P4 A-2); process-death restore of the catalog, route page, morning card flag and redraw notice (P4 A-3); the offline note's connectivity reading (P4 A-4); `Locale.US` digits (P4 A-5); "the day"'s weather fallback after a UI restart (P4 A-6); spoken names for unlabelled glyphs (P4 A-7); no maps line until 21-3 (P4 A-8); the stage formatter (P4 A-9, owner decision 7); Material glyph stand-ins (P5 A6).
+- **Kotlin and Compose mechanics, no visible change:** cancellation rethrown (P1 A3); a single-flight `load` (P1 A4); millisecond `fetchedAt` (P1 A5); list keys by id and position (P1 A6); wire integers as `Long` (P1 A7); work on `Dispatchers.IO` (P1 A8); kotlinx's decoding differences, recorded and not emulated (P1 A9); NFC-normalized name comparisons (P1 A10); the camera subscriptions only where marks exist (P5 A5), with one report of the current camera when they're installed, so a zoom-14 opening camera still reaches the marks (U39); the ledger written to the folder of the route id the caller names, where iOS's `save` writes to the `routeId` stored in the file (they differ only for a hand-edited file; U33).
+- **Screens:** the route page as a second sheet (P4 A-1, owner decision 8); the catalog plate in parchment (P4 A-2); process-death restore of the catalog, route page, morning card flag and redraw notice (P4 A-3); the offline note's connectivity reading (P4 A-4); `Locale.US` digits (P4 A-5); "the day"'s weather fallback after a UI restart (P4 A-6); spoken names for unlabelled glyphs (P4 A-7); no maps line until 21-3 (P4 A-8); the stage formatter (P4 A-9, owner decision 7); Material glyph stand-ins (P5 A6); the route page's own hold (P4 A-10: the button and overflow held from the page's opening until its first reload has read what's installed, and from each Download, Update or Replace tap through the reload after it, counted, so an install refused at once never releases another's; Remove holds nothing, as on iOS; U37); the summary's stage reply on the app's one voice player, so a voice row and the reply never play at once, where iOS gives each its own player (U40).
 - **The lexicon's read-only route lookup** (P3 addition 8, owner decision 11).
 
 ---
@@ -180,6 +180,12 @@ The owner accepted every recommendation below on 2026-10-02, decision 2 included
 | 12 | **iOS PR #91** | Leave one review comment before it merges (PR91-D1, D2, D6, with D3 as a note), and say whether #91 is meant for the iOS build Android 2.0.0 claims parity with. R2 decides mechanically either way; decision 1 makes a late fold-in free | Annex A.12–A.14 |
 
 ---
+
+## Follow-ups found outside this stage
+
+Pre-existing Android differences the stage's reviews found, outside its scope; record at the gate or file after Stage 21-2:
+- The walk options sheet's rows draw the title, subtitle and chevron at full opacity; iOS draws them at 0.9, 0.5 and 0.3, and lets the title shrink to 0.8 (U38 review).
+- The walk map's weather chip (`WalkVignette.kt`) rounds a .5 temperature up and prints a bare "°"; iOS prints "°C" through its shared `%.0f`, which rounds half to even (U38 review; the summary and prompt formatters were fixed in U38).
 
 ## Open questions iOS leaves open (iPhone checks for the combined pass)
 
@@ -529,20 +535,20 @@ All three files go through a default `JSONDecoder()` into synthesized `Decodable
 | `Int` given `1e2` | `100` | `100` (measured in U28) | same |
 | `Int` given `1.5` | fails | fails | same |
 | `Int` or `Double` given `"5"` | fails | **reads 5** (S1, measured) | every number |
-| `Double` given `1e400` | **fails the decode** | reads `Infinity`; the range checks then refuse it | every `Double` |
+| `Double` given `1e400` | **fails the decode** | **fails the decode** too: kotlinx refuses it while reading the number (measured in U31, pinned in `PilgrimageWayImporterTest`) | every `Double` |
 | `Int` given `99999999999999999999` | fails | fails | every `Int` |
 | `Int` given `3000000000` | `3000000000` (Swift `Int` is 64-bit) | **fails for a Kotlin `Int`**; reads for `Long` | see 4.3 |
 | `String` given `5`, `true`, `null` | fails | fails | every `String` |
 | `[String: String]` with a `null` or numeric value | fails | fails | `names`, index `name` |
 | `[String]` with a `null` element | fails | fails | `warnings`, `sections` |
 | repeated key | **first** value wins (measured: `{"a":1,"a":2}` → 1) | **last** wins (`WayImporterTest` "a repeated key keeps its last value") | any |
-| leading BOM | accepted | expected to fail (the strict UTF-8 decode yields U+FEFF, which kotlinx's lexer doesn't skip; not measured) | whole file |
+| leading BOM | accepted | **fails the decode**: the strict UTF-8 decode yields U+FEFF, which kotlinx's lexer doesn't skip (measured in U31) | whole file |
 | `"\ud800"` (lone surrogate escape) | fails | expected to be accepted (not measured) | any string |
 | trailing text after the object | fails | fails | whole file |
 | `NaN` | fails | fails | any |
 
 What reaches the app in practice: the dataset is written by `JSON.stringify`, so no integral number is written with a fraction, no number is quoted, no key repeats, no BOM. The probe confirms it for every live file: 0 float literals in `Int` fields, 0 repeated keys (§12). The differing rows matter only for hand-written fixtures and hostile files. Two of them change an outcome:
-- **The index:** a decode failure anywhere fails the whole catalog (`catalogUnreachable`, then the cache), while a range failure drops one row. `"distanceKm": 1e400` fails iOS's whole index but only drops the row on Android (`Infinity` fails `isFinite`). `"stageCount": 33.0` passes iOS and fails Android's whole index. Hostile-only; pin both in tests as S1 did, don't emulate.
+- **The index:** a decode failure anywhere fails the whole catalog (`catalogUnreachable`, then the cache), while a range failure drops one row. `"distanceKm": 1e400` fails the whole index on both platforms (measured in U31; an earlier draft of this spec said Android drops only the row). `"stageCount": 33.0` passes iOS and fails Android's whole index. Hostile-only; pin both in tests as S1 did, don't emulate.
 - **The stage and route files:** every failure is `notWalkable` either way, so the rows above change nothing there.
 
 #### 4.2 Required and optional, per struct (the Kotlin wire models must match: no defaults on required fields)
@@ -1641,7 +1647,7 @@ The string-replacement tests depend on the fixtures' exact whitespace (`"\"frac\
 | 36 | `testTheButtonSaysWhatItWillDo` | Download / Update / On your phone | U37 |
 | 37 | `testTheRedrawNoticeIsTheSpecsWords` | the redraw notice string | U37 |
 
-Android tests to add beyond iOS's (each pins a fact above that iOS's tests leave open): exactly-cap bodies pass and cap + 1 fail (index 262,144; route 524,288; stage 2,097,152); a cache exactly 24 h old refetches; a clock moved back 48 h after a fetch makes no request; a forced load with a stale cache, offline, returns the cache without an error; a parse with zero routes is cached; `"stageCount": 33.0` and `"distanceKm": 1e400` in one row (the pinned kotlinx differences); `ways.bytes` of 3,000,000,000 drops one row, not the catalog (the `Long` rule); two pilgrimages sharing an id; the Guernica 30-name cut (sort, cut to 20, filter); `marks` is `[]` for `stage-01.json`; the `Way`'s `totalDistanceMeters` is the haversine length, not the file's; a point list whose first `t` isn't 0 is kept as written; the preview file name and that a cached preview makes no request; no `Log` call anywhere under `data/honor/pilgrimage/` (a review check, or a source-scan test if the team wants it enforced).
+Android tests to add beyond iOS's (each pins a fact above that iOS's tests leave open): exactly-cap bodies pass and cap + 1 fail (index 262,144; route 524,288; stage 2,097,152); a cache exactly 24 h old refetches; a clock moved back 48 h after a fetch makes no request; a forced load with a stale cache, offline, returns the cache without an error; a parse with zero routes is cached; `"stageCount": 33.0` in one row (a pinned kotlinx difference: it fails the whole index on Android) and `"distanceKm": 1e400` (fails the whole index on both); `ways.bytes` of 3,000,000,000 drops one row, not the catalog (the `Long` rule); two pilgrimages sharing an id; the Guernica 30-name cut (sort, cut to 20, filter); `marks` is `[]` for `stage-01.json`; the `Way`'s `totalDistanceMeters` is the haversine length, not the file's; a point list whose first `t` isn't 0 is kept as written; the preview file name and that a cached preview makes no request; no `Log` call anywhere under `data/honor/pilgrimage/` (a review check, or a source-scan test if the team wants it enforced).
 
 ### Corrections to the Android plan
 
@@ -1721,7 +1727,7 @@ Android tests to add beyond iOS's (each pins a fact above that iOS's tests leave
 
 | # | Difference | Reason |
 |---|---|---|
-| A1 | No HTTP cache on the catalog and package clients; every load past 24 h and every Retry reaches the network | iOS's ephemeral session keeps a memory `URLCache` that honours the CDN's 7-day `max-age` within a process (§3.5, D2); OkHttp has none unless configured, and none is wanted |
+| A1 | No HTTP cache on the catalog and package clients; every load past 24 h and every Retry reaches the network. OkHttp still repeats a request once for a `503` carrying `Retry-After: 0`, which `retryOnConnectionFailure(false)` doesn't stop; iOS never repeats one (pinned in U32; jsDelivr doesn't send it) | iOS's ephemeral session keeps a memory `URLCache` that honours the CDN's 7-day `max-age` within a process (§3.5, D2); OkHttp has none unless configured, and none is wanted |
 | A2 | (If O2 is accepted) redirects followed only within `cdn.jsdelivr.net` | Same posture as the share importer's R6 addition; iOS follows any HTTPS host |
 | A3 | Cancellation is rethrown by the catalog fetch, not mapped to `catalogUnreachable` | Structured concurrency; the cancelled load's screen has gone, so nothing visible changes |
 | A4 | `load` runs under a mutex (single-flight with the TTL check inside) | Android's ViewModels can overlap loads across configuration changes; iOS interleaves two loads that both fetch. No visible change |
@@ -1729,7 +1735,7 @@ Android tests to add beyond iOS's (each pins a fact above that iOS's tests leave
 | A6 | Catalog list items keyed by entry id and position, never by group id alone | Compose's `LazyColumn` throws on a repeated key where SwiftUI's `ForEach` tolerates a duplicate pilgrimage id |
 | A7 | Wire integers decoded as `Long`, narrowed after the range check | Kotlin's `Int` is 32-bit; without this an out-of-range `bytes` would fail the whole index instead of one row (parity-preserving) |
 | A8 | Disk reads, decodes and the parse run on `Dispatchers.IO` | iOS does them on the main actor; a platform equivalent |
-| A9 | Decoding differences kept, not emulated: a quoted number reads, an integer written `1.0` fails, a repeated key keeps its last value, `1e400` in an index row drops the row instead of failing the index | kotlinx versus Foundation, as recorded in S1 §2.4; no live file triggers any (§12) |
+| A9 | Decoding differences kept, not emulated: a quoted number reads, an integer written `1.0` fails, a repeated key keeps its last value, a leading BOM fails where iOS accepts it (`1e400` fails on both, so it isn't a difference); a quoted Boolean (`"sparse": "true"`) reads where iOS fails the whole index; a lone surrogate escape (`"\ud800"`) in a name or label reads and its row is listed, where iOS fails the whole index (Android's cache then holds `?` for it); a leading byte order mark on the index fails the whole catalog, where iOS reads past it (all measured in U31 and U32) | kotlinx versus Foundation, as recorded in S1 §2.4; no live file triggers any (§12) |
 | A10 | Stage-name comparisons NFC-normalized | Swift's `String ==` is canonical equivalence; this is its Kotlin equivalent, not a change |
 | A11 | (If O1 goes the plan's way) the catalog cache under `noBackupFilesDir` | iOS's is backed up and transferred |
 
@@ -6726,6 +6732,8 @@ Android ports each exactly as shipped; they go upstream as themed issues later. 
 ---
 
 ## P5. On the walk and after: marks and the camera report, the card body, the water caption, "the day", the arrival reply, and the summary
+
+> **Superseded by owner decision 7 (2026-10-02):** wherever this cluster says `WalkFormat` for a stage surface (§8.1, §8.2, §11.4, §11.5, C9 and the §16 walked-distance and progress-line rows), the stage formatter `StageFormat` applies, since it prints as iOS's `StatsHelper` does ("24.2 km", "0.05 km"; `WalkFormat` would print "24.20 km", "50 m"). The summary's line reads "14.04 km of 24.2 km of the stage" (U39, U40).
 
 | | |
 |---|---|

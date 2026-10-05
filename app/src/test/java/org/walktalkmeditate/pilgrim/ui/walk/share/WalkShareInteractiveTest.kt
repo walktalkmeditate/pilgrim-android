@@ -466,6 +466,21 @@ class WalkShareInteractiveTest {
         awaitReal { shareCardState.first(predicate) }
 
     /**
+     * Waits until a "Carry the missing files" tap would act, not just
+     * until the card reads Partial. The cached-share observer restores the
+     * card before it publishes the share, and the attempt that produced a
+     * Partial releases the share lock as it unwinds; a retry that lands in
+     * either gap returns without repairing (an unavailable explanation, or
+     * a refused lock), and the next await burns its whole budget. Seen on
+     * CI under load, never locally.
+     */
+    private suspend fun WalkShareViewModel.awaitRepairable() {
+        awaitCard { it is ShareCardState.Partial }
+        awaitReal { isSharing.first { !it } }
+        awaitReal { cachedShare.first { it != null } }
+    }
+
+    /**
      * Collects this ViewModel's events into [into], returning only once
      * the subscription is genuinely live.
      *
@@ -665,6 +680,7 @@ class WalkShareInteractiveTest {
             val repairWatcher = launch(dispatcher) { reopened.events.collect { repairEvents += it } }
 
             enqueueOk(1)
+            reopened.awaitRepairable()
             reopened.retryFailedMedia()
             reopened.awaitCard { it is ShareCardState.Success }
             awaitReal { reopened.isSharing.first { !it } }
@@ -1314,6 +1330,7 @@ class WalkShareInteractiveTest {
         transcoder.calls.clear()
 
         enqueueOk(1)
+        vm.awaitRepairable()
         vm.retryFailedMedia()
         vm.awaitCard { it is ShareCardState.Success }
 
@@ -1349,6 +1366,7 @@ class WalkShareInteractiveTest {
             val reopened = vm(seed.walkId)
             reopened.awaitLoaded()
             reopened.awaitCard { it is ShareCardState.Partial }
+            reopened.awaitRepairable()
             reopened.retryFailedMedia()
 
             awaitReal { reopened.repairUnavailable.first { it } }
@@ -1391,6 +1409,7 @@ class WalkShareInteractiveTest {
         val watcher = launch(dispatcher) { vm.events.collect { events += it } }
         val requestsBeforeRepair = server.requestCount
 
+        vm.awaitRepairable()
         vm.retryFailedMedia()
         awaitReal { vm.isSharing.first { !it } }
         watcher.cancel()
@@ -1647,6 +1666,7 @@ class WalkShareInteractiveTest {
             val watcher = watchEvents(vm, events)
             val requestsBeforeRepair = server.requestCount
 
+            vm.awaitRepairable()
             vm.retryFailedMedia()
             awaitReal { vm.isSharing.first { !it } }
             watcher.cancel()
