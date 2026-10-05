@@ -15,11 +15,13 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.TestScope
@@ -49,13 +51,17 @@ import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
+import org.walktalkmeditate.pilgrim.data.honor.HonorDao
 import org.walktalkmeditate.pilgrim.data.honor.HonorMomentStateEntity
+import org.walktalkmeditate.pilgrim.data.honor.HonorNoticeEntity
+import org.walktalkmeditate.pilgrim.data.honor.HonorNoticeKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
 import org.walktalkmeditate.pilgrim.data.honor.dismissedAt
 import org.walktalkmeditate.pilgrim.data.honor.HonorVoiceEnd
 import org.walktalkmeditate.pilgrim.data.honor.HonorVoiceState
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
@@ -69,11 +75,16 @@ import org.walktalkmeditate.pilgrim.domain.honor.VoiceKind
 import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.domain.honor.WayCoordinate
 import org.walktalkmeditate.pilgrim.domain.honor.WayGeometry
+import org.walktalkmeditate.pilgrim.domain.honor.WayMark
+import org.walktalkmeditate.pilgrim.domain.honor.WayMarkKind
 import org.walktalkmeditate.pilgrim.domain.honor.WayMedia
 import org.walktalkmeditate.pilgrim.domain.honor.WayMoment
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.domain.honor.WayPoint
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
+import org.walktalkmeditate.pilgrim.domain.honor.WayStage
+import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
+import org.walktalkmeditate.pilgrim.domain.honor.WayStagePlace
 import org.walktalkmeditate.pilgrim.domain.wgs84MidLatitudeMeters
 import org.walktalkmeditate.pilgrim.honor.HonorReplies
 import org.walktalkmeditate.pilgrim.honor.HonorStageHandoff
@@ -83,9 +94,15 @@ import org.walktalkmeditate.pilgrim.service.WalkTrackingService
 import org.walktalkmeditate.pilgrim.ui.honor.CARD_RETIRE_MILLIS
 import org.walktalkmeditate.pilgrim.ui.honor.COMMAND_CONFIRM_WINDOW_MILLIS
 import org.walktalkmeditate.pilgrim.ui.honor.HONOR_ARRIVAL_CARD_ID
+import org.walktalkmeditate.pilgrim.ui.honor.HonorArrivalCopy
 import org.walktalkmeditate.pilgrim.ui.honor.HonorArrivalSummary
+import org.walktalkmeditate.pilgrim.ui.honor.WayRelation
+import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.StageFormat
+import org.walktalkmeditate.pilgrim.ui.walk.map.CameraReportThrottle
 import org.walktalkmeditate.pilgrim.ui.walk.map.WayGlyph
+import org.walktalkmeditate.pilgrim.ui.walk.map.WayMarkPin
 import org.walktalkmeditate.pilgrim.ui.walk.map.WayPinTint
+import org.walktalkmeditate.pilgrim.ui.walk.map.wayPins
 import org.walktalkmeditate.pilgrim.walk.BellTrigger
 import org.walktalkmeditate.pilgrim.walk.WalkActionPublisher
 import org.walktalkmeditate.pilgrim.walk.WalkController
@@ -965,7 +982,7 @@ class HonorWalkViewModelTest {
 
         disarmSoftTap()
 
-        assertNull(vm.sheet.value!!.softTapMeters)
+        assertNull(vm.sheet.value!!.caption)
     }
 
     @Test
@@ -977,11 +994,11 @@ class HonorWalkViewModelTest {
         vm.sheet.awaitValue { it != null }
 
         disarmSoftTap()
-        val shown = vm.sheet.value!!.softTapMeters
+        val shown = vm.sheet.value!!.caption
         advanceTimeBy(20_000L)
         runCurrent()
 
-        assertEquals((0.003 * 111_320).toLong() to null, shown to vm.sheet.value!!.softTapMeters)
+        assertEquals(HonorCaption.OffWay((0.003 * 111_320).toLong()) to null, shown to vm.sheet.value!!.caption)
     }
 
     // ---- Shared walks (shared spec S4 §10) ----------------------------------
@@ -1095,7 +1112,573 @@ class HonorWalkViewModelTest {
         assertEquals(emptyList<HonorCommand>(), sentCommands)
     }
 
+    // ---- A pilgrimage stage on the walk (pilgrimage-stage spec P5 §2, §6–§8) --
+    //
+    // iOS `ActiveWalkHonorTests+MarkPins.swift@7c200bf` and the cases
+    // `PilgrimageStageWalkTests` left for this screen, names kept; then the
+    // rules iOS has no test for (P5 §18).
+
+    @Test
+    fun testASharedWayHasNoMarksToDraw() = runTest(dispatcher) {
+        // The Way here is someone's own walk: no `marks` block at all, so no
+        // fix on it may ever put a service pin on the map.
+        startLiveWalk()
+        val vm = viewModel()
+        val published = recordMarks(vm)
+        vm.state.awaitValue { it?.session != null }
+
+        walkerAt(0.0)
+        walkerAt(300.0 / 111_320)
+
+        assertTrue(vm.marks.value.isEmpty())
+        assertEquals("nothing to draw must also mean nothing published", 0, published.size - 1)
+    }
+
+    @Test
+    fun testTheNearestMarksAreReselectedOnlyOnceTheWalkerHasMovedTwoHundredMetres() = runTest(dispatcher) {
+        startStageWalk()
+        val vm = viewModel()
+        val published = recordMarks(vm)
+        collectCards(vm)
+        vm.state.awaitValue { it?.session != null }
+
+        walkerAt(0.0)
+        // The same fix reaches `:tracker`, so the mark the walker stands on
+        // is water ahead, all the way through to the caption slot: the one
+        // line water is allowed to say.
+        db.honorDao().insertNotice(waterNotice(refId = "m0", meters = 0.0, firedAt = clock.now()))
+        assertEquals("the first fix anchors the selection", 1, published.size - 1)
+        assertEquals("nearest to the walker comes first", "m0", vm.marks.value.first().markId)
+        val caption = vm.sheet.awaitValue { it?.caption != null }!!.caption!!
+        assertTrue(HonorCaptionCopy.text(context.resources, caption, UnitSystem.Metric).startsWith("water in "))
+
+        walkerAt(50.0 / 111_320)
+        assertEquals("50 m is inside the 200 m throttle", 1, published.size - 1)
+
+        walkerAt(250.0 / 111_320)
+        assertEquals("250 m from the anchor re-sorts them", 2, published.size - 1)
+        assertEquals("the mark 50 m ahead is now the nearest", "m2", vm.marks.value.first().markId)
+    }
+
+    @Test
+    fun testPinchingBelowThirteenHidesTheMarksAndComingBackRestoresThem() = runTest(dispatcher) {
+        startStageWalk()
+        val vm = viewModel()
+        recordMarks(vm)
+        vm.state.awaitValue { it?.session != null }
+        walkerAt(0.0)
+        assertEquals("the map starts at the follow-puck's zoom", 3, vm.marks.value.size)
+
+        // A pinch, with the walker standing still: the marks answer to the
+        // camera the map reports, not to a zoom assumed on their behalf.
+        vm.onCameraChanged(WayCoordinate(lat = 0.0, lon = 0.0), zoom = 10.2)
+        assertTrue(vm.marks.value.isEmpty())
+
+        vm.onCameraChanged(WayCoordinate(lat = 0.0, lon = 0.0), zoom = 14.1)
+        assertEquals(3, vm.marks.value.size)
+    }
+
+    // Before the walk's first fix the camera's centre stands in for the walker (P5 A1).
+
+    @Test
+    fun `on the walk a 1 km pan at the same zoom chooses no marks again`() = runTest(dispatcher) {
+        startStageWalk()
+        val vm = viewModel()
+        val published = recordMarks(vm)
+        vm.state.awaitValue { it?.session != null }
+        vm.onCameraChanged(WayCoordinate(lat = 0.0, lon = 0.0), zoom = 14.0)
+
+        vm.onCameraChanged(east(1_000.0), zoom = 14.0)
+
+        assertEquals(listOf("m0", "m1", "m2") to 1, vm.marks.value.map { it.markId } to published.size - 1)
+    }
+
+    @Test
+    fun `walking 200 m from where the marks were chosen chooses them again`() = runTest(dispatcher) {
+        startStageWalk()
+        val vm = viewModel()
+        val published = recordMarks(vm)
+        vm.state.awaitValue { it?.session != null }
+        walkerAt(0.0)
+
+        walkerAt(east(199.99).lon)
+        val short = published.size - 1
+        walkerAt(east(200.01).lon)
+
+        assertEquals(1 to 2, short to published.size - 1)
+        assertEquals("m2", vm.marks.value.first().markId)
+    }
+
+    @Test
+    fun `a zoom change inside one level chooses no marks again, one across a level does`() = runTest(dispatcher) {
+        startStageWalk()
+        val vm = viewModel()
+        recordMarks(vm)
+        vm.state.awaitValue { it?.session != null }
+        vm.onCameraChanged(WayCoordinate(lat = 0.0, lon = 0.0), zoom = 14.0)
+
+        vm.onCameraChanged(east(1_000.0), zoom = 14.9)
+        val within = vm.marks.value.first().markId
+        vm.onCameraChanged(east(1_000.0), zoom = 15.0)
+
+        assertEquals("m0" to "m2", within to vm.marks.value.first().markId)
+    }
+
+    @Test
+    fun `before Start a camera report across a whole level draws the marks around the camera`() = runTest(dispatcher) {
+        store.save(stageWayWithMarks())
+        val vm = viewModel()
+        recordMarks(vm)
+        vm.showWay(HonorWayChoice.Stored(STAGE_WAY_ID))
+        vm.state.awaitValue { it != null }
+
+        vm.onCameraChanged(WayCoordinate(lat = 0.0, lon = 0.0), zoom = 16.3)
+        val atTheSeededLevel = vm.marks.value.size
+        vm.onCameraChanged(WayCoordinate(lat = 0.0, lon = 0.0), zoom = 14.0)
+
+        assertEquals(0 to 3, atTheSeededLevel to vm.marks.value.size)
+    }
+
+    @Test
+    fun `a Way that loads after the camera chose draws its marks as chosen`() = runTest(dispatcher) {
+        store.save(stageWayWithMarks())
+        val vm = viewModel()
+        recordMarks(vm)
+        vm.onCameraChanged(WayCoordinate(lat = 0.0, lon = 0.0), zoom = 14.0)
+
+        vm.showWay(HonorWayChoice.Stored(STAGE_WAY_ID))
+
+        assertEquals(listOf("m0", "m1", "m2"), vm.marks.awaitValue { it.isNotEmpty() }.map { it.markId })
+    }
+
+    @Test
+    fun `the walk's end takes its marks away`() = runTest(dispatcher) {
+        startStageWalk()
+        val vm = viewModel()
+        recordMarks(vm)
+        vm.state.awaitValue { it?.session != null }
+        walkerAt(0.0)
+        val during = vm.marks.value.size
+
+        controller.state.value = WalkState.Idle
+
+        assertEquals(3 to 0, during to vm.marks.value.size)
+    }
+
+    @Test
+    fun `at Start, before the walk's first fix, the marks are chosen around the camera`() = runTest(dispatcher) {
+        store.save(stageWayWithMarks())
+        val vm = viewModel()
+        recordMarks(vm)
+        vm.showWay(HonorWayChoice.Stored(STAGE_WAY_ID))
+        vm.state.awaitValue { it != null }
+        vm.onCameraChanged(east(200.0), zoom = 16.3)
+        val beforeStart = vm.marks.value.size
+
+        startStageWalk()
+
+        assertEquals(0 to listOf("m2", "m1", "m0"), beforeStart to vm.marks.value.map { it.markId })
+    }
+
+    @Test
+    fun `Start lets go of the last walk's anchor`() = runTest(dispatcher) {
+        startStageWalk()
+        val vm = viewModel()
+        recordMarks(vm)
+        vm.state.awaitValue { it?.session != null }
+        walkerAt(east(199.0).lon)
+        val firstWalk = vm.marks.value.firstOrNull()?.markId
+        controller.state.value = WalkState.Idle
+
+        // The origin is under 200 m from the first walk's anchor.
+        startStageWalk(uuid = NEXT_UUID)
+        vm.state.awaitValue { it?.session?.walkId == liveWalkId }
+        walkerAt(0.0)
+
+        assertEquals("m2" to "m0", firstWalk to vm.marks.value.firstOrNull()?.markId)
+    }
+
+    @Test
+    fun `before Start a Way that loads after a zoom-14 seed draws its marks from the report taken as the map's listeners install`() =
+        runTest(dispatcher) {
+            store.save(stageWayWithMarks())
+            val vm = viewModel()
+            recordMarks(vm)
+            vm.showWay(HonorWayChoice.Stored(STAGE_WAY_ID))
+            vm.state.awaitValue { it != null }
+            // The map seeded at the last walk's end before the Way loaded, so
+            // its listeners, installed only now, report the camera as it stands.
+            val seed = WayCoordinate(lat = 0.0, lon = 0.0)
+            val throttle = CameraReportThrottle()
+
+            if (throttle.report(seed, MapCameraSeed.LAST_WALK_END_ZOOM, throttled = false, nowUptimeMillis = 10_000L)) {
+                vm.onCameraChanged(seed, MapCameraSeed.LAST_WALK_END_ZOOM)
+            }
+
+            assertEquals(listOf("m0", "m1", "m2"), vm.marks.value.map { it.markId })
+        }
+
+    // The water caption (P3 §7, P5 §6, A2)
+
+    /** iOS `testWaterAheadBorrowsTheCaptionLineAndNothingElse`, the caption's half; `HonorSessionTest` holds the rest. */
+    @Test
+    fun testWaterAheadBorrowsTheCaptionLineAndNothingElse() = runTest(dispatcher) {
+        startStageWalk(stageWay())
+        val vm = viewModel()
+        collectCards(vm)
+        vm.state.awaitValue { it?.session != null }
+
+        db.honorDao().insertNotice(waterNotice(refId = "wp-fuente", meters = 280.0, firedAt = clock.now()))
+
+        val caption = vm.sheet.awaitValue { it?.caption != null }!!.caption!!
+        assertEquals(
+            "water in ${WayRelation.distance(280.0, UnitSystem.Metric)}",
+            HonorCaptionCopy.text(context.resources, caption, UnitSystem.Metric),
+        )
+        assertNull("a mark is never a card", vm.cards.value?.place)
+    }
+
+    @Test
+    fun `after a UI restart a water caption shows for what is left of its 20 s`() = runTest(dispatcher) {
+        startStageWalk()
+        db.honorDao().insertNotice(waterNotice(refId = "m1", meters = 280.0, firedAt = clock.now()))
+        advanceTimeBy(15_000L)
+        val vm = viewModel()
+        collectCards(vm)
+
+        val shown = vm.sheet.awaitValue { it?.caption != null }!!.caption
+        advanceTimeBy(4_999L)
+        runCurrent()
+        val stillShown = vm.sheet.value!!.caption
+        advanceTimeBy(1L)
+        runCurrent()
+
+        assertEquals(HonorCaption.Water(280.0), shown)
+        assertEquals(HonorCaption.Water(280.0) to null, stillShown to vm.sheet.value!!.caption)
+    }
+
+    @Test
+    fun `a water caption whose 20 s ran out before a UI restart shows nothing`() = runTest(dispatcher) {
+        startStageWalk()
+        db.honorDao().insertNotice(waterNotice(refId = "m1", meters = 280.0, firedAt = clock.now()))
+        advanceTimeBy(20_000L)
+        val vm = viewModel()
+        collectCards(vm)
+
+        assertNull(vm.sheet.awaitValue { it != null }!!.caption)
+    }
+
+    @Test
+    fun `a wall clock set back before the water fired shows no caption`() = runTest(dispatcher) {
+        startStageWalk()
+        db.honorDao().insertNotice(waterNotice(refId = "m1", meters = 280.0, firedAt = clock.now() + 5_000L))
+        val vm = viewModel()
+        collectCards(vm)
+
+        assertNull(vm.sheet.awaitValue { it != null }!!.caption)
+    }
+
+    @Test
+    fun `a water caption that ran out while the screen was away is gone on its first frame back`() = runTest(dispatcher) {
+        startStageWalk()
+        val roomAnswers = MutableStateFlow(true)
+        val slowNotices = object : HonorDao by db.honorDao() {
+            override fun observeLatestNotice(walkId: Long): Flow<HonorNoticeEntity?> =
+                db.honorDao().observeLatestNotice(walkId).onStart { roomAnswers.first { it } }
+        }
+        val vm = viewModel(honorDao = slowNotices)
+        val screen = backgroundScope.launch { vm.sheet.collect {} }
+        db.honorDao().insertNotice(waterNotice(refId = "m1", meters = 280.0, firedAt = clock.now()))
+        vm.sheet.awaitValue { it?.caption != null }
+
+        // Locked past the 5 s grace and the 20 s: the sheet keeps what it last held.
+        screen.cancel()
+        advanceTimeBy(60_000L)
+        runCurrent()
+        val kept = vm.sheet.value?.caption
+        // Back, with Room not yet answering the notice query again.
+        roomAnswers.value = false
+        backgroundScope.launch { vm.sheet.collect {} }
+        runCurrent()
+
+        assertEquals(HonorCaption.Water(280.0) to null, kept to vm.sheet.value?.caption)
+    }
+
+    @Test
+    fun `water reads in the walker's unit, where the off-way caption is always metres`() {
+        val resources = context.resources
+
+        assertEquals("water in 280 m", HonorCaptionCopy.text(resources, HonorCaption.Water(280.0), UnitSystem.Metric))
+        assertEquals("water in 0.2 mi", HonorCaptionCopy.text(resources, HonorCaption.Water(280.0), UnitSystem.Imperial))
+        assertEquals("water in 492 ft", HonorCaptionCopy.text(resources, HonorCaption.Water(150.0), UnitSystem.Imperial))
+        assertEquals("off the way · 250 m", HonorCaptionCopy.text(resources, HonorCaption.OffWay(250L), UnitSystem.Imperial))
+    }
+
+    @Test
+    fun `a water distance that isn't a number reads 0 m`() {
+        assertEquals("water in 0 m", HonorCaptionCopy.text(context.resources, HonorCaption.Water(Double.NaN), UnitSystem.Metric))
+    }
+
+    // The stage's cards and arrival (P5 §7, §8)
+
+    @Test
+    fun testAPinDrawsAtItsOwnCoordinateWhileTheTriggerStaysOnTheLine() {
+        val way = stageWay()
+        val pin = wayPins(way, heardVoiceIds = emptySet()).firstOrNull { it.momentId == "wp-orisson" }
+        assertEquals("drawn at `pin`", 0.0002, pin?.at?.lat ?: 0.0, 1e-9)
+        assertEquals("triggered on the line", 0.0, way.moments[0].at?.lat)
+    }
+
+    // E-16 (pilgrim-ios #123, matched): the pin stands at `pin`, up to 1.2 km
+    // off in the live data, while the card measures and flies to `at`.
+    @Test
+    fun `a stage card measures to and flies to its trail point, not its pin`() = runTest(dispatcher) {
+        val stage = stageWay()
+        startStageWalk(stage, rows = listOf(reachedAt("wp-orisson", at = T0)))
+        walkerAt(0.0)
+        val vm = viewModel()
+        backgroundScope.launch { vm.state.collect {} }
+        collectCards(vm)
+        val card = vm.cards.awaitValue { it?.place != null }!!.place!!
+
+        vm.flyTo(card.moment)
+
+        val trail = stage.moments.single().at!!
+        assertEquals(wgs84MidLatitudeMeters(0.0, 0.0, trail.lat, trail.lon), card.distanceMeters!!, 1e-9)
+        assertEquals(trail, vm.focus.value)
+    }
+
+    @Test
+    fun testTheArrivalCardForAStageNamesTheStageAndCarriesNoDelta() {
+        val resources = context.resources
+        val card = HonorArrivalSummary(
+            wayTitle = "Saint-Jean-Pied-de-Port to Roncesvalles",
+            voicesHeard = 0, placesPassed = 3,
+            stageName = "Saint-Jean-Pied-de-Port to Roncesvalles",
+            distanceWalkedMeters = 24_200.0,
+        )
+        assertEquals("you walked the stage", HonorArrivalCopy.title(resources, card))
+        assertTrue(HonorArrivalCopy.line(resources, card, UnitSystem.Metric).contains("3 places passed"))
+        assertTrue(
+            HonorArrivalCopy.line(resources, card, UnitSystem.Metric)
+                .contains(StageFormat.distance(24_200.0, UnitSystem.Metric)),
+        )
+
+        val sharedWalk = HonorArrivalSummary(
+            wayTitle = "Rúa do Franco → Obradoiro", voicesHeard = 2,
+            placesPassed = 1, stageName = null, distanceWalkedMeters = 900.0,
+        )
+        assertEquals("you walked their way", HonorArrivalCopy.title(resources, sharedWalk))
+    }
+
+    @Test
+    fun testTheArrivalCardAppendsTheStagesClosingLine() {
+        val card = HonorArrivalSummary(
+            wayTitle = "t", voicesHeard = 0, placesPassed = 2,
+            stageName = "Saint-Jean-Pied-de-Port to Roncesvalles",
+            distanceWalkedMeters = 24_200.0,
+            closing = "You crossed a border on foot.",
+        )
+        assertEquals("You crossed a border on foot.", card.closing)
+        assertEquals("you walked the stage", HonorArrivalCopy.title(context.resources, card))
+    }
+
+    @Test
+    fun `after a restart a stage's arrival card reads the stage, the metres frozen at arrival, and its closing line`() =
+        runTest(dispatcher) {
+            val stage = stageWay()
+            startStageWalk(
+                stage,
+                session = { it.copy(phase = HonorPhase.ARRIVED, arrivalWalkedMeters = 987.6) },
+                rows = listOf(reachedAt("wp-orisson", at = T0)),
+            )
+            val vm = viewModel()
+            collectCards(vm)
+
+            val arrival = vm.cards.awaitValue { it?.arrival != null }!!.arrival
+
+            assertEquals(
+                HonorArrivalSummary(
+                    wayTitle = "Saint-Jean-Pied-de-Port to Roncesvalles",
+                    voicesHeard = 0,
+                    placesPassed = 1,
+                    stageName = "Saint-Jean-Pied-de-Port to Roncesvalles",
+                    distanceWalkedMeters = 987.6,
+                    closing = "You crossed a border on foot.",
+                ),
+                arrival,
+            )
+        }
+
+    @Test
+    fun `a stage's arrival card offers your reply when its closing line has one on the phone`() = runTest(dispatcher) {
+        val stage = stageWay()
+        store.save(stage)
+        presentFile("recordings/reflection.wav")
+        store.setReply(stage.id, originN = HonorPersistence.STAGE_REFLECTION_ORIGIN, relativePath = "recordings/reflection.wav")
+        startStageWalk(stage, session = { it.copy(phase = HonorPhase.ARRIVED) })
+        val vm = viewModel()
+        collectCards(vm)
+
+        assertTrue(vm.cards.awaitValue { it?.hasStageReply == true }!!.hasStageReply)
+    }
+
+    @Test
+    fun `a reply to the closing line filed while the arrival card is up offers your reply at once`() = runTest(dispatcher) {
+        val stage = stageWay()
+        store.save(stage)
+        startStageWalk(stage, session = { it.copy(phase = HonorPhase.ARRIVED) })
+        val vm = viewModel()
+        collectCards(vm)
+        val before = vm.cards.awaitValue { it?.arrival != null }!!.hasStageReply
+        replies.arm(walkId = liveWalkId, wayId = stage.id, momentId = HonorPersistence.STAGE_REFLECTION_MOMENT_ID)
+        presentFile("recordings/reflection.wav")
+
+        replies.fileIfPending(
+            VoiceRecording(
+                walkId = liveWalkId, startTimestamp = T0, endTimestamp = T0 + 5_000L, durationMillis = 5_000L,
+                fileRelativePath = "recordings/reflection.wav",
+            ),
+        )
+
+        assertEquals(false to true, before to vm.cards.awaitValue { it?.hasStageReply == true }!!.hasStageReply)
+    }
+
+    @Test
+    fun `an earlier reflection reply whose recording is gone offers none`() = runTest(dispatcher) {
+        val stage = stageWay()
+        store.save(stage)
+        store.setReply(stage.id, originN = HonorPersistence.STAGE_REFLECTION_ORIGIN, relativePath = "recordings/deleted.wav")
+        startStageWalk(stage, session = { it.copy(phase = HonorPhase.ARRIVED) })
+        val vm = viewModel()
+        collectCards(vm)
+
+        assertFalse(vm.cards.awaitValue { it?.arrival != null }!!.hasStageReply)
+    }
+
+    @Test
+    fun `a reply armed to the closing line is the one the walk is recording`() = runTest(dispatcher) {
+        val stage = stageWay()
+        store.save(stage)
+        startStageWalk(stage, session = { it.copy(phase = HonorPhase.ARRIVED) })
+        val vm = viewModel()
+        collectCards(vm)
+        vm.cards.awaitValue { it?.arrival != null }
+
+        replies.arm(walkId = liveWalkId, wayId = stage.id, momentId = HonorPersistence.STAGE_REFLECTION_MOMENT_ID)
+
+        assertEquals(HonorPersistence.STAGE_REFLECTION_MOMENT_ID, vm.replyingToMomentId.awaitValue { it != null })
+    }
+
     // ---- Harness ----------------------------------------------------------
+
+    /**
+     * iOS `stageWayWithMarks()` (`ActiveWalkHonorTests+MarkPins.swift@7c200bf`):
+     * three water marks 100 m apart along the equatorial kilometre, carried
+     * by a pilgrimage stage.
+     */
+    private fun stageWayWithMarks() = Way(
+        id = STAGE_WAY_ID,
+        source = WaySource.Pilgrimage(routeId = "camino-frances", stageIndex = 0),
+        title = "Stage one",
+        departedAt = Instant.ofEpochSecond(1_000_000),
+        tzIdentifier = null,
+        expires = null,
+        route = stageRoute,
+        totalDistanceMeters = 1000.0,
+        theirActiveSeconds = 600.0,
+        moments = emptyList(),
+        weather = null,
+        marks = (0 until 3).map { i ->
+            WayMark(
+                id = "m$i", kind = WayMarkKind.WATER, name = "fuente $i",
+                at = WayCoordinate(lat = 0.0, lon = i * 0.000898), frac = i / 10.0, offLineMeters = 5.0,
+            )
+        },
+        stage = WayStage(
+            routeId = "camino-frances", index = 0, count = 33, name = "Stage one",
+            theme = "Initiation", narrative = "n", closing = "c", warnings = emptyList(),
+            distanceKm = 1.0, gainMeters = 0.0, hours = WayStageHours(min = 1.0, max = 2.0), difficulty = "easy",
+            start = WayStagePlace(name = "here", at = WayCoordinate(lat = 0.0, lon = 0.0)),
+            end = WayStagePlace(name = "there", at = WayCoordinate(lat = 0.0, lon = 0.00898)),
+        ),
+    )
+
+    /**
+     * iOS `PilgrimageStageWalkTests.stageWay(index:)`: the same kilometre,
+     * with one waypoint at 0.3 that carries words, names, a sitting and a
+     * pin, on the Pyrenees stage.
+     */
+    private fun stageWay() = Way(
+        id = STAGE_WAY_ID,
+        source = WaySource.Pilgrimage(routeId = "camino-frances", stageIndex = 0),
+        title = "Saint-Jean-Pied-de-Port to Roncesvalles",
+        departedAt = Instant.ofEpochSecond(1_000_000),
+        tzIdentifier = "Europe/Madrid",
+        expires = null,
+        route = stageRoute,
+        totalDistanceMeters = 1000.0,
+        theirActiveSeconds = 600.0,
+        moments = listOf(
+            WayMoment(
+                id = "wp-orisson",
+                frac = 0.3,
+                at = WayCoordinate(lat = 0.0, lon = 300.0 / 111_320),
+                kind = WayMomentKind.Waypoint(label = "Vierge d'Orisson", icon = "building.columns"),
+                text = "A shepherd carried this Madonna up from Lourdes.",
+                names = mapOf("eu" to "Orissongo Ama Birjina", "fr" to "Vierge d'Orisson"),
+                sitMinutes = 5,
+                pin = WayCoordinate(lat = 0.0002, lon = 300.0 / 111_320),
+            ),
+        ),
+        weather = null,
+        marks = emptyList(),
+        stage = WayStage(
+            routeId = "camino-frances", index = 0, count = 33,
+            name = "Saint-Jean-Pied-de-Port to Roncesvalles", theme = "Initiation",
+            narrative = "The Pyrenees are the first question the way asks.",
+            closing = "You crossed a border on foot.",
+            warnings = listOf("The Napoleon Route closes in winter."),
+            distanceKm = 24.2, gainMeters = 1419.0, hours = WayStageHours(min = 7.0, max = 9.0), difficulty = "hard",
+            start = WayStagePlace(name = "Saint-Jean-Pied-de-Port", at = WayCoordinate(lat = 0.0, lon = 0.0)),
+            end = WayStagePlace(name = "Roncesvalles", at = WayCoordinate(lat = 0.0, lon = 0.00898)),
+        ),
+    )
+
+    private val stageRoute = (0..10).map { WayPoint(lat = 0.0, lon = it * 0.000898, alt = null, t = it * 60.0) }
+
+    /** A stage walk in progress, its session naming the stage, as Start writes it. */
+    private suspend fun startStageWalk(
+        way: Way = stageWayWithMarks(),
+        session: (HonorSessionEntity) -> HonorSessionEntity = { it },
+        rows: List<HonorMomentStateEntity> = emptyList(),
+        uuid: String = LIVE_UUID,
+    ) = startLiveWalk(
+        way = way,
+        session = { session(it.copy(wayId = way.id, sourceKind = HonorSourceKind.PILGRIMAGE, voicesEnabled = false)) },
+        rows = rows,
+        uuid = uuid,
+    )
+
+    /** The walk's latest recorded fix, as `:tracker` records it. */
+    private fun walkerAt(lon: Double) {
+        controller.state.value = WalkState.Active(accumulator().copy(lastLocation = fixAt(lat = 0.0, lon = lon)))
+    }
+
+    /** [meters] east of the origin on the equator, where a degree of longitude is the WGS84 semi-major axis's. */
+    private fun east(meters: Double) = WayCoordinate(lat = 0.0, lon = meters / (6_378_137.0 * Math.PI / 180))
+
+    /** Every list of marks the screen is handed, the initial empty one first. */
+    private fun TestScope.recordMarks(vm: HonorWalkViewModel): List<List<WayMarkPin>> {
+        val published = mutableListOf<List<WayMarkPin>>()
+        backgroundScope.launch { vm.marks.collect { published += it } }
+        return published
+    }
+
+    /** `:tracker`'s water notice, as it writes it before the haptic. */
+    private fun waterNotice(refId: String, meters: Double, firedAt: Long) = HonorNoticeEntity(
+        walkId = liveWalkId, kind = HonorNoticeKind.WATER, refId = refId, meters = meters, firedAt = firedAt,
+    )
 
     private suspend fun startPlayingVoiceOne() {
         presentVoices()
@@ -1165,9 +1748,10 @@ class HonorWalkViewModelTest {
         honorEnabled: Boolean = true,
         send: (HonorCommand) -> Unit = { sentCommands += it },
         stageHandoff: HonorStageHandoff = HonorStageHandoff(),
+        honorDao: HonorDao = db.honorDao(),
     ) = HonorWalkViewModel(
         controller = controller,
-        honorDao = db.honorDao(),
+        honorDao = honorDao,
         repository = repository,
         wayStore = store,
         ownWalkWays = OwnWalkWays(repository, VoiceRecordingFileSystem(context), dispatcher, { UTC }, { Locale.US }),
@@ -1231,10 +1815,11 @@ class HonorWalkViewModelTest {
         way: Way? = way(),
         session: (HonorSessionEntity) -> HonorSessionEntity = { it },
         rows: List<HonorMomentStateEntity> = emptyList(),
+        uuid: String = LIVE_UUID,
     ) {
         liveStartedAt = clock.now()
-        liveWalkId = db.walkDao().insert(Walk(uuid = LIVE_UUID, startTimestamp = liveStartedAt))
-        way?.let { store.stage(LIVE_UUID, it) }
+        liveWalkId = db.walkDao().insert(Walk(uuid = uuid, startTimestamp = liveStartedAt))
+        way?.let { store.stage(uuid, it) }
         db.honorDao().insertSession(
             session(
                 HonorSessionEntity(
@@ -1367,8 +1952,10 @@ class HonorWalkViewModelTest {
         const val T0 = 1_700_100_000_000L
         const val SOURCE_UUID = "0e8d6f8a-5b1c-4f1e-9a53-2f1d8c7b6a50"
         const val LIVE_UUID = "7f3c2a10-9d4e-4b8a-8c1f-5e6d7a8b9c0d"
+        const val NEXT_UUID = "2b9e4c61-0a7d-4f35-b8e2-6c1d9f0a3e47"
         const val OWN_WAY_ID = "walk:$SOURCE_UUID"
         const val SHARE_WAY_ID = "share:AbCdEf1234"
+        const val STAGE_WAY_ID = "pilgrimage:camino-frances:0"
         val UTC: ZoneId = ZoneId.of("UTC")
         val REST_PLACE = WayCoordinate(lat = 0.0001, lon = 0.004)
     }

@@ -103,7 +103,10 @@ import org.walktalkmeditate.pilgrim.ui.walk.map.HonorWayLine
 import org.walktalkmeditate.pilgrim.ui.walk.map.HonorWayRenderer
 import org.walktalkmeditate.pilgrim.ui.walk.map.MapTapTarget
 import org.walktalkmeditate.pilgrim.ui.walk.map.MapboxHonorWayStyle
+import org.walktalkmeditate.pilgrim.ui.walk.map.CameraReportThrottle
 import org.walktalkmeditate.pilgrim.ui.walk.map.WayMapPin
+import org.walktalkmeditate.pilgrim.ui.walk.map.WayMarkMapPin
+import org.walktalkmeditate.pilgrim.ui.walk.map.WayPinLayer
 import org.walktalkmeditate.pilgrim.ui.walk.map.nearestTapTarget
 import org.walktalkmeditate.pilgrim.ui.walk.map.MapGlyphBitmaps
 import org.walktalkmeditate.pilgrim.ui.walk.map.MapboxCameraFitSurface
@@ -205,6 +208,13 @@ internal fun PilgrimMap(
     honorWay: HonorWayLine? = null,
     wayPins: List<WayMapPin> = emptyList(),
     onWayPinTap: (momentId: String) -> Unit = {},
+    // A stage's service marks (pilgrimage-stage spec P5 §5): in the Way
+    // pin manager's one layer, before the moment pins (owner decision 9),
+    // and never a tap target.
+    wayMarks: List<WayMarkMapPin> = emptyList(),
+    // iOS `onCameraChanged` (P5 §4): the camera's centre and raw zoom, as
+    // the report throttle lets them through. Null subscribes to nothing.
+    onCameraChanged: ((center: WayCoordinate, zoom: Double) -> Unit)? = null,
     // The companion (E §3): where the Way's walker stood at this walk's
     // active time. Null draws none.
     companion: WayCoordinate? = null,
@@ -369,13 +379,15 @@ internal fun PilgrimMap(
         mutableStateOf<List<Any?>?>(null)
     }
     var proximityManager by remember { mutableStateOf<PointAnnotationManager?>(null) }
-    // Created on the first pass that has Way pins, after every other
-    // manager, so the pins draw on top (manager creation order is z-order).
-    // It takes no taps of its own: the map's tap finds the pin on the ground.
+    // Created on the first pass that has Way pins or marks, after every
+    // other manager, so they draw on top (manager creation order is
+    // z-order). It takes no taps of its own: the map's tap finds the pin on
+    // the ground.
     var wayPinManager by remember { mutableStateOf<PointAnnotationManager?>(null) }
-    var renderedWayPins by remember { mutableStateOf<List<WayMapPin>?>(null) }
+    var renderedWayPins by remember { mutableStateOf<WayPinLayer?>(null) }
+    val wayPinLayer = remember(wayMarks, wayPins) { WayPinLayer(marks = wayMarks, moments = wayPins) }
     val onWayPinTapState = rememberUpdatedState(onWayPinTap)
-    val wayPinsState = rememberUpdatedState(wayPins)
+    val wayPinLayerState = rememberUpdatedState(wayPinLayer)
     val proximityPinsState = rememberUpdatedState(proximityPins)
     var renderedProximityKey by remember {
         mutableStateOf<List<Any?>?>(null)
@@ -512,13 +524,53 @@ internal fun PilgrimMap(
         val listener = OnMapClickListener { point ->
             val tap = WayCoordinate(lat = point.latitude(), lon = point.longitude())
             val others = proximityPinsState.value.map { MapTapTarget(null, WayCoordinate(it.latitude, it.longitude)) }
-            val ways = wayPinsState.value.map { MapTapTarget(it.momentId, WayCoordinate(it.latitude, it.longitude)) }
-            val momentId = nearestTapTarget(tap, others + ways)?.wayMomentId ?: return@OnMapClickListener false
+            val targets = wayPinLayerState.value.tapTargets(others)
+            val momentId = nearestTapTarget(tap, targets)?.wayMomentId ?: return@OnMapClickListener false
             onWayPinTapState.value(momentId)
             true
         }
         view.gestures.addOnMapClickListener(listener)
         onDispose { view.gestures.removeOnMapClickListener(listener) }
+    }
+    // One-shot: seed the camera exactly once, on whichever composition
+    // first has a seed AND fewer than two route points. The follow
+    // viewport drives the camera from there.
+    var didSeedCamera by remember { mutableStateOf(false) }
+    // The camera report (P5 §4), only for a screen that reads it: the walk
+    // of a Way with marks, and the overview. It keeps apart from the seek's
+    // camera subscriptions, which only a seek holds. The throttle lives as
+    // long as the map, through style reloads, as iOS's coordinator keeps it,
+    // and the callbacks come on the main thread, where the readers keep
+    // their state.
+    val onCameraChangedState = rememberUpdatedState(onCameraChanged)
+    val hasCameraReport = onCameraChanged != null
+    val cameraReportThrottle = remember(mapView) { CameraReportThrottle() }
+    DisposableEffect(mapView, hasCameraReport) {
+        val view = mapView
+        if (view == null || !hasCameraReport) return@DisposableEffect onDispose {}
+        val report: (Boolean) -> Unit = { throttled ->
+            val camera = view.mapboxMap.cameraState
+            val center = WayCoordinate(lat = camera.center.latitude(), lon = camera.center.longitude())
+            val now = android.os.SystemClock.uptimeMillis()
+            if (cameraReportThrottle.report(center, camera.zoom, throttled, now)) {
+                onCameraChangedState.value?.invoke(center, camera.zoom)
+            }
+        }
+        val cameraSub = view.mapboxMap.subscribeCameraChanged { report(true) }
+        // A gesture's last frame can land inside the throttle window; idle
+        // skips the window, but not the level-or-200 m rule.
+        val idleSub = view.mapboxMap.subscribeMapIdle { report(false) }
+        // The walk's seed can land before its Way loads and these listeners
+        // come. Its camera is reported once now, as idle would report it, so
+        // it reaches the marks as iOS's always-listening map's report does
+        // (P5 §2: a zoom-14 seed draws them before Start). Mapbox's default
+        // camera, before any seed, isn't reported: no screen chose it, and
+        // its level would make a zoom-16 seed draw marks iOS doesn't.
+        if (didSeedCamera) report(false)
+        onDispose {
+            cameraSub.cancel()
+            idleSub.cancel()
+        }
     }
     val annotationBitmaps = remember(walkAnnotationColors, darkMode) {
         walkAnnotationColors?.let { colors ->
@@ -545,10 +597,6 @@ internal fun PilgrimMap(
     // the AndroidView update lambda can render the placeholder bitmap
     // immediately and swap in the real thumbnail when ready.
     val photoPinBitmaps = rememberPhotoPinBitmaps(walkAnnotations, darkMode)
-    // One-shot: seed the camera exactly once, on whichever composition
-    // first has a seed AND fewer than two route points. The follow
-    // viewport drives the camera from there.
-    var didSeedCamera by remember { mutableStateOf(false) }
     // Fade the AndroidView in once the Mapbox style has loaded. First
     // style-load on a cold MapView is visually chunky (black flash
     // while tiles fetch); fading from 0 → 1 when `loadStyle` invokes
@@ -1429,13 +1477,13 @@ internal fun PilgrimMap(
                 pulse = seekPulse,
                 reduceMotion = reduceMotion,
             )
-            if (wayPins.isNotEmpty() && wayPinManager == null) {
+            if (!wayPinLayer.isEmpty && wayPinManager == null) {
                 wayPinManager = view.annotations.createPointAnnotationManager().also(::allowIconOverlap)
             }
             val wayMgr = wayPinManager
-            if (wayMgr != null && renderedWayPins != wayPins) {
+            if (wayMgr != null && renderedWayPins != wayPinLayer) {
                 wayMgr.deleteAll()
-                wayPins.forEach { pin ->
+                wayPinLayer.points.forEach { pin ->
                     wayMgr.create(
                         PointAnnotationOptions()
                             .withPoint(Point.fromLngLat(pin.longitude, pin.latitude))
@@ -1443,7 +1491,7 @@ internal fun PilgrimMap(
                             .withIconSize(1.0),
                     )
                 }
-                renderedWayPins = wayPins
+                renderedWayPins = wayPinLayer
             }
         },
         onRelease = { view ->

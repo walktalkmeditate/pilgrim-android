@@ -234,13 +234,25 @@ const val COMMAND_CONFIRM_WINDOW_MILLIS = 3_000L
 fun PendingVoiceCommand?.heldOver(persisted: HonorVoiceView, nowMillis: Long): PendingVoiceCommand? =
     this?.takeIf { it.baseline == persisted && nowMillis < it.sentAtMillis + COMMAND_CONFIRM_WINDOW_MILLIS }
 
-/** What the arrival card counts (iOS `HonorArrivalCard`, own walk and shared). */
+/** What the arrival card counts (iOS `HonorArrivalCard`, `ActiveWalkViewModel+Honor.swift:16-36@7c200bf`). */
 @Immutable
 data class HonorArrivalSummary(
     val wayTitle: String,
     val voicesHeard: Int,
     val placesPassed: Int,
-)
+    /** A pilgrimage stage's name; the card then speaks of the stage rather than of another walker. */
+    val stageName: String? = null,
+    /**
+     * The engine's along-Way metres at the instant arrival fired, frozen in
+     * Room beside the arrival's numbers (pilgrimage-stage spec P5 §8.2, A4);
+     * only a stage's card shows them.
+     */
+    val distanceWalkedMeters: Double = 0.0,
+    /** The stage's closing line; a Way that isn't a stage has none. */
+    val closing: String? = null,
+) {
+    val isStage: Boolean get() = stageName != null
+}
 
 object HonorArrival {
 
@@ -250,9 +262,15 @@ object HonorArrival {
      * to the player (a failed start included, a missing file never), and
      * every place the engine reached (not pin taps). Here the rows say when
      * each happened, so what came after [arrivedAtMillis] is left out; with
-     * the arrival's time unknown, everything counts.
+     * the arrival's time unknown, everything counts. A stage adds its name,
+     * its closing line, and [walkedMeters], the engine's credit at arrival.
      */
-    fun summary(way: Way, rows: List<HonorMomentStateEntity>, arrivedAtMillis: Long?): HonorArrivalSummary {
+    fun summary(
+        way: Way,
+        rows: List<HonorMomentStateEntity>,
+        arrivedAtMillis: Long?,
+        walkedMeters: Double = 0.0,
+    ): HonorArrivalSummary {
         val (voices, places) = way.moments.partition { it.isVoice }
         val voiceIds = voices.mapTo(mutableSetOf()) { it.id }
         val placeIds = places.mapTo(mutableSetOf()) { it.id }
@@ -261,6 +279,9 @@ object HonorArrival {
             wayTitle = way.title,
             voicesHeard = rows.count { it.momentId in voiceIds && it.heard && before(it.voiceStartedAt) },
             placesPassed = rows.count { it.momentId in placeIds && before(it.reachedAt) },
+            stageName = way.stage?.name,
+            distanceWalkedMeters = walkedMeters,
+            closing = way.stage?.closing,
         )
     }
 }

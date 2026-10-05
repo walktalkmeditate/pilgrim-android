@@ -69,6 +69,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import java.util.Locale
@@ -78,6 +79,7 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
 import org.walktalkmeditate.pilgrim.domain.honor.WayMoment
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.ui.recordings.WaveformBar
@@ -176,11 +178,13 @@ fun WayPlaceCard(
             )
             is WayMomentKind.Meditation -> SitRow(kind.minutes, actions)
             is WayMomentKind.Waypoint -> Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.small)) {
+                // The dataset may send 600 characters; the card doesn't scroll, so it shows what fits.
                 Text(
                     text = WayMomentCopy.placeCopy(LocalResources.current, card.moment, isStage = card.isStage),
                     style = pilgrimType.caption,
                     color = pilgrimColors.fog,
                     maxLines = PLACE_COPY_LINES,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 card.moment.sitMinutes?.takeIf { it > 0 }?.let { SitRow(it, actions) }
             }
@@ -192,7 +196,9 @@ fun WayPlaceCard(
  * iOS `HonorCardHost` (`ActiveWalkView+Honor.swift:52-111@7c200bf`, parity
  * spec E §7): the arrival card while it is up, else the top place card,
  * each card with state of its own (iOS `.id(moment.id)`).
- * [actionsFor] builds the controls of the card on top.
+ * [actionsFor] builds the controls of the card on top; [stageReplyActions]
+ * the reply to a stage's closing line on its arrival card, which shows it
+ * recording while the reply the walk takes is the reflection's.
  */
 @Composable
 fun HonorCardLayer(
@@ -203,11 +209,24 @@ fun HonorCardLayer(
     actionsFor: (WayMoment) -> WayPlaceCardActions,
     onContinue: () -> Unit,
     modifier: Modifier = Modifier,
+    stageReplyActions: StageReplyActions? = null,
 ) {
     val arrival = cards.arrival
     val place = cards.place
     when {
-        arrival != null -> HonorArrivalCard(summary = arrival, onContinue = onContinue, modifier = modifier)
+        arrival != null -> HonorArrivalCard(
+            summary = arrival,
+            units = units,
+            onContinue = onContinue,
+            modifier = modifier,
+            stageReply = stageReplyActions?.takeIf { arrival.isStage }?.let { actions ->
+                StageReplyRow(
+                    hasReply = cards.hasStageReply,
+                    isRecording = isRecording && replyingToMomentId == HonorPersistence.STAGE_REFLECTION_MOMENT_ID,
+                    actions = actions,
+                )
+            },
+        )
         place != null -> key(place.moment.id) {
             WayPlaceCard(
                 card = place,
@@ -573,12 +592,12 @@ private val SWIPE_FADE_DISTANCE = 240.dp
 private const val MAX_SWIPE_FADE = 0.6f
 private const val SPRING_BACK_MS = 200
 private val CARD_CORNER = 12.dp
-private val TAP_TARGET = 44.dp
+internal val TAP_TARGET = 44.dp
 
 /** The SF symbol sizes the fonts give iOS's glyphs: body 17, caption 12, displayMedium 28. */
 private val GLYPH_BODY = 17.dp
-private val GLYPH_CAPTION = 12.dp
-private val GLYPH_DISPLAY = 28.dp
+internal val GLYPH_CAPTION = 12.dp
+internal val GLYPH_DISPLAY = 28.dp
 private val WAVEFORM_HEIGHT = 28.dp
 private val WAVEFORM_BAR_HEIGHT = 32.dp
 private val CARD_PHOTO_MAX_HEIGHT = 110.dp

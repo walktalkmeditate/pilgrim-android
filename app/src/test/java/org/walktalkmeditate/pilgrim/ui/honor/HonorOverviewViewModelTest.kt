@@ -937,6 +937,47 @@ class HonorOverviewViewModelTest {
             assertEquals(today, overview.todayWeather)
         }
 
+    // ---- A stage's service marks on the overview (pilgrimage-stage spec P5 §3) --
+
+    @Test
+    fun `a stage's overview draws no marks until its map first reports the camera`() = runTest(dispatcher) {
+        store.save(HonorHarness.stage())
+        val vm = overview(savedStateHandle = stageArgs())
+        ready(vm)
+        val beforeAnyReport = vm.markPins.value
+
+        vm.onCameraChanged(WayCoordinate(lat = 0.0, lon = 0.003), zoom = 15.0)
+
+        assertTrue("the overview opens fit to the whole Way, a zoom it never chose", beforeAnyReport.isEmpty())
+        assertEquals(listOf("wp-osm-water-node1", "wp-osm-water-node2"), vm.markPins.value.map { it.markId })
+    }
+
+    // Where the walk screen's marks follow the walker, the overview's follow the camera.
+    @Test
+    fun `every report chooses the overview's marks again around the camera, a pan at one zoom included`() =
+        runTest(dispatcher) {
+            store.save(HonorHarness.stage())
+            val vm = overview(savedStateHandle = stageArgs())
+            ready(vm)
+            vm.onCameraChanged(WayCoordinate(lat = 0.0, lon = 0.003), zoom = 15.0)
+            val first = vm.markPins.value.first().markId
+
+            vm.onCameraChanged(WayCoordinate(lat = 0.0, lon = 0.008), zoom = 15.0)
+
+            assertEquals("wp-osm-water-node1" to "wp-osm-water-node2", first to vm.markPins.value.first().markId)
+        }
+
+    @Test
+    fun `zoomed out below 13 the overview draws no marks`() = runTest(dispatcher) {
+        store.save(HonorHarness.stage())
+        val vm = overview(savedStateHandle = stageArgs())
+        ready(vm)
+
+        vm.onCameraChanged(WayCoordinate(lat = 0.0, lon = 0.003), zoom = 12.99)
+
+        assertTrue(vm.markPins.value.isEmpty())
+    }
+
     private fun stageArgs() = SavedStateHandle(mapOf(HonorOverviewViewModel.ARG_WAY_ID to HonorHarness.STAGE_ID))
 
     /**

@@ -91,12 +91,12 @@ import org.walktalkmeditate.pilgrim.walk.seek.SeekSessionStore
  * `testTheStageLineStandsWhereADateWould`, `testTheFactsLineReadsInTheWalkersOwnUnit`,
  * `testTheWeatherLineIsSilentWithoutASnapshot` and `testTheOfflineNoteIsSaidOnceAndOnlyForAStage`
  * (`HonorOverviewViewModelTest`), and `testTheLocalNameFollowsAFixedOrderAndNeverEchoesTheLabel`
- * and `testThePlaceCopyChangesForAStage` (`WayMomentCopyTest`).
- * Left for the units that build their surfaces:
- * U39's `testTheArrivalCardForAStageNamesTheStageAndCarriesNoDelta`,
+ * and `testThePlaceCopyChangesForAStage` (`WayMomentCopyTest`),
+ * `testTheArrivalCardForAStageNamesTheStageAndCarriesNoDelta`,
  * `testAPinDrawsAtItsOwnCoordinateWhileTheTriggerStaysOnTheLine`, the caption half of
  * `testWaterAheadBorrowsTheCaptionLineAndNothingElse`, and `+Replies`'
- * `testTheArrivalCardAppendsTheStagesClosingLine`; U40's
+ * `testTheArrivalCardAppendsTheStagesClosingLine` (`HonorWalkViewModelTest`).
+ * Left for the unit that builds its surfaces: U40's
  * `testTheSummaryForAStageReadsKilometresAndNoCompanionDelta`,
  * `testTheSummaryKickerDropsTheirStepsForAStage`,
  * `testTheWaysListNeitherShowsAnInstalledStageNorTakesItWithTheRest`, and `+Replies`'

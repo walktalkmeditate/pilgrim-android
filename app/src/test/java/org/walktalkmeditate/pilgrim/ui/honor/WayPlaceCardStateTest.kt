@@ -464,14 +464,14 @@ class WayPlaceCardStateTest {
 
     @Test
     fun `the arrival line counts voices then places`() {
-        val line = HonorArrivalCopy.line(resources, HonorArrivalSummary("a way", voicesHeard = 1, placesPassed = 3))
+        val line = HonorArrivalCopy.line(resources, HonorArrivalSummary("a way", voicesHeard = 1, placesPassed = 3), UnitSystem.Metric)
 
         assertEquals("one voice heard · 3 places passed", line)
     }
 
     @Test
     fun `with nothing heard or passed the arrival line is the whole way`() {
-        val line = HonorArrivalCopy.line(resources, HonorArrivalSummary("a way", voicesHeard = 0, placesPassed = 0))
+        val line = HonorArrivalCopy.line(resources, HonorArrivalSummary("a way", voicesHeard = 0, placesPassed = 0), UnitSystem.Metric)
 
         assertEquals("the whole way, in their steps", line)
     }
