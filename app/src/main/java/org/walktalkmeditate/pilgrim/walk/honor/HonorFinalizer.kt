@@ -10,6 +10,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.honor.HonorFinishKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
@@ -17,6 +18,7 @@ import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorWalkMarkerEntity
 import org.walktalkmeditate.pilgrim.data.honor.WayArrival
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.honor.WaySweeper
 
@@ -70,10 +72,29 @@ class HonorFinalizer internal constructor(
     private val ioDispatcher: CoroutineDispatcher,
     /** The UI process's expiry sweep; never resolved in `:tracker`, which never runs [runAtLaunch]. */
     private val expirySweep: suspend () -> Unit = {},
+    /**
+     * The pilgrimage packages' launch work ([PilgrimagePackageManager.runAtLaunch]):
+     * UI process only, as [expirySweep] is, and with the release flag off
+     * the manager isn't even built (pilgrimage-stage spec P2 §12, gaps 9 and 14).
+     */
+    private val packageLaunchWork: suspend () -> Unit = {},
 ) {
     @Inject
-    constructor(database: PilgrimDatabase, wayStore: WayStore, clock: Clock, waySweeper: Provider<WaySweeper>) :
-        this(database, wayStore, clock, Dispatchers.IO, expirySweep = { waySweeper.get().sweep() })
+    constructor(
+        database: PilgrimDatabase,
+        wayStore: WayStore,
+        clock: Clock,
+        waySweeper: Provider<WaySweeper>,
+        releaseFlags: ReleaseFlags,
+        packageManager: Provider<PilgrimagePackageManager>,
+    ) : this(
+        database,
+        wayStore,
+        clock,
+        Dispatchers.IO,
+        expirySweep = { waySweeper.get().sweep() },
+        packageLaunchWork = { if (releaseFlags.honor) packageManager.get().runAtLaunch() },
+    )
 
     /** The Honor step for one walk; throws only what Room throws, and cancellation. */
     suspend fun finalize(walkId: Long): HonorFinalizeOutcome = withContext(ioDispatcher) {
@@ -101,19 +122,22 @@ class HonorFinalizer internal constructor(
     /**
      * At launch, after recovery has finished any walk its process lost:
      * retries every Honor step still pending, sweeps staging no walk needs
-     * any more and the temp files killed writes left, then runs the expiry
-     * sweep, which so sees every link recovery and the retry could write
-     * (shared-walk spec correction 10: iOS races its recovery, a dated R5
-     * divergence). The expiry sweep runs whether or not the steps before it
-     * failed, as iOS's runs on every launch: a Way whose Honor step is
-     * still pending is held by its live session row either way. Never
-     * throws but for cancellation.
+     * any more and the temp files killed writes left, runs the pilgrimage
+     * packages' launch work, then the expiry sweep, which so sees every
+     * link recovery and the retry could write (shared-walk spec correction
+     * 10: iOS races its recovery, a dated R5 divergence). The package work
+     * comes after the pending steps, so a step's ledger record lands
+     * before anything retires a stage (P2 §12). Each later step runs
+     * whether or not the ones before it failed, as iOS's run on every
+     * launch: a Way whose Honor step is still pending is held by its live
+     * session row either way. Never throws but for cancellation.
      */
     suspend fun runAtLaunch() {
         deferringFailure("launch Honor maintenance") {
             finalizePending()
             sweepStaging()
         }
+        deferringFailure("launch pilgrimage packages", packageLaunchWork)
         deferringFailure("launch expiry sweep", expirySweep)
     }
 

@@ -639,6 +639,33 @@ class HonorLinkRouterTest {
         assertEquals(listOf(SECOND), asked)
     }
 
+    // The pilgrimage package guard reads the walk screen from here (pilgrimage-stage spec P2 §2).
+
+    @Test
+    fun `the package guard's walk screen is up while any nav host shows it, pre-Start included`() = runTest(dispatcher) {
+        val links = router()
+        val second = Any()
+        assertFalse("nothing reported yet", links.walkScreenUp)
+
+        links.at(Routes.PATH, Routes.ACTIVE_WALK)
+        assertTrue(links.walkScreenUp)
+        links.screenChanged(honorLinkScreen(listOf(Routes.PATH)), owner = second)
+        assertTrue("another Activity's host in front leaves this one's walk screen up", links.walkScreenUp)
+        links.screenGone(navHost)
+        assertFalse(links.walkScreenUp)
+        links.screenChanged(honorLinkScreen(listOf(Routes.PATH, Routes.ACTIVE_WALK, Routes.MEDITATION)), owner = second)
+        assertTrue("with anything over it", links.walkScreenUp)
+    }
+
+    @Test
+    fun `with the release flag off, the walk screen is never up for the package guard`() = runTest(dispatcher) {
+        val links = router(honorEnabled = false)
+
+        links.at(Routes.PATH, Routes.ACTIVE_WALK)
+
+        assertFalse(links.walkScreenUp)
+    }
+
     private fun link(id: String) = Intent(Intent.ACTION_VIEW, Uri.parse("https://honor.pilgrimapp.org/$id"))
 
     private fun way(shareId: String) = Way(

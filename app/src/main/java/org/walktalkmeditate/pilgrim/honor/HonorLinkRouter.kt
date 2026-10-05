@@ -104,6 +104,17 @@ class HonorLinkRouter internal constructor(
      */
     private val screens = LinkedHashMap<Any, HonorLinkScreen>()
     private val screen: HonorLinkScreen? get() = screens.values.lastOrNull()
+
+    @Volatile private var anyWalkScreenUp = false
+
+    /**
+     * Whether any live nav host shows the walk screen, pre-Start included:
+     * iOS's `isWalkActive` for the pilgrimage package guard (pilgrimage-stage
+     * spec P2 §2), which reads it off Main. Always false with the release
+     * flag off, when no screen is reported.
+     */
+    val walkScreenUp: Boolean get() = anyWalkScreenUp
+
     private var held: HeldLink? = null
     private var linkTapped = false
     private var routing: Job? = null
@@ -153,6 +164,7 @@ class HonorLinkRouter internal constructor(
         if (!honorEnabled) return
         val before = screens.remove(owner)
         screens[owner] = now
+        anyWalkScreenUp = screens.values.any { it.walkScreenUp }
         // iOS `startWalk`: the observation goes, the transfers stay, the state is left as it was.
         if (now.walkScreenUp && before?.walkScreenUp != true) imports.cancelImport()
         // iOS `chooseWay`: the sheet opens on no toast; its own model resets the import line.
@@ -167,6 +179,7 @@ class HonorLinkRouter internal constructor(
      */
     fun screenGone(owner: Any) {
         if (screens.remove(owner) == null) return
+        anyWalkScreenUp = screens.values.any { it.walkScreenUp }
         drainIfReady()
     }
 
