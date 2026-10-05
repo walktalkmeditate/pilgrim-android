@@ -67,13 +67,18 @@ data class StagingFolder(val walkUuid: String, val lastTouchedMillis: Long, val 
  * <base>/<way id>/.media-<path>.download.tmp   a media file still gathering (Android)
  * <base>/links/<walk uuid>.json   one WayLink per walk (Android)
  * <base>/staging/<walk uuid>/way.json   an own-walk Way while it is walked (Android)
+ * <base>/pilgrimage/replacing.txt                a Replace's swap marker
+ * <base>/pilgrimage/<route>/route.json           a downloaded route's package
+ * <base>/pilgrimage/<route>/release.txt          the release it is pinned to
+ * <base>/pilgrimage/<route>/ledger.json          the stages walked, kept through Remove
+ * <base>/pilgrimage/<route>/ledger.json.lock     the ledger's file lock (Android)
  * ```
  *
  * iOS keeps every link in one `index.json`, which one bad read followed by
  * a write empties (pilgrim-ios #107); here each walk's link is its own
- * file, so no write touches another walk's link. `links` and `staging`
- * are not valid Way ids, so [list] steps over them as iOS's steps over
- * `pilgrimage` and `index.json`.
+ * file, so no write touches another walk's link. `links`, `staging` and
+ * `pilgrimage` are not valid Way ids, so [list] steps over them as iOS's
+ * steps over `pilgrimage` and `index.json`.
  *
  * Plain blocking file I/O on the caller's thread, as iOS's store is:
  * callers hop to an IO dispatcher. Building the store touches no file
@@ -98,6 +103,7 @@ class WayStore(
     private val clock: Clock = Clock.System,
     private val syncDirectory: (File) -> Boolean = ::fsyncDirectoryBestEffort,
     private val allocatedBytes: (File) -> Long = ::allocatedBytesOf,
+    private val decodeWay: (String) -> Way = { WayJson.decode(it) },
 ) {
 
     val baseDirectory: File by lazy(resolveBaseDirectory)
@@ -110,8 +116,8 @@ class WayStore(
     private val heldPartials = HashMap<String, Int>()
 
     /**
-     * How many Ways this process has [delete]d. Files raise no
-     * invalidation, so a surface holding a Way's line re-reads on it.
+     * How many Ways this process has [delete]d, or swept or retired whole.
+     * Files raise no invalidation, so a surface holding a Way's line re-reads on it.
      */
     val deletions: StateFlow<Long> = deletionCount.asStateFlow()
 
@@ -144,12 +150,32 @@ class WayStore(
         return decodeOrNull { WayJson.decode(Accepted.serializer(), text).acceptedAt }
     }
 
-    /** Every readable Way, newest acceptance first; one never accepted sorts last. */
+    /**
+     * Every readable Way, newest acceptance first; one never accepted sorts
+     * last. A stage Way is stepped over before its `way.json` is read (P2
+     * A-11): iOS decodes every stage here, up to 50 MB of JSON on each
+     * opening of the Ways sheet, and every caller then drops it again.
+     * [stageWayIds] is the stages' own listing.
+     */
     fun list(): List<Way> {
         val names = baseDirectory.list().orEmpty()
-        return names.filter(::isValidId).mapNotNull(::load)
+        return names.filter { isValidId(it) && !isStageWayId(it) }.mapNotNull(::load)
             .sortedByDescending { acceptedAt(it.id) ?: Instant.MIN }
     }
+
+    /**
+     * Every stage Way with a `way.json` on disk, of every route, read
+     * without decoding: what Settings → Ways' footer counts (P2 §11, C-14).
+     * That includes the walked stages a Replace or Remove kept from routes
+     * no longer installed, as iOS's `all.count - ways.count` counts them
+     * (pilgrim-ios #120 item 6, matched as shipped). iOS counts only the
+     * stages that decode, so a stage whose `way.json` doesn't is counted
+     * here alone (A-11). Unsorted.
+     */
+    fun stageWayIds(): List<String> =
+        baseDirectory.list().orEmpty().filter { id ->
+            isValidId(id) && isStageWayId(id) && File(File(baseDirectory, id), WAY_FILE).isFile
+        }
 
     /** Removes the Way's folder and every walk's link to it (`WayStore.swift:123-129@7c200bf`). */
     fun delete(id: String) {
@@ -402,21 +428,72 @@ class WayStore(
         }
 
     /**
+     * Every downloaded route's folder, with the Replace marker beside them
+     * rather than inside one, so no route's removal can take it
+     * (`WayStore.swift:71-74@7c200bf`).
+     */
+    val pilgrimageRoot: File get() = File(baseDirectory, PILGRIMAGE_DIRECTORY)
+
+    /**
+     * A route's package folder, beside its stage Ways and never inside one,
+     * so Replace and Remove can take the stages and leave the ledger. Null
+     * for an id the slug rule refuses, before any path is built
+     * (`WayStore.swift:76-83@7c200bf`).
+     */
+    fun pilgrimageDirectory(routeId: String): File? =
+        if (isValidRouteId(routeId)) File(pilgrimageRoot, routeId) else null
+
+    /**
+     * Route ids with a package folder, in the file system's order, as
+     * iOS's are (`WayStore.swift:85-91@7c200bf`): a folder holding only its
+     * ledger is listed too, and the package manager decides what counts as
+     * installed. `replacing.txt` never passes the slug rule.
+     */
+    fun pilgrimageRouteIds(): List<String> = pilgrimageRoot.list().orEmpty().filter(::isValidRouteId)
+
+    fun routeFile(routeId: String): File? = pilgrimageDirectory(routeId)?.let { File(it, ROUTE_FILE) }
+
+    fun releaseFile(routeId: String): File? = pilgrimageDirectory(routeId)?.let { File(it, RELEASE_FILE) }
+
+    fun ledgerFile(routeId: String): File? = pilgrimageDirectory(routeId)?.let { File(it, LEDGER_FILE) }
+
+    /** The ledger's cross-process lock. Not a temp name, so [sweepTempFiles] never takes it. */
+    fun ledgerLockFile(routeId: String): File? = pilgrimageDirectory(routeId)?.let { File(it, LEDGER_LOCK_FILE) }
+
+    val replacingFile: File get() = File(pilgrimageRoot, REPLACING_FILE)
+
+    /**
+     * Writes one of the pilgrimage tree's own files ([routeFile],
+     * [releaseFile], [ledgerFile], [replacingFile]) the way every store
+     * write lands, making its folder first.
+     *
+     * @throws IllegalArgumentException for any other file.
+     * @throws IOException when the folder or the write fails.
+     */
+    fun writePilgrimageFile(file: File, bytes: ByteArray) {
+        require(isPilgrimageFile(file)) { NOT_A_PILGRIMAGE_FILE }
+        ensureDirectory(file.parentFile!!)
+        writeAtomically(file, bytes)
+    }
+
+    /**
      * Deletes the temp files a kill left behind once older than
      * [olderThanMillis] (a younger one may be another process's write in
      * flight): a write's between its create and its rename, in `links/`,
-     * each Way's folder, and each staging folder a walk still needs; and a
-     * media file still gathering in its Way's folder, unless a fetch holds
-     * it ([holdMediaPartial]): a gather resumed after a day offline keeps
-     * the bytes it is appending to. Staging folders no walk needs go
-     * whole, through [discardStaged].
+     * each Way's folder, each staging folder a walk still needs,
+     * `pilgrimage/` and each route's folder in it (the ledger's lock file is
+     * no temp, and stays); and a media file still gathering in its Way's
+     * folder, unless a fetch holds it ([holdMediaPartial]): a gather resumed
+     * after a day offline keeps the bytes it is appending to. Staging
+     * folders no walk needs go whole, through [discardStaged].
      *
      * @return how many were deleted.
      */
     fun sweepTempFiles(olderThanMillis: Long): Int {
-        val folders = listOf(linksDirectory) +
+        val folders = listOf(linksDirectory, pilgrimageRoot) +
             baseDirectory.list().orEmpty().filter(::isValidId).map { File(baseDirectory, it) } +
-            stagingRoot.list().orEmpty().filter(::isValidWalkUuid).map { File(stagingRoot, it) }
+            stagingRoot.list().orEmpty().filter(::isValidWalkUuid).map { File(stagingRoot, it) } +
+            pilgrimageRouteIds().map { File(pilgrimageRoot, it) }
         return synchronized(mediaLock) {
             folders.sumOf { folder ->
                 folder.listFiles().orEmpty().count { file ->
@@ -441,20 +518,49 @@ class WayStore(
      *   every sweep can cancel their gathers.
      */
     fun sweepExpired(now: Instant, held: Set<String>): List<String> {
-        val walked = linkFiles().mapNotNullTo(HashSet()) { readLink(it)?.wayId }
+        val walked = walkedWayIds()
         val touched = mutableListOf<String>()
         for (way in list()) {
             val expires = way.expires ?: continue
             if (expires.isAfter(now) || way.id in held) continue
-            if (way.id in walked) {
-                deleteMedia(way.id)
-            } else {
-                synchronized(mediaLock) { directory(way.id).deleteRecursively() }
-                deletionCount.update { it + 1 }
-            }
+            retire(way.id, walked)
             touched += way.id
         }
         return touched
+    }
+
+    /**
+     * iOS `retireMany(ids:)` (`WayStore.swift:212-235@7c200bf`): the expiry
+     * sweep's rule for the stages a route no longer carries. A walked id
+     * keeps `way.json`, `accepted.json`, its replies and its links, and
+     * loses only its media (a stage has none, so its folder stays whole);
+     * any other goes whole, under the media lock, counted in [deletions]
+     * (P2 A-10). Invalid ids are skipped, and no link file is written.
+     *
+     * Walked means a link file names it, or a live Honor session does
+     * ([liveSessionWayIds], P2 A-1): a stage whose walk still waits for its
+     * finalize keeps the `way.json` its link is about to name.
+     */
+    fun retireMany(ids: Iterable<String>, liveSessionWayIds: Set<String>) {
+        val walked = walkedWayIds().apply { addAll(liveSessionWayIds) }
+        for (id in ids) {
+            if (isValidId(id)) retire(id, walked)
+        }
+    }
+
+    private fun walkedWayIds(): MutableSet<String> = linkFiles().mapNotNullTo(HashSet()) { readLink(it)?.wayId }
+
+    /** iOS `retire(id:walked:)`, with Android's deletion count for a folder that went. */
+    private fun retire(id: String, walked: Set<String>) {
+        if (id in walked) {
+            deleteMedia(id)
+            return
+        }
+        val existed = synchronized(mediaLock) {
+            val dir = directory(id)
+            dir.exists().also { dir.deleteRecursively() }
+        }
+        if (existed) deletionCount.update { it + 1 }
     }
 
     private val linksDirectory: File get() = File(baseDirectory, LINKS_DIRECTORY)
@@ -491,7 +597,15 @@ class WayStore(
 
     private fun readWay(file: File): Way? {
         val text = readText(file) ?: return null
-        return decodeOrNull { WayJson.decode(text) }
+        return decodeOrNull { decodeWay(text) }
+    }
+
+    private fun isStageWayId(id: String): Boolean = id.startsWith(STAGE_ID_PREFIX)
+
+    private fun isPilgrimageFile(file: File): Boolean {
+        val folder = file.parentFile ?: return false
+        if (folder == pilgrimageRoot) return file.name == REPLACING_FILE
+        return folder.parentFile == pilgrimageRoot && isValidRouteId(folder.name) && file.name in PACKAGE_FILES
     }
 
     private fun readText(file: File): String? = try {
@@ -530,11 +644,13 @@ class WayStore(
      * The temp sits beside the target, so a missing folder fails the write
      * rather than creating it.
      */
-    private fun writeAtomically(target: File, text: String) {
+    private fun writeAtomically(target: File, text: String) = writeAtomically(target, text.toByteArray(Charsets.UTF_8))
+
+    private fun writeAtomically(target: File, bytes: ByteArray) {
         val temp = File(target.parentFile, ".${target.name}.${UUID.randomUUID()}$TEMP_SUFFIX")
         try {
             FileOutputStream(temp).use { out ->
-                out.write(text.toByteArray(Charsets.UTF_8))
+                out.write(bytes)
                 out.fd.sync()
             }
             try {
@@ -579,7 +695,7 @@ class WayStore(
         fun isValidRouteId(id: String): Boolean = ROUTE_ID.matches(id)
 
         /** A stage Way's id, the index in plain decimal (`WayStore.swift:67-69@7c200bf`). */
-        fun stageWayId(routeId: String, stageIndex: Int): String = "pilgrimage:$routeId:$stageIndex"
+        fun stageWayId(routeId: String, stageIndex: Int): String = "$STAGE_ID_PREFIX$routeId:$stageIndex"
 
         private val WAY_ID =
             Regex("share:[A-Za-z0-9_-]{10}|walk:[0-9A-Fa-f-]{36}|pilgrimage:[a-z0-9-]{1,64}:[0-9]{1,3}")
@@ -594,12 +710,21 @@ class WayStore(
         private const val MEDIA_DIRECTORY = "media"
         private const val LINKS_DIRECTORY = "links"
         private const val STAGING_DIRECTORY = "staging"
+        private const val PILGRIMAGE_DIRECTORY = "pilgrimage"
+        private const val STAGE_ID_PREFIX = "pilgrimage:"
+        private const val ROUTE_FILE = "route.json"
+        private const val RELEASE_FILE = "release.txt"
+        private const val LEDGER_FILE = "ledger.json"
+        private const val LEDGER_LOCK_FILE = "ledger.json.lock"
+        private const val REPLACING_FILE = "replacing.txt"
+        private val PACKAGE_FILES = setOf(ROUTE_FILE, RELEASE_FILE, LEDGER_FILE)
         private const val LINK_SUFFIX = ".json"
         private const val TEMP_SUFFIX = ".tmp"
         private const val PARTIAL_PREFIX = ".media-"
         private const val PARTIAL_SUFFIX = ".download$TEMP_SUFFIX"
         private const val INVALID_WAY_ID = "not a valid Way id"
         private const val INVALID_WALK_UUID = "not a valid walk uuid"
+        private const val NOT_A_PILGRIMAGE_FILE = "not one of the pilgrimage tree's files"
     }
 }
 
