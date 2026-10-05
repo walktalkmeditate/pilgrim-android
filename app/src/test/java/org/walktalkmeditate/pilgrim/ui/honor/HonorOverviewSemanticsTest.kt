@@ -29,6 +29,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
 import java.time.Instant
 import org.junit.Assert.assertEquals
@@ -39,17 +40,22 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.honor.WayError
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.honor.VoiceKind
 import org.walktalkmeditate.pilgrim.domain.honor.Way
+import org.walktalkmeditate.pilgrim.domain.honor.WayCoordinate
 import org.walktalkmeditate.pilgrim.domain.honor.WayMedia
 import org.walktalkmeditate.pilgrim.domain.honor.WayMoment
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.domain.honor.WayPoint
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
+import org.walktalkmeditate.pilgrim.domain.honor.WayStage
+import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
+import org.walktalkmeditate.pilgrim.domain.honor.WayStagePlace
 import org.walktalkmeditate.pilgrim.domain.honor.WayWeather
 import org.walktalkmeditate.pilgrim.honor.HonorImportState
 import org.walktalkmeditate.pilgrim.honor.HonorStartRefusal
@@ -491,6 +497,82 @@ class HonorOverviewSemanticsTest {
         composeRule.onAllNodesWithContentDescription("Enlarge photo").assertCountEquals(0)
     }
 
+    // Pilgrimage-stage spec P4 §8: no hour on a stage, the local name under
+    // the kicker in the full header too, and the stage's own place copy.
+    @Test
+    fun `a stage waypoint's preview reads along the stage, its local name, and a place on the way`() {
+        val way = stageWay(text = null)
+        show {
+            WayMomentPreviewContent(
+                way = way,
+                moment = way.moments.single(),
+                units = UnitSystem.Metric,
+                voice = null,
+                photoUri = null,
+                onTogglePlay = {},
+                onCycleSpeed = {},
+                onSeek = {},
+            )
+        }
+
+        composeRule.onNodeWithText("Vierge d'Orisson").assertIsDisplayed()
+        composeRule.onNodeWithText("Orissongo Ama Birjina").assertIsDisplayed()
+        composeRule.onNodeWithText("0.3 km along the stage").assertIsDisplayed()
+        composeRule.onNodeWithText("A place on the way.").assertIsDisplayed()
+        composeRule.onNodeWithText("When you walk it, the way will offer you 5 minutes of sitting here.").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("building columns").assertIsDisplayed()
+    }
+
+    @Test
+    fun `a stage waypoint's preview reads the dataset's own words when it has them`() {
+        val way = stageWay(text = "A shepherd carried this Madonna up from Lourdes.")
+        show {
+            WayMomentPreviewContent(
+                way = way,
+                moment = way.moments.single(),
+                units = UnitSystem.Metric,
+                voice = null,
+                photoUri = null,
+                onTogglePlay = {},
+                onCycleSpeed = {},
+                onSeek = {},
+            )
+        }
+
+        composeRule.onNodeWithText("A shepherd carried this Madonna up from Lourdes.").assertIsDisplayed()
+        composeRule.onAllNodesWithText("A place on the way.").assertCountEquals(0)
+    }
+
+    // Pilgrimage-stage spec P5 §5.6, C6: the dataset's icons, not a pin, read by their symbols' names.
+    @Test
+    fun `a stage's lodge, seal, columns and book headers wear their own glyphs`() {
+        val way = stageWay(text = null)
+        val moments = listOf("house.lodge", "seal", "building.columns", "book.closed").mapIndexed { i, icon ->
+            WayMoment(id = "wp-$i", frac = 0.1, at = null, kind = WayMomentKind.Waypoint(label = "a place", icon = icon))
+        }
+        show { Column { moments.forEach { WayMomentHeader(way = way, moment = it, units = UnitSystem.Metric) } } }
+
+        listOf("house lodge", "seal", "building columns", "book closed")
+            .forEach { composeRule.onNodeWithContentDescription(it).assertExists() }
+        composeRule.onAllNodesWithContentDescription("mappin").assertCountEquals(0)
+    }
+
+    // iOS `.lineLimit(1)` (`WayMomentHeader.swift:25-30@7c200bf`) cuts the name's end with "…".
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `a local name too long for its line ends in an ellipsis`() {
+        val name = "Catedral de Santa María la Real de Pamplona, Iglesia Catedral Metropolitana"
+        val way = stageWay(text = null)
+        val moment = way.moments.single().copy(names = mapOf("es" to name))
+        show { Box(Modifier.size(240.dp, 400.dp)) { WayMomentHeader(way = way, moment = moment, units = UnitSystem.Metric) } }
+
+        val layouts = mutableListOf<TextLayoutResult>()
+        composeRule.onNodeWithText(name).fetchSemanticsNode()
+            .config[SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts)
+
+        assertTrue(layouts.single().isLineEllipsized(0))
+    }
+
     // §17.6 — the moment preview.
 
     @Test
@@ -639,6 +721,41 @@ class HonorOverviewSemanticsTest {
             media = WayMedia.Recording("r.wav"),
         ),
         transcript = "the bridge where we stopped.",
+    )
+
+    /** iOS's `stageWay()`: a 1 km stage with the Orisson waypoint at 0.3, its names and a sitting. */
+    private fun stageWay(text: String?) = Way(
+        id = "pilgrimage:camino-frances:0",
+        source = WaySource.Pilgrimage(routeId = "camino-frances", stageIndex = 0),
+        title = "Saint-Jean-Pied-de-Port to Roncesvalles",
+        departedAt = Instant.ofEpochSecond(1_000_000),
+        tzIdentifier = "Europe/Madrid",
+        expires = null,
+        route = (0..10).map { WayPoint(lat = 0.0, lon = it * 0.000898, alt = null, t = it * 60.0) },
+        totalDistanceMeters = 1000.0,
+        theirActiveSeconds = 600.0,
+        moments = listOf(
+            WayMoment(
+                id = "wp-orisson",
+                frac = 0.3,
+                at = WayCoordinate(lat = 0.0, lon = 300.0 / 111_320),
+                kind = WayMomentKind.Waypoint(label = "Vierge d'Orisson", icon = "building.columns"),
+                text = text,
+                names = mapOf("eu" to "Orissongo Ama Birjina", "fr" to "Vierge d'Orisson"),
+                sitMinutes = 5,
+            ),
+        ),
+        weather = null,
+        marks = emptyList(),
+        stage = WayStage(
+            routeId = "camino-frances", index = 0, count = 33,
+            name = "Saint-Jean-Pied-de-Port to Roncesvalles", theme = "Initiation",
+            narrative = "The Pyrenees are the first question the way asks.",
+            closing = "You crossed a border on foot.", warnings = emptyList(),
+            distanceKm = 24.2, gainMeters = 1419.0, hours = WayStageHours(7.0, 9.0), difficulty = "hard",
+            start = WayStagePlace("Saint-Jean-Pied-de-Port", WayCoordinate(0.0, 0.0)),
+            end = WayStagePlace("Roncesvalles", WayCoordinate(0.0, 0.00898)),
+        ),
     )
 
     /** A share as the importer builds one: a voice with its street, a photo, file media not on the phone. */

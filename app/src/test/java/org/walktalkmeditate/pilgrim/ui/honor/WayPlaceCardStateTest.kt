@@ -546,7 +546,7 @@ class WayPlaceCardStateTest {
     fun `a shared waypoint's body is A place they marked`() {
         val moment = WayMoment("waypoint-1", 0.3, null, WayMomentKind.Waypoint(label = "", icon = "mappin"))
 
-        assertEquals("A place they marked.", WayMomentCopy.placeCopy(resources, moment))
+        assertEquals("A place they marked.", WayMomentCopy.placeCopy(resources, moment, isStage = false))
     }
 
     @Test

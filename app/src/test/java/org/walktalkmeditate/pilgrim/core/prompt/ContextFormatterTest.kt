@@ -340,6 +340,13 @@ class ContextFormatterTest {
         assertEquals("Weather: Sunny, 70°F, humidity 65%, gentle breeze", result)
     }
 
+    // iOS formats through `WeatherSnapshot.formatTemperature` (`ContextFormatter.swift:129@7c200bf`): `%.0f`, half to even.
+    @Test
+    fun `formatWeather rounds a tie to the even neighbour as iOS prints it`() {
+        val walk = sampleWalk(condition = "clear", temp = 10.5)
+        assertEquals("Weather: Sunny, 10°C", ContextFormatter.formatWeather(walk, sampleWeatherLabel, imperial = false))
+    }
+
     private fun sampleWalk(
         condition: String?,
         temp: Double?,

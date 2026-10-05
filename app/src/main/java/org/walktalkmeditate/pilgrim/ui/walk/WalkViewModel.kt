@@ -59,7 +59,9 @@ import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.weather.WeatherCondition
 import org.walktalkmeditate.pilgrim.data.weather.WeatherFetching
+import org.walktalkmeditate.pilgrim.data.weather.WeatherSnapshot
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.walk.ActivityWindow
@@ -170,6 +172,21 @@ class WalkViewModel @Inject constructor(
         MutableStateFlow<org.walktalkmeditate.pilgrim.data.weather.WeatherSnapshot?>(null)
     val activeWeather: StateFlow<org.walktalkmeditate.pilgrim.data.weather.WeatherSnapshot?> =
         _activeWeather.asStateFlow()
+
+    /**
+     * "the day"'s weather on a pilgrimage stage (pilgrimage-stage spec P4
+     * §7.3, P5 §10): the walk's own snapshot, as iOS's card reads
+     * `viewModel.weatherSnapshot`, so nothing before Start or before the
+     * fetch lands. Once a UI restart has lost the snapshot, the walk row's
+     * stored weather stands in (P4 A-6); iOS has one process.
+     */
+    val stageDayWeather: StateFlow<WeatherSnapshot?> = combine(
+        _activeWeather,
+        controller.state.map { inProgressWalkIdOrNull(it) }.distinctUntilChanged().flatMapLatest { walkId ->
+            if (walkId == null) flowOf<WeatherSnapshot?>(null) else flow { emit(storedWeather(repository.getWalk(walkId))) }
+        },
+    ) { live, stored -> live ?: stored }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS), null)
 
     /**
      * iOS parity `ActiveWalkView.swift:735-764@db4196e` — celestial
@@ -1283,6 +1300,22 @@ class WalkViewModel @Inject constructor(
         is WalkState.Paused -> state.walk.walkId
         is WalkState.Meditating -> state.walk.walkId
         is WalkState.Finished -> state.walk.walkId
+    }
+
+    /** A finished walk is the pre-walk screen's past, not the walk on screen. */
+    private fun inProgressWalkIdOrNull(state: WalkState): Long? =
+        if (state is WalkState.Finished) null else walkIdOrNull(state)
+
+    /** The snapshot [fetchAndPersistWeather] wrote to the walk row, read back; null until it has. */
+    private fun storedWeather(walk: Walk?): WeatherSnapshot? {
+        val condition = WeatherCondition.fromRawValue(walk?.weatherCondition) ?: return null
+        val temperature = walk?.weatherTemperature ?: return null
+        return WeatherSnapshot(
+            condition = condition,
+            temperatureCelsius = temperature,
+            humidityFraction = walk.weatherHumidity,
+            windSpeedMps = walk.weatherWindSpeed,
+        )
     }
 
     init {

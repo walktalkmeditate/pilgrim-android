@@ -405,6 +405,23 @@ class HonorWayRendererTest {
         assertEquals(WayGlyph.Waypoint("mappin"), unheard[2].glyph)
     }
 
+    // Pilgrimage-stage spec P5 §5.6, C6: 470 of the live dataset's 505 stage
+    // moments wear one of these four, which iOS draws and Android once drew as a pin.
+    @Test
+    fun `a stage's lodge, seal, columns and book pins wear their own glyphs, in stone`() {
+        val icons = listOf("house.lodge", "seal", "building.columns", "book.closed", "eye")
+        val moments = icons.mapIndexed { i, icon ->
+            WayMoment(id = "wp-$i", frac = 0.1 * (i + 1), at = null, kind = WayMomentKind.Waypoint("a place", icon))
+        }
+
+        val pins = wayPins(way(moments), heardVoiceIds = emptySet())
+
+        assertEquals(icons.map { WayGlyph.Waypoint(it) }, pins.map { it.glyph })
+        assertTrue(pins.all { it.tint == WayPinTint.STONE })
+        assertEquals(icons.map { WayGlyph.Waypoint(it) }, moments.map(WayGlyph::header))
+        assertEquals(listOf("house.lodge", "seal", "building.columns", "book.closed"), STAGE_MOMENT_ICON_KEYS)
+    }
+
     // ---- The map tap ------------------------------------------------------------
 
     /** 0.0001° of longitude at the equator is 11.13 m. */

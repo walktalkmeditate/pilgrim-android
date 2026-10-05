@@ -29,6 +29,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
@@ -1339,6 +1340,61 @@ class WalkViewModelTest {
         val walk = repository.getWalk(walkId)
         assertNull(walk?.weatherCondition)
         assertEquals(1, fakeWeather.callCount.get())
+    }
+
+    // --- Phase 21 U38: "the day"'s weather (pilgrimage-stage spec P4 §7.3, A-6) ---
+
+    @Test
+    fun `the day reads nothing before Start, then the walk's own weather once its fetch lands`() = runTest(dispatcher) {
+        val vm = newViewModelWithWeather(FakeWeatherFetching(snapshot = stubSnapshot), lastKnown = stubLastKnown)
+        backgroundScope.launch { vm.stageDayWeather.collect {} }
+        runCurrent()
+        assertNull("before Start", vm.stageDayWeather.value)
+
+        vm.startWalk()
+        runCurrent()
+        assertNull("before the walk's fetch lands", vm.stageDayWeather.value)
+        advanceTimeBy(2_001L)
+        runCurrent()
+
+        assertEquals(stubSnapshot, vm.stageDayWeather.value)
+        vm.viewModelScope.coroutineContext[Job]!!.cancelAndJoin()
+    }
+
+    @Test
+    fun `after a UI restart the day reads the weather the walk row kept`() = runTest(dispatcher) {
+        val first = newViewModelWithWeather(FakeWeatherFetching(snapshot = stubSnapshot), lastKnown = stubLastKnown)
+        first.startWalk()
+        runCurrent()
+        advanceTimeBy(2_001L)
+        runCurrent()
+        first.viewModelScope.coroutineContext[Job]!!.cancelAndJoin()
+
+        val restarted = newViewModelWithWeather(FakeWeatherFetching(), lastKnown = null)
+        backgroundScope.launch { restarted.stageDayWeather.collect {} }
+        runCurrent()
+
+        assertNull("the in-memory snapshot is gone", restarted.activeWeather.value)
+        assertEquals(stubSnapshot, restarted.stageDayWeather.value)
+        restarted.viewModelScope.coroutineContext[Job]!!.cancelAndJoin()
+    }
+
+    @Test
+    fun `a finished walk's weather is never the next walk's day`() = runTest(dispatcher) {
+        val vm = newViewModelWithWeather(FakeWeatherFetching(snapshot = stubSnapshot), lastKnown = stubLastKnown)
+        backgroundScope.launch { vm.stageDayWeather.collect {} }
+        vm.startWalk()
+        runCurrent()
+        advanceTimeBy(2_001L)
+        runCurrent()
+        assertEquals(stubSnapshot, vm.stageDayWeather.value)
+
+        clock.advanceTo(5_000L)
+        controller.finishWalk()
+        runCurrent()
+
+        assertNull(vm.stageDayWeather.value)
+        vm.viewModelScope.coroutineContext[Job]!!.cancelAndJoin()
     }
 
     private fun newViewModelWithWeather(

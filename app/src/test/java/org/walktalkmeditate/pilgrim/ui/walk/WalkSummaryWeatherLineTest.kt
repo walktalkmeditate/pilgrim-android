@@ -5,6 +5,7 @@ import android.app.Application
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -42,7 +43,28 @@ class WalkSummaryWeatherLineTest {
                 )
             }
         }
-        composeRule.onNodeWithText("Light rain, 13°C").assertIsDisplayed()
+        composeRule.onNodeWithText("Light rain, 12°C").assertIsDisplayed()
+    }
+
+    // iOS `String(format: "%.0f°C")` (`WeatherService.swift:61-66@7c200bf`):
+    // a tie goes to the even neighbour and a negative zero keeps its sign,
+    // as macOS printf prints them.
+    @Test
+    fun aTieRoundsToTheEvenNeighbourAsIosPrintsIt() {
+        assertEquals("8°C", formatTemperature(8.5, imperial = false))
+        assertEquals("10°C", formatTemperature(9.5, imperial = false))
+        assertEquals("10°C", formatTemperature(10.5, imperial = false))
+        assertEquals("-2°C", formatTemperature(-2.5, imperial = false))
+    }
+
+    @Test
+    fun aNegativeTieAtZeroPrintsMinusZero() {
+        assertEquals("-0°C", formatTemperature(-0.5, imperial = false))
+    }
+
+    @Test
+    fun aFahrenheitTieRoundsToTheEvenNeighbour() {
+        assertEquals("36°F", formatTemperature(2.5, imperial = true))
     }
 
     @Test
@@ -60,7 +82,7 @@ class WalkSummaryWeatherLineTest {
     }
 
     @Test
-    fun rendersImperialConversionRoundsHalfUp() {
+    fun rendersImperialConversionExactly() {
         // 25°C → 77°F exactly (25 * 9/5 + 32 = 77.0). Pins the
         // multiplication-then-add ordering matches iOS
         // `WeatherSnapshot.formatTemperature(_:imperial:)`.

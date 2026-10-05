@@ -87,12 +87,13 @@ import org.walktalkmeditate.pilgrim.walk.seek.SeekSessionStore
  * (`HonorEngineTest`, with its row twin in `HonorSessionTest`),
  * `testAStageWalksWithNoCompanionAndNoSoftTap` and `testAnOwnWalkWayKeepsItsCompanion`
  * (`BeginHonorWalkTest`), and the "nothing else" half of
- * `testWaterAheadBorrowsTheCaptionLineAndNothingElse` (`HonorSessionTest`).
- * Left for the units that build their surfaces: U38's
+ * `testWaterAheadBorrowsTheCaptionLineAndNothingElse` (`HonorSessionTest`),
  * `testTheStageLineStandsWhereADateWould`, `testTheFactsLineReadsInTheWalkersOwnUnit`,
- * `testTheWeatherLineIsSilentWithoutASnapshot` and `testTheOfflineNoteIsSaidOnceAndOnlyForAStage`;
+ * `testTheWeatherLineIsSilentWithoutASnapshot` and `testTheOfflineNoteIsSaidOnceAndOnlyForAStage`
+ * (`HonorOverviewViewModelTest`), and `testTheLocalNameFollowsAFixedOrderAndNeverEchoesTheLabel`
+ * and `testThePlaceCopyChangesForAStage` (`WayMomentCopyTest`).
+ * Left for the units that build their surfaces:
  * U39's `testTheArrivalCardForAStageNamesTheStageAndCarriesNoDelta`,
- * `testTheLocalNameFollowsAFixedOrderAndNeverEchoesTheLabel`, `testThePlaceCopyChangesForAStage`,
  * `testAPinDrawsAtItsOwnCoordinateWhileTheTriggerStaysOnTheLine`, the caption half of
  * `testWaterAheadBorrowsTheCaptionLineAndNothingElse`, and `+Replies`'
  * `testTheArrivalCardAppendsTheStagesClosingLine`; U40's

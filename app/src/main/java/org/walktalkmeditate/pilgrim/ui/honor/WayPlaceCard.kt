@@ -177,7 +177,7 @@ fun WayPlaceCard(
             is WayMomentKind.Meditation -> SitRow(kind.minutes, actions)
             is WayMomentKind.Waypoint -> Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.small)) {
                 Text(
-                    text = WayMomentCopy.placeCopy(LocalResources.current, card.moment),
+                    text = WayMomentCopy.placeCopy(LocalResources.current, card.moment, isStage = card.isStage),
                     style = pilgrimType.caption,
                     color = pilgrimColors.fog,
                     maxLines = PLACE_COPY_LINES,

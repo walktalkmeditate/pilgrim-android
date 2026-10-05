@@ -46,6 +46,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -88,11 +89,15 @@ import org.walktalkmeditate.pilgrim.domain.walkModeOrNull
 import org.walktalkmeditate.pilgrim.domain.seek.SeekEnginePhase
 import org.walktalkmeditate.pilgrim.ui.seek.SeekDurationSheet
 import org.walktalkmeditate.pilgrim.ui.seek.SeekGatewayOverlay
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.data.weather.WeatherSnapshot
 import org.walktalkmeditate.pilgrim.honor.HonorStartRefusal
 import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.ui.honor.HonorAlert
 import org.walktalkmeditate.pilgrim.ui.honor.HonorCardLayer
 import org.walktalkmeditate.pilgrim.ui.honor.WayPlaceCardActions
+import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.StageMorningCard
+import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.StageMorningCardAction
 import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupCancelReason
 import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupStage
 import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupViewModel
@@ -432,6 +437,9 @@ fun ActiveWalkScreen(
     // success haptic + failure banner.
     var showWhisperSheet by rememberSaveable { mutableStateOf(false) }
     var showStoneSheet by rememberSaveable { mutableStateOf(false) }
+    // iOS `showStageDay` (`ActiveWalkView.swift:297-320@7c200bf`): a
+    // stage's morning card again, from the options sheet's "the day".
+    var showStageDay by rememberSaveable { mutableStateOf(false) }
     val whispersPlacedThisWalk by viewModel.whispersPlacedThisWalk.collectAsStateWithLifecycle()
     val isWhisperUnlocked by viewModel.isWhisperUnlocked.collectAsStateWithLifecycle()
     val canPlaceWhisper by viewModel.canPlaceWhisper.collectAsStateWithLifecycle()
@@ -550,16 +558,11 @@ fun ActiveWalkScreen(
     val hemisphere = LocalPilgrimHemisphere.current
     val activeTurning = remember(hemisphere) { turningMarkerForToday().forHemisphere(hemisphere) }
     var showTurningCard by rememberSaveable { mutableStateOf(false) }
-    // Composition-scoped scope for the 300ms sheet handoff delay
-    // (D9). Tied to the screen's composition lifetime — cancels on
-    // back-pop / discard so a pending handoff doesn't surface a sheet
-    // after the user has left the screen. `handoffJob` tracks the
-    // single in-flight delay so a re-tap during the 300ms window
-    // cancels the prior handoff (no double-sheet-pop on re-tap).
+    // The options sheet's 300 ms hand-off to the next sheet (D9), on a
+    // composition-scoped scope so a back-pop drops one still waiting; a
+    // walk leaving Active or Paused drops it too (see [SheetHandoff]).
     val handoffScope = rememberCoroutineScope()
-    val handoffJob = remember {
-        androidx.compose.runtime.mutableStateOf<kotlinx.coroutines.Job?>(null)
-    }
+    val sheetHandoff = remember(handoffScope) { SheetHandoff(handoffScope) }
     // iOS parity (`ActiveWalkView.swift:362-379@v1.6.0`): the
     // auto-intention prompt opens the SAME pre-walk intention sheet
     // the manual "Set Intention" ellipsis row opens
@@ -634,11 +637,13 @@ fun ActiveWalkScreen(
             // follow the same rule — they must NOT survive a walk-ending
             // transition since their onPlace callbacks fire
             // viewModel.placeX on a now-Finished walk.
+            sheetHandoff.cancel()
             showOptions = false
             showWaypointMarking = false
             showTurningCard = false
             showWhisperSheet = false
             showStoneSheet = false
+            showStageDay = false
         }
         if (state !is WalkState.Idle && showPreWalkIntention) {
             showPreWalkIntention = false
@@ -1037,21 +1042,13 @@ fun ActiveWalkScreen(
                     // present animations don't fight. Android's overlay
                     // system doesn't strictly need this (single overlay
                     // layer), but the user-perceived rhythm matches.
-                    handoffJob.value?.cancel()
-                    handoffJob.value = handoffScope.launch {
-                        kotlinx.coroutines.delay(SHEET_HANDOFF_DELAY_MS)
-                        showPreWalkIntention = true
-                    }
+                    sheetHandoff.open { showPreWalkIntention = true }
                 },
                 waypointCount = waypointCount,
                 canDropWaypoint = activeWalk?.lastLocation != null,
                 onDropWaypoint = {
                     showOptions = false
-                    handoffJob.value?.cancel()
-                    handoffJob.value = handoffScope.launch {
-                        kotlinx.coroutines.delay(SHEET_HANDOFF_DELAY_MS)
-                        showWaypointMarking = true
-                    }
+                    sheetHandoff.open { showWaypointMarking = true }
                 },
                 onDismiss = { showOptions = false },
                 isWhisperUnlocked = isWhisperUnlocked,
@@ -1059,22 +1056,14 @@ fun ActiveWalkScreen(
                 whispersRemaining = (7 - whispersPlacedThisWalk).coerceAtLeast(0),
                 onLeaveWhisper = {
                     showOptions = false
-                    handoffJob.value?.cancel()
-                    handoffJob.value = handoffScope.launch {
-                        kotlinx.coroutines.delay(SHEET_HANDOFF_DELAY_MS)
-                        showWhisperSheet = true
-                    }
+                    sheetHandoff.open { showWhisperSheet = true }
                 },
                 isStoneUnlocked = isStoneUnlocked,
                 canPlaceStone = canPlaceStone,
                 stonePlaced = stonePlacedThisWalk,
                 onPlaceStone = {
                     showOptions = false
-                    handoffJob.value?.cancel()
-                    handoffJob.value = handoffScope.launch {
-                        kotlinx.coroutines.delay(SHEET_HANDOFF_DELAY_MS)
-                        showStoneSheet = true
-                    }
+                    sheetHandoff.open { showStoneSheet = true }
                 },
                 soundscapeName = soundscapeName,
                 isSoundscapePlaying = soundscapeEnabled,
@@ -1098,6 +1087,23 @@ fun ActiveWalkScreen(
                     showOptions = false
                     seekWalkViewModel.seekAnewRequested()
                 },
+                // "the day" (pilgrimage-stage spec P5 §10, C12, C13): the
+                // walk's own stage, before Start too, handed from this
+                // sheet to the morning card as Set Intention hands off.
+                stageDay = honor?.way?.stage,
+                onOpenStageDay = {
+                    showOptions = false
+                    sheetHandoff.open { showStageDay = true }
+                },
+            )
+        }
+        if (showStageDay) {
+            val stageDayWeather by viewModel.stageDayWeather.collectAsStateWithLifecycle()
+            StageDaySheet(
+                honor = honor,
+                weather = stageDayWeather,
+                units = distanceUnits,
+                onClose = { showStageDay = false },
             )
         }
         if (showWhisperSheet) {
@@ -1402,6 +1408,39 @@ fun ActiveWalkScreen(
 
 /** A card's "reply here", held while the microphone permission is asked. */
 private data class ReplyRequest(val walkId: Long, val wayId: String, val momentId: String)
+
+/**
+ * "the day" (`ActiveWalkView.swift:312-320@7c200bf`, pilgrimage-stage spec
+ * P5 §10, gap 12): the morning card over the walk screen, with the Way's
+ * own stage, the walk's [weather], no maps line, and "close", which only
+ * closes it. As iOS's `if let stage = viewModel.way?.stage`, a Way that
+ * loads with no stage block shows nothing and closes; one still loading
+ * after a restore shows nothing yet.
+ */
+@Composable
+internal fun StageDaySheet(
+    honor: HonorWalkUiState?,
+    weather: WeatherSnapshot?,
+    units: UnitSystem,
+    onClose: () -> Unit,
+) {
+    val stage = honor?.way?.stage
+    val wayLoaded = honor != null
+    val close by rememberUpdatedState(onClose)
+    LaunchedEffect(wayLoaded, stage) {
+        if (wayLoaded && stage == null) close()
+    }
+    stage ?: return
+    StageMorningCard(
+        stage = stage,
+        weather = weather,
+        units = units,
+        mapsLine = null,
+        action = StageMorningCardAction.CLOSE,
+        onAction = onClose,
+        onDismiss = onClose,
+    )
+}
 
 /** The sheet's measured height, or its detent's before the first measure. */
 private fun honorSheetInset(measuredSheetHeightPx: Int, sheetInsetDp: Dp, density: Density): Dp =

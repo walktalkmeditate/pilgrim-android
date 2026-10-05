@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.honor
 
 import android.content.res.Resources
+import androidx.annotation.StringRes
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
@@ -130,6 +131,16 @@ object HonorOverviewModel {
         }
         return resources.getString(R.string.honor_overview_from_start, distance)
     }
+
+    /**
+     * iOS `offlineNote(isStage:isConnected:alreadyShown:)` (`HonorOverviewView.swift:48-51@7c200bf`,
+     * pilgrimage-stage spec P4 §6.4): a stage opened offline says, once per
+     * install, that its map tiles need a connection. Null otherwise; a shared
+     * walk offline has a different problem, its voices.
+     */
+    @StringRes
+    fun offlineNote(isStage: Boolean, isConnected: Boolean, alreadyShown: Boolean): Int? =
+        if (isStage && !isConnected && !alreadyShown) R.string.honor_overview_offline_note else null
 
     /** One straight-line probe from the phone's last fix to the Way's first point, by iOS's `CLLocation.distance`. */
     fun distanceToStartMeters(here: LocationPoint, way: Way): Double? {

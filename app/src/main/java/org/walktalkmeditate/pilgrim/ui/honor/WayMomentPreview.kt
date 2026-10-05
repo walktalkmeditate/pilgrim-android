@@ -142,7 +142,7 @@ fun WayMomentPreviewContent(
                 Caption(stringResource(R.string.honor_moment_photo_caption))
             }
             is WayMomentKind.Waypoint -> Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.small)) {
-                Body(WayMomentCopy.placeCopy(resources, moment))
+                Body(WayMomentCopy.placeCopy(resources, moment, isStage = way.isPilgrimageStage))
                 val sitMinutes = moment.sitMinutes
                 if (sitMinutes != null && sitMinutes > 0) {
                     Caption(stringResource(R.string.honor_moment_waypoint_sit_offer, count(sitMinutes)))

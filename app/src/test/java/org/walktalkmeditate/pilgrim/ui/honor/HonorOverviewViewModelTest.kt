@@ -8,6 +8,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import androidx.test.core.app.ApplicationProvider
 import java.io.File
+import java.io.IOException
 import java.time.Instant
 import java.time.ZoneId
 import java.util.Locale
@@ -36,6 +37,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -43,6 +45,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.audio.FakeVoicePlaybackController
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
@@ -51,6 +54,8 @@ import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.honor.FakeHonorPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.honor.FakeWayMediaDownloadScheduler
+import org.walktalkmeditate.pilgrim.data.honor.HonorPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.honor.InternetConnectionProbe
 import org.walktalkmeditate.pilgrim.data.honor.WayMediaReport
 import org.walktalkmeditate.pilgrim.data.honor.WayMediaWork
 import org.walktalkmeditate.pilgrim.data.honor.WayError
@@ -64,9 +69,14 @@ import org.walktalkmeditate.pilgrim.data.weather.WeatherCondition
 import org.walktalkmeditate.pilgrim.data.weather.WeatherSnapshot
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.honor.Way
+import org.walktalkmeditate.pilgrim.domain.honor.WayCoordinate
+import org.walktalkmeditate.pilgrim.domain.honor.WayMoment
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.domain.honor.WayPoint
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
+import org.walktalkmeditate.pilgrim.domain.honor.WayStage
+import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
+import org.walktalkmeditate.pilgrim.domain.honor.WayStagePlace
 import org.walktalkmeditate.pilgrim.domain.honor.WayWeather
 import org.walktalkmeditate.pilgrim.honor.HonorImportCoordinator
 import org.walktalkmeditate.pilgrim.honor.HonorImportState
@@ -75,6 +85,8 @@ import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.honor.OwnWalkWays
 import org.walktalkmeditate.pilgrim.honor.WayMediaDownloader
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
+import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.StageFormat
+import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.StageMorningCardModel
 import org.walktalkmeditate.pilgrim.ui.recordings.WaveformCache
 import org.walktalkmeditate.pilgrim.ui.walk.map.CameraFitDecision
 import org.walktalkmeditate.pilgrim.ui.walk.map.CameraFitPaddingDp
@@ -82,7 +94,12 @@ import org.walktalkmeditate.pilgrim.ui.walk.map.decideCameraFit
 import org.walktalkmeditate.pilgrim.ui.walk.summary.MapCameraBounds
 import org.walktalkmeditate.pilgrim.walk.honor.HonorHarness
 
-/** The overview's Way, lines, framing inputs, toggle, and preview player (parity spec F §8–§14). */
+/**
+ * The overview's Way, lines, framing inputs, toggle, and preview player
+ * (parity spec F §8–§14), and a pilgrimage stage's branches: its stage
+ * line, today's whole weather, and the once-ever offline note
+ * (pilgrimage-stage spec P4 §6).
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -186,10 +203,11 @@ class HonorOverviewViewModelTest {
         walkId: Long = sourceId,
         location: FakeLocationSource = FakeLocationSource(),
         weather: FakeWeatherFetching = FakeWeatherFetching(),
-        preferences: FakeHonorPreferencesRepository = FakeHonorPreferencesRepository(),
+        preferences: HonorPreferencesRepository = FakeHonorPreferencesRepository(),
         playback: FakeVoicePlaybackController = FakeVoicePlaybackController(),
         savedStateHandle: SavedStateHandle = SavedStateHandle(mapOf(HonorOverviewViewModel.ARG_SOURCE_WALK_ID to walkId)),
         stageHandoff: HonorStageHandoff = HonorStageHandoff(),
+        connectivity: InternetConnectionProbe = InternetConnectionProbe { true },
     ) = HonorOverviewViewModel(
         savedStateHandle = savedStateHandle,
         ownWalkWays = OwnWalkWays(repository, VoiceRecordingFileSystem(context), dispatcher, { utc }, { Locale.US }),
@@ -204,6 +222,7 @@ class HonorOverviewViewModelTest {
         waveformCache = WaveformCache(),
         ioDispatcher = dispatcher,
         stageHandoff = stageHandoff,
+        connectivity = connectivity,
         loadSharedWaveform = { sharedWaveform },
     ).also { viewModels += it }
 
@@ -725,6 +744,241 @@ class HonorOverviewViewModelTest {
         assertTrue(line, line.startsWith("November 14, 2023"))
         assertTrue(line, line.endsWith("10:13 PM"))
     }
+
+    // ---- A pilgrimage stage (pilgrimage-stage spec P4 §6, §7.1) -----------
+    //
+    // The first four are iOS `PilgrimageStageWalkTests.swift@7c200bf`'s,
+    // names kept, on its `stageWay()` fixture.
+
+    @Test
+    fun testTheStageLineStandsWhereADateWould() {
+        val way = stageWay()
+
+        assertEquals(
+            "stage 1 of 33 · ${StageFormat.distance(24_200.0, UnitSystem.Metric)} · hard",
+            WayStageLine.line(resources, way, UnitSystem.Metric),
+        )
+        val notAStage = way.copy(stage = null)
+        assertNull("a shared walk still shows its date", WayStageLine.line(resources, notAStage, UnitSystem.Metric))
+        assertTrue(way.isPilgrimageStage)
+        assertFalse(notAStage.isPilgrimageStage)
+    }
+
+    @Test
+    fun testTheFactsLineReadsInTheWalkersOwnUnit() {
+        val stage = requireNotNull(stageWay().stage)
+
+        val line = StageMorningCardModel.factsLine(resources, stage, UnitSystem.Metric)
+
+        assertEquals(
+            listOf(
+                StageFormat.distance(24_200.0, UnitSystem.Metric),
+                "${StageFormat.altitude(1419.0, UnitSystem.Metric)} up",
+                "7 to 9 hours",
+                "hard",
+            ).joinToString(" · "),
+            line,
+        )
+    }
+
+    // iOS pins the walker's unit to kilometres first; here the unit is an argument.
+    @Test
+    fun testTheWeatherLineIsSilentWithoutASnapshot() {
+        assertNull(StageMorningCardModel.weatherLine(resources, null, UnitSystem.Metric, Locale.US))
+        val snapshot = WeatherSnapshot(WeatherCondition.CLEAR, temperatureCelsius = 9.0, humidityFraction = 0.4, windSpeedMps = 1.0)
+
+        val line = StageMorningCardModel.weatherLine(resources, snapshot, UnitSystem.Metric, Locale.US)
+
+        assertTrue(line ?: "nil", line?.startsWith("clear, ") == true)
+        assertTrue(line ?: "nil", line?.contains("9") == true)
+    }
+
+    @Test
+    fun testTheOfflineNoteIsSaidOnceAndOnlyForAStage() {
+        fun note(isStage: Boolean, isConnected: Boolean, alreadyShown: Boolean) =
+            HonorOverviewModel.offlineNote(isStage, isConnected, alreadyShown)?.let(resources::getString)
+
+        assertEquals("map tiles need a connection; the way itself is on your phone.", note(true, false, false))
+        assertNull("said once", note(isStage = true, isConnected = false, alreadyShown = true))
+        assertNull("the tiles are coming", note(isStage = true, isConnected = true, alreadyShown = false))
+        assertNull(
+            "a shared walk offline has a different problem: its voices",
+            note(isStage = false, isConnected = false, alreadyShown = false),
+        )
+    }
+
+    // P4 §5.2–§5.3, owner decision 7: the live Francés and Shikoku figures, as StatsHelper prints them.
+    @Test
+    fun `the stage line reads the dataset's figures as iOS prints them, in the walker's unit`() {
+        val frances = requireNotNull(stageWay().stage)
+        val shikoku = frances.copy(routeId = "shikoku-88", count = 5, distanceKm = 28.3, difficulty = "")
+
+        assertEquals("stage 1 of 33 · 24.2 km · hard", WayStageLine.line(resources, frances, UnitSystem.Metric))
+        assertEquals("stage 1 of 33 · 15.04 mi · hard", WayStageLine.line(resources, frances, UnitSystem.Imperial))
+        assertEquals("no difficulty, no part", "stage 1 of 5 · 28.3 km", WayStageLine.line(resources, shikoku, UnitSystem.Metric))
+        assertEquals(
+            "stage 33 of 33 · 764 km · moderate",
+            WayStageLine.line(resources, frances.copy(index = 32, distanceKm = 764.0, difficulty = "moderate"), UnitSystem.Metric),
+        )
+    }
+
+    @Test
+    fun `a stage's overview reads its stage line where a shared walk's date would be`() = runTest(dispatcher) {
+        store.save(HonorHarness.stage())
+
+        val way = ready(overview(savedStateHandle = stageArgs())).way
+
+        assertEquals("stage 5 of 33 · 15.6 km · moderate", WayStageLine.line(resources, way, UnitSystem.Metric))
+    }
+
+    // pilgrim-ios #122 item 6, matched: the stats row is Stage 21-1's, so a
+    // stage shows the build's clock and no counts, beside its line's own length.
+    @Test
+    fun `a stage's overview shows the dataset's synthesized clock and a quiet way, as iOS ships them`() =
+        runTest(dispatcher) {
+            store.save(HonorHarness.stage().copy(theirActiveSeconds = 28_800.0))
+
+            val way = ready(overview(savedStateHandle = stageArgs())).way
+
+            assertEquals("8h 0m", HonorOverviewModel.durationText(way.theirActiveSeconds))
+            assertEquals("a quiet way", HonorOverviewModel.countsLine(resources, way))
+            assertEquals("the geometry's length, not the stage's 15.6", 1_113.0, way.totalDistanceMeters, 0.0)
+        }
+
+    // P4 §6.5: the morning card reads the overview's own fetch, whole.
+    @Test
+    fun `a stage's overview keeps today's whole weather for its morning card`() = runTest(dispatcher) {
+        store.save(HonorHarness.stage())
+        val today = WeatherSnapshot(WeatherCondition.PARTLY_CLOUDY, temperatureCelsius = 9.4, humidityFraction = 0.4, windSpeedMps = 1.0)
+        val vm = overview(
+            savedStateHandle = stageArgs(),
+            location = FakeLocationSource(lastKnown = LocationPoint(timestamp = 1L, latitude = 0.0, longitude = -0.001)),
+            weather = FakeWeatherFetching(today),
+        )
+
+        val overview = ready(vm)
+
+        assertEquals(today, overview.todayWeather)
+        assertEquals("partlyCloudy", overview.todayCondition)
+    }
+
+    // P4 §6.4, A-4: once per install, written as it shows.
+    @Test
+    fun `a stage opened offline says the offline note once, then never again`() = runTest(dispatcher) {
+        store.save(HonorHarness.stage())
+        val preferences = FakeHonorPreferencesRepository()
+
+        val first = ready(overview(savedStateHandle = stageArgs(), preferences = preferences, connectivity = { false }))
+        val second = ready(overview(savedStateHandle = stageArgs(), preferences = preferences, connectivity = { false }))
+
+        assertEquals(R.string.honor_overview_offline_note, first.offlineNote)
+        assertNull("never again on this install", second.offlineNote)
+        assertEquals(1, preferences.offlineNoteWrites.get())
+    }
+
+    @Test
+    fun `a stage opened online says nothing and leaves the note for its first offline opening`() = runTest(dispatcher) {
+        store.save(HonorHarness.stage())
+        val preferences = FakeHonorPreferencesRepository()
+
+        val online = ready(overview(savedStateHandle = stageArgs(), preferences = preferences, connectivity = { true }))
+
+        assertNull(online.offlineNote)
+        assertFalse("an online opening writes nothing", preferences.pilgrimageOfflineNoteShown)
+        val offline = ready(overview(savedStateHandle = stageArgs(), preferences = preferences, connectivity = { false }))
+        assertEquals(R.string.honor_overview_offline_note, offline.offlineNote)
+    }
+
+    // iOS's `guard way.isPilgrimageStage, !alreadyShown`: no probe that couldn't produce the note.
+    @Test
+    fun `only a stage whose note is still unsaid reads the connection, and only once`() = runTest(dispatcher) {
+        store.save(sharedWay())
+        store.save(HonorHarness.stage())
+        var readings = 0
+        val offline = InternetConnectionProbe { readings++; false }
+        val unsaid = FakeHonorPreferencesRepository()
+
+        assertNull(ready(overview(savedStateHandle = stored(), preferences = unsaid, connectivity = offline)).offlineNote)
+        assertNull(ready(overview(preferences = unsaid, connectivity = offline)).offlineNote)
+        assertEquals("a shared walk and an own walk never look", 0, readings)
+        assertEquals(0, unsaid.offlineNoteWrites.get())
+
+        val said = FakeHonorPreferencesRepository(pilgrimageOfflineNoteShown = true)
+        assertNull(ready(overview(savedStateHandle = stageArgs(), preferences = said, connectivity = offline)).offlineNote)
+        assertEquals("a stage whose note is said never looks", 0, readings)
+
+        ready(overview(savedStateHandle = stageArgs(), preferences = unsaid, connectivity = offline))
+        assertEquals(1, readings)
+    }
+
+    // A full disk or a corrupt preferences file costs the note's flag, never the rest of the overview.
+    @Test
+    fun `a note whose flag can't be saved still shows, and the distance and today's weather still come`() =
+        runTest(dispatcher) {
+            store.save(HonorHarness.stage())
+            val unwritable = object : HonorPreferencesRepository by FakeHonorPreferencesRepository() {
+                override suspend fun setPilgrimageOfflineNoteShown() {
+                    throw IOException("No space left on device")
+                }
+            }
+            val today = WeatherSnapshot(WeatherCondition.CLEAR, temperatureCelsius = 9.0, humidityFraction = null, windSpeedMps = null)
+            val vm = overview(
+                savedStateHandle = stageArgs(),
+                preferences = unwritable,
+                connectivity = { false },
+                location = FakeLocationSource(lastKnown = LocationPoint(timestamp = 1L, latitude = 0.0, longitude = -0.001)),
+                weather = FakeWeatherFetching(today),
+            )
+
+            val overview = ready(vm)
+
+            assertEquals(R.string.honor_overview_offline_note, overview.offlineNote)
+            assertNotNull("the distance to the start", overview.distanceToStartMeters)
+            assertEquals(today, overview.todayWeather)
+        }
+
+    private fun stageArgs() = SavedStateHandle(mapOf(HonorOverviewViewModel.ARG_WAY_ID to HonorHarness.STAGE_ID))
+
+    /**
+     * iOS's `stageWay(index:)`: a 1 km stage east along the equator, one
+     * waypoint at 0.3 with words, names, a sitting and a pin, and the
+     * Francés stage 1 block.
+     */
+    private fun stageWay(index: Int = 0) = Way(
+        id = WayStore.stageWayId("camino-frances", index),
+        source = WaySource.Pilgrimage(routeId = "camino-frances", stageIndex = index),
+        title = "Saint-Jean-Pied-de-Port to Roncesvalles",
+        departedAt = Instant.ofEpochSecond(1_000_000),
+        tzIdentifier = "Europe/Madrid",
+        expires = null,
+        route = (0..10).map { WayPoint(lat = 0.0, lon = it * 0.000898, alt = null, t = it * 60.0) },
+        totalDistanceMeters = 1000.0,
+        theirActiveSeconds = 600.0,
+        moments = listOf(
+            WayMoment(
+                id = "wp-orisson",
+                frac = 0.3,
+                at = WayCoordinate(lat = 0.0, lon = 300.0 / 111_320),
+                kind = WayMomentKind.Waypoint(label = "Vierge d'Orisson", icon = "building.columns"),
+                text = "A shepherd carried this Madonna up from Lourdes.",
+                names = mapOf("eu" to "Orissongo Ama Birjina", "fr" to "Vierge d'Orisson"),
+                sitMinutes = 5,
+                pin = WayCoordinate(lat = 0.0002, lon = 300.0 / 111_320),
+            ),
+        ),
+        weather = null,
+        marks = emptyList(),
+        stage = WayStage(
+            routeId = "camino-frances", index = index, count = 33,
+            name = "Saint-Jean-Pied-de-Port to Roncesvalles", theme = "Initiation",
+            narrative = "The Pyrenees are the first question the way asks.",
+            closing = "You crossed a border on foot.",
+            warnings = listOf("The Napoleon Route closes in winter."),
+            distanceKm = 24.2, gainMeters = 1419.0, hours = WayStageHours(min = 7.0, max = 9.0), difficulty = "hard",
+            start = WayStagePlace(name = "Saint-Jean-Pied-de-Port", at = WayCoordinate(lat = 0.0, lon = 0.0)),
+            end = WayStagePlace(name = "Roncesvalles", at = WayCoordinate(lat = 0.0, lon = 0.00898)),
+        ),
+    )
 
     private fun stored() = SavedStateHandle(mapOf(HonorOverviewViewModel.ARG_WAY_ID to SHARED_ID))
 

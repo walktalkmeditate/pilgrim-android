@@ -201,4 +201,11 @@ class WalkFormatTest {
         // -40°C = -40°F (rare exact crossover).
         assertEquals("-40°F", WalkFormat.temperature(-40.0, imperial))
     }
+
+    // iOS `WeatherSnapshot.formatTemperature`'s `%.0f`: a tie goes to the even neighbour.
+    @Test
+    fun `a tied temperature rounds to the even neighbour`() {
+        assertEquals("10°C", WalkFormat.temperature(10.5, metric))
+        assertEquals("36°F", WalkFormat.temperature(2.5, imperial))
+    }
 }

@@ -56,6 +56,8 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.honor.HonorImportCopy
 import org.walktalkmeditate.pilgrim.honor.HonorImportState
 import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
+import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.StageMorningCard
+import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.StageMorningCardAction
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimCornerRadius
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -225,6 +227,15 @@ internal fun HonorOverviewFrame(
  * gather could still land (S4 §8.3); nothing announces the line, as on
  * iOS (pilgrim-ios #108, matched). Missing voices add "try again" and
  * "walk without the missing voices" under it; a full disk adds nothing.
+ *
+ * A stage (pilgrimage-stage spec P4 §6.1–§6.2) reads its stage line where
+ * the date would be, says its offline note under the status line, has no
+ * voice to walk with, and its Begin, read "Walk this stage", opens the
+ * morning card, whose "walk" is what calls [onBegin]. The stats row is
+ * Stage 21-1's, so a stage shows the dataset's synthesized clock, "a quiet
+ * way", and its line's own length beside the stage line's figure
+ * (pilgrim-ios #122 item 6, matched). The card's open flag survives a
+ * rotation and a process death (P4 A-3).
  */
 @Composable
 internal fun HonorOverviewCard(
@@ -239,8 +250,10 @@ internal fun HonorOverviewCard(
     onWalkWithoutMissing: () -> Unit = {},
 ) {
     val way = overview.way
+    val stage = way.stage
     val resources = LocalResources.current
     val locale = LocalConfiguration.current.locales[0] ?: Locale.getDefault()
+    var showMorningCard by rememberSaveable(way.id) { mutableStateOf(false) }
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -250,7 +263,8 @@ internal fun HonorOverviewCard(
     ) {
         Text(text = way.title, style = pilgrimType.heading, color = pilgrimColors.ink)
         Text(
-            text = HonorOverviewModel.departureLine(way, ZoneId.systemDefault(), locale),
+            text = WayStageLine.line(resources, way, units)
+                ?: HonorOverviewModel.departureLine(way, ZoneId.systemDefault(), locale),
             style = pilgrimType.caption,
             color = pilgrimColors.fog,
         )
@@ -277,15 +291,24 @@ internal fun HonorOverviewCard(
         HonorOverviewModel.statusLine(resources, overview.distanceToStartMeters, units)?.let {
             Text(text = it, style = pilgrimType.caption, color = pilgrimColors.fog)
         }
-        VoicesToggle(
-            checked = voicesEnabled,
-            // A quiet way keeps showing its stored value, switched off from use.
-            enabled = way.voiceCount > 0,
-            onCheckedChange = onVoicesEnabledChange,
+        overview.offlineNote?.let {
+            Text(text = stringResource(it), style = pilgrimType.caption, color = pilgrimColors.fog)
+        }
+        // A stage carries no recordings, so "walk with their voice" would
+        // be a switch over nothing, and would say "their" besides.
+        if (stage == null) {
+            VoicesToggle(
+                checked = voicesEnabled,
+                // A quiet way keeps showing its stored value, switched off from use.
+                enabled = way.voiceCount > 0,
+                onCheckedChange = onVoicesEnabledChange,
+            )
+        }
+        val beginLabel = stringResource(
+            if (stage != null) R.string.honor_overview_begin_stage_a11y else R.string.honor_overview_begin_a11y,
         )
-        val beginLabel = stringResource(R.string.honor_overview_begin_a11y)
         Button(
-            onClick = onBegin,
+            onClick = { if (stage != null) showMorningCard = true else onBegin() },
             enabled = !importState.holdsBegin,
             modifier = Modifier
                 .fillMaxWidth()
@@ -306,6 +329,20 @@ internal fun HonorOverviewCard(
                 modifier = Modifier.clearAndSetSemantics {},
             )
         }
+    }
+    if (showMorningCard && stage != null) {
+        StageMorningCard(
+            stage = stage,
+            weather = overview.todayWeather,
+            units = units,
+            mapsLine = null,
+            action = StageMorningCardAction.WALK,
+            onAction = {
+                showMorningCard = false
+                onBegin()
+            },
+            onDismiss = { showMorningCard = false },
+        )
     }
 }
 
