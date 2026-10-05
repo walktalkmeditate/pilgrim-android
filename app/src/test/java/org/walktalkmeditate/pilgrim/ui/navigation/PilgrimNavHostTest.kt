@@ -26,6 +26,7 @@ import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.ui.honor.HonorOverviewViewModel
+import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.PilgrimageRouteViewModel
 import org.walktalkmeditate.pilgrim.ui.walk.WalkSummaryViewModel
 
 /**
@@ -104,6 +105,16 @@ class PilgrimNavHostTest {
             FetchedWayLanding.PRESENT,
             fetchedWayLanding(listOf(Routes.PATH, Routes.HONOR_WAYS, Routes.HONOR_OWN_WALKS)),
         )
+        assertEquals(
+            "the catalog over the Ways sheet, as the picker (P4 §1.3)",
+            FetchedWayLanding.PRESENT,
+            fetchedWayLanding(listOf(Routes.PATH, Routes.HONOR_WAYS, Routes.HONOR_PILGRIMAGES)),
+        )
+        assertEquals(
+            "a route page over the catalog",
+            FetchedWayLanding.PRESENT,
+            fetchedWayLanding(listOf(Routes.PATH, Routes.HONOR_WAYS, Routes.HONOR_PILGRIMAGES, Routes.HONOR_PILGRIMAGE_PATTERN)),
+        )
         assertEquals(FetchedWayLanding.WAIT, fetchedWayLanding(listOf(Routes.PATH, Routes.HONOR_WAYS)))
         assertEquals(FetchedWayLanding.WAIT, fetchedWayLanding(listOf(Routes.WELCOME)))
         assertEquals(FetchedWayLanding.WAIT, fetchedWayLanding(listOf(Routes.PERMISSIONS)))
@@ -134,6 +145,10 @@ class PilgrimNavHostTest {
         assertTrue("before Start too", honorLinkScreen(listOf(Routes.PATH, Routes.ACTIVE_WALK)).walkScreenUp)
         assertTrue(honorLinkScreen(listOf(Routes.PATH, Routes.ACTIVE_WALK, Routes.MEDITATION)).walkScreenUp)
         assertTrue(honorLinkScreen(listOf(Routes.PATH, Routes.HONOR_WAYS, Routes.HONOR_OWN_WALKS)).waysSheetUp)
+        assertTrue(honorLinkScreen(listOf(Routes.PATH, Routes.HONOR_WAYS, Routes.HONOR_PILGRIMAGES)).waysSheetUp)
+        assertTrue(
+            honorLinkScreen(listOf(Routes.PATH, Routes.HONOR_WAYS, Routes.HONOR_PILGRIMAGES, Routes.HONOR_PILGRIMAGE_PATTERN)).waysSheetUp,
+        )
         assertTrue(honorLinkScreen(listOf(Routes.PATH, Routes.WALK_SUMMARY_PATTERN, Routes.WALK_SHARE_PATTERN)).summaryUp)
         assertTrue(honorLinkScreen(listOf(Routes.PATH, Routes.HOME, Routes.HONOR_OVERVIEW_PATTERN)).overviewUp)
     }
@@ -356,6 +371,133 @@ class PilgrimNavHostTest {
         }
     }
 
+    // Pilgrimage-stage spec P4 §1.3, owner decision 8: the catalog and the
+    // route page are sheets over the Ways sheet, a stage's overview takes
+    // all their places, Back from the route page returns to the catalog,
+    // and a swipe closes both.
+
+    @Test
+    fun `a route page names its route by id`() {
+        assertEquals("honor_pilgrimage/camino-frances", Routes.honorPilgrimage("camino-frances"))
+
+        val nav = honorBackStack(start = Routes.PATH)
+        onMain { nav.navigate(Routes.HONOR_WAYS) }
+        onMain { nav.navigate(Routes.HONOR_PILGRIMAGES) }
+        onMain { nav.navigate(Routes.honorPilgrimage("camino-frances")) }
+
+        onMain {
+            val page = nav.currentBackStackEntry!!
+            assertEquals(Routes.HONOR_PILGRIMAGE_PATTERN, page.destination.route)
+            assertEquals("camino-frances", page.arguments?.getString(PilgrimageRouteViewModel.ARG_ROUTE_ID))
+            assertEquals(Routes.HONOR_PILGRIMAGES, nav.previousBackStackEntry?.destination?.route)
+        }
+    }
+
+    @Test
+    fun `a stage's overview takes the place of the Ways sheet, the catalog and the route page`() {
+        val nav = pilgrimageSheets()
+
+        onMain { nav.openStoredWayOverview(STAGE_WAY) }
+
+        onMain {
+            assertEquals(STAGE_WAY, nav.currentBackStackEntry?.arguments?.getString(HonorOverviewViewModel.ARG_WAY_ID))
+        }
+        assertOnlyPathBeneath(nav)
+    }
+
+    @Test
+    fun `Back from the route page returns to the catalog`() {
+        val nav = pilgrimageSheets()
+
+        onMain { nav.closePilgrimageRoute() }
+
+        onMain {
+            assertEquals(Routes.HONOR_PILGRIMAGES, nav.currentBackStackEntry?.destination?.route)
+            assertEquals(Routes.HONOR_WAYS, nav.previousBackStackEntry?.destination?.route)
+        }
+    }
+
+    @Test
+    fun `a swipe on the route page closes it and the catalog, and the Ways sheet shows again`() {
+        val nav = pilgrimageSheets()
+
+        onMain { nav.closePilgrimages() }
+
+        onMain {
+            assertEquals(Routes.HONOR_WAYS, nav.currentBackStackEntry?.destination?.route)
+            assertEquals(Routes.PATH, nav.previousBackStackEntry?.destination?.route)
+        }
+    }
+
+    @Test
+    fun `the catalog's Close returns to the Ways sheet over Path`() {
+        val nav = honorBackStack(start = Routes.PATH)
+        onMain { nav.navigate(Routes.HONOR_WAYS) }
+        onMain { nav.navigate(Routes.HONOR_PILGRIMAGES) }
+
+        onMain { nav.closePilgrimages() }
+
+        onMain { assertEquals(Routes.HONOR_WAYS, nav.currentBackStackEntry?.destination?.route) }
+        composeRule.onNodeWithTag(PATH_TAG).assertExists()
+    }
+
+    @Test
+    fun `a fetched Way takes the place of the catalog and the route page too`() {
+        val nav = pilgrimageSheets()
+
+        onMain { nav.openFetchedWayOverview(SHARED_WAY) }
+
+        onMain { assertEquals(SHARED_WAY, nav.currentBackStackEntry?.arguments?.getString(HonorOverviewViewModel.ARG_WAY_ID)) }
+        assertOnlyPathBeneath(nav)
+    }
+
+    /** P4 §11 gap 14: with Honor off there is no door, so neither pilgrimage route is in the graph. */
+    @Test
+    fun `with the flag off, no Honor route is registered, the pilgrimage ones included`() {
+        val nav = productionHonorGraph(honorEnabled = false)
+
+        onMain {
+            listOf(Routes.HONOR_WAYS, Routes.HONOR_PILGRIMAGES, Routes.HONOR_PILGRIMAGE_PATTERN).forEach {
+                assertNull(it, nav.graph.findNode(it))
+            }
+        }
+    }
+
+    @Test
+    fun `with the flag on, both pilgrimage routes are registered over the Ways sheet`() {
+        val nav = productionHonorGraph(honorEnabled = true)
+
+        onMain {
+            listOf(Routes.HONOR_WAYS, Routes.HONOR_PILGRIMAGES, Routes.HONOR_PILGRIMAGE_PATTERN).forEach {
+                assertTrue(it, nav.graph.findNode(it) != null)
+            }
+        }
+    }
+
+    /** Path → Ways sheet → catalog → a route page. */
+    private fun pilgrimageSheets(): NavHostController {
+        val nav = honorBackStack(start = Routes.PATH)
+        onMain { nav.navigate(Routes.HONOR_WAYS) }
+        onMain { nav.navigate(Routes.HONOR_PILGRIMAGES) }
+        onMain { nav.navigate(Routes.honorPilgrimage("camino-frances")) }
+        return nav
+    }
+
+    /** The production Honor routes, registered as the app's host registers them; none is navigated to. */
+    private fun productionHonorGraph(honorEnabled: Boolean): NavHostController {
+        var nav: NavHostController? = null
+        composeRule.setContent {
+            val controller = rememberNavController()
+            SideEffect { nav = controller }
+            NavHost(navController = controller, startDestination = Routes.PATH) {
+                composable(Routes.PATH) {}
+                honorRoutes(controller, honorEnabled = honorEnabled)
+            }
+        }
+        composeRule.waitForIdle()
+        return requireNotNull(nav)
+    }
+
     private fun onMain(block: () -> Unit) = composeRule.runOnIdle(block)
 
     /**
@@ -373,6 +515,8 @@ class PilgrimNavHostTest {
                 composable(Routes.PATH) { Box(Modifier.testTag(PATH_TAG)) }
                 honorSheet(Routes.HONOR_WAYS) {}
                 honorSheet(Routes.HONOR_OWN_WALKS) {}
+                honorSheet(Routes.HONOR_PILGRIMAGES) {}
+                honorSheet(Routes.HONOR_PILGRIMAGE_PATTERN, arguments = honorPilgrimageArguments) {}
                 composable(
                     route = Routes.WALK_SUMMARY_PATTERN,
                     arguments = listOf(
@@ -393,6 +537,7 @@ class PilgrimNavHostTest {
 
     private companion object {
         const val SHARED_WAY = "share:Qoi4YmPHLN"
+        const val STAGE_WAY = "pilgrimage:camino-frances:0"
         const val PATH_TAG = "path"
     }
 }

@@ -38,10 +38,11 @@ import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
 /**
  * The Ways sheet's shared sections (shared-walk spec S4 §6–§7, S2 §8):
  * the "Shared with you" rows, and the paste field, its "Open", and the
- * line under it.
+ * line under it. A window as tall as the content, now the pilgrimage
+ * section sits above the paste one.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = Application::class)
+@Config(sdk = [34], application = Application::class, qualifiers = "w400dp-h1600dp")
 class HonorWaysSheetTest {
 
     @get:Rule val composeRule = createComposeRule()
@@ -60,6 +61,7 @@ class HonorWaysSheetTest {
                         onClose = {},
                         onChooseShared = { chosen += it },
                         onWalkOneOfYours = {},
+                        onWalkAPilgrimage = {},
                         onOpenPasted = { opened += it },
                     )
                 }

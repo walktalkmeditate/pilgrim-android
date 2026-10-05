@@ -194,7 +194,7 @@ data class PilgrimageLedger(
          * "stage 5 of 33 · 112 km walked", "you have walked the whole way ·
          * 764 km", or, with nothing recorded and nothing carried, "33
          * stages". [distance] spells metres in the walker's unit: the stage
-         * surfaces' formatter is the caller's (owner decision 7).
+         * surfaces pass `StageFormat.distance` (owner decision 7).
          */
         fun progressLine(
             resources: Resources,
@@ -203,10 +203,7 @@ data class PilgrimageLedger(
             distance: (meters: Double) -> String,
         ): String {
             val walking = ledger?.takeIf { it.stages.isNotEmpty() || (it.carriedKm ?: 0.0) > 0 }
-                ?: return resources.getString(
-                    if (stageCount == 1) R.string.pilgrimage_stage_count_one else R.string.pilgrimage_stage_count,
-                    digits(stageCount),
-                )
+                ?: return stageCountLine(resources, stageCount)
             val walked = distance(walking.totalKmWalked * 1000)
             val next = walking.next(stageCount)
                 ?: return resources.getString(R.string.pilgrimage_progress_whole_way, walked)
@@ -217,6 +214,12 @@ data class PilgrimageLedger(
                 walked,
             )
         }
+
+        /** "1 stage" or "33 stages": the singular only at 1, as iOS picks it, whatever the phone's plural rules. */
+        fun stageCountLine(resources: Resources, stageCount: Int): String = resources.getString(
+            if (stageCount == 1) R.string.pilgrimage_stage_count_one else R.string.pilgrimage_stage_count,
+            digits(stageCount),
+        )
 
         private fun digits(count: Int): String = String.format(Locale.US, "%d", count)
     }

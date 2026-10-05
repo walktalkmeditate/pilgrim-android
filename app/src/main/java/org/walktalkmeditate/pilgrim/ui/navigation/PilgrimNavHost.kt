@@ -54,6 +54,7 @@ import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
 import org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinScreen
 import org.walktalkmeditate.pilgrim.ui.honor.HonorImportHostViewModel
 import org.walktalkmeditate.pilgrim.ui.honor.HonorOverviewViewModel
+import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.PilgrimageRouteViewModel
 import org.walktalkmeditate.pilgrim.ui.home.HomeScreen
 import org.walktalkmeditate.pilgrim.ui.meditation.MeditationScreen
 import org.walktalkmeditate.pilgrim.ui.onboarding.PermissionsScreen
@@ -139,6 +140,16 @@ object Routes {
         is HonorWayChoice.OwnWalk -> "${HonorOverviewViewModel.ARG_SOURCE_WALK_ID}=${way.sourceWalkId}"
         is HonorWayChoice.Stored -> "${HonorOverviewViewModel.ARG_WAY_ID}=${Uri.encode(way.wayId)}"
     }
+
+    /**
+     * The pilgrimage catalog and a route's page, sheets over the Ways sheet
+     * (pilgrimage-stage spec P4 §1.3). The page names its route by id, a
+     * slug, so it comes back from its route after a process death.
+     */
+    const val HONOR_PILGRIMAGES = "honor_pilgrimages"
+    private const val HONOR_PILGRIMAGE_PREFIX = "honor_pilgrimage"
+    const val HONOR_PILGRIMAGE_PATTERN = "$HONOR_PILGRIMAGE_PREFIX/{${PilgrimageRouteViewModel.ARG_ROUTE_ID}}"
+    fun honorPilgrimage(routeId: String): String = "$HONOR_PILGRIMAGE_PREFIX/${Uri.encode(routeId)}"
 
     const val SETTINGS = "settings"
     const val VOICE_GUIDE_PICKER = "voice_guides"
@@ -642,9 +653,7 @@ fun PilgrimNavHost(
                 },
             )
         }
-        if (honorEnabled) {
-            honorRoutes(navController)
-        }
+        honorRoutes(navController, honorEnabled = honorEnabled)
         }
 
         // iOS parity v1.6.0: constellation overlay painted on top of
@@ -1014,20 +1023,40 @@ private fun NavController.hasBackStackEntry(route: String): Boolean = try {
 }
 
 /**
- * The Ways sheet → "Walk again" picker → overview → walk screen chain
- * (parity spec F §2–§12). Each step leaves the one before it: the sheets
- * are gone before the overview opens, and Back from the overview never
- * lands on a sheet. Begin closes the overview and opens the walk screen
- * before its Start.
+ * The Ways sheet → "Walk again" picker, or catalog → route page → overview
+ * → walk screen chain (parity spec F §2–§12, pilgrimage-stage spec P4 §1).
+ * Each step leaves the one before it: the sheets are gone before the
+ * overview opens, and Back from the overview never lands on a sheet. Begin
+ * closes the overview and opens the walk screen before its Start. With
+ * Honor off, none of these routes exists.
  */
-private fun androidx.navigation.NavGraphBuilder.honorRoutes(navController: NavHostController) {
+internal fun androidx.navigation.NavGraphBuilder.honorRoutes(navController: NavHostController, honorEnabled: Boolean) {
+    if (!honorEnabled) return
     honorSheet(Routes.HONOR_WAYS) {
         org.walktalkmeditate.pilgrim.ui.honor.HonorWaysSheetRoute(
             onClosed = { navController.popBackStack(Routes.HONOR_WAYS, inclusive = true) },
             onOpenOwnWalks = {
                 navController.navigate(Routes.HONOR_OWN_WALKS) { launchSingleTop = true }
             },
+            onOpenPilgrimages = {
+                navController.navigate(Routes.HONOR_PILGRIMAGES) { launchSingleTop = true }
+            },
             onOpenOverview = navController::openStoredWayOverview,
+        )
+    }
+    honorSheet(Routes.HONOR_PILGRIMAGES) {
+        org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.PilgrimageCatalogSheet(
+            onClosed = navController::closePilgrimages,
+            onOpenRoute = { routeId ->
+                navController.navigate(Routes.honorPilgrimage(routeId)) { launchSingleTop = true }
+            },
+        )
+    }
+    honorSheet(Routes.HONOR_PILGRIMAGE_PATTERN, arguments = honorPilgrimageArguments) {
+        org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.PilgrimageRouteSheet(
+            onBack = navController::closePilgrimageRoute,
+            onClosed = navController::closePilgrimages,
+            onOpenStage = navController::openStoredWayOverview,
         )
     }
     honorSheet(Routes.HONOR_OWN_WALKS) {
@@ -1053,15 +1082,36 @@ private fun androidx.navigation.NavGraphBuilder.honorRoutes(navController: NavHo
 }
 
 /**
- * The Ways sheet and its picker: dialog routes, so the screen beneath them
- * (the Path tab) stays composed behind the sheet, as iOS's sheet sits over
- * its tab view. Each draws its own sheet in its own window over the route's.
+ * The Ways sheet and the sheets over it: dialog routes, so the screen
+ * beneath them (the Path tab) stays composed behind the sheet, as iOS's
+ * sheet sits over its tab view. Each draws its own sheet in its own window
+ * over the route's.
  */
 internal fun androidx.navigation.NavGraphBuilder.honorSheet(
     route: String,
+    arguments: List<androidx.navigation.NamedNavArgument> = emptyList(),
     content: @Composable (androidx.navigation.NavBackStackEntry) -> Unit,
 ) {
-    dialog(route, content = content)
+    dialog(route, arguments = arguments, content = content)
+}
+
+/** The route page's route id, required: a page is always some route's. */
+internal val honorPilgrimageArguments = listOf(
+    navArgument(PilgrimageRouteViewModel.ARG_ROUTE_ID) { type = NavType.StringType },
+)
+
+/**
+ * The catalog's Close and swipe, and the route page's swipe, which closes
+ * both as iOS's swipe takes the one sheet holding both: the Ways sheet
+ * shows again.
+ */
+internal fun NavController.closePilgrimages() {
+    popBackStack(Routes.HONOR_PILGRIMAGES, inclusive = true)
+}
+
+/** The route page's Back, system or its own: the catalog shows again (P4 §1.3). */
+internal fun NavController.closePilgrimageRoute() {
+    popBackStack(Routes.HONOR_PILGRIMAGE_PATTERN, inclusive = true)
 }
 
 /** "walk this again" built a Way: the overview takes the summary's place over its host (F §6.2). */
@@ -1078,10 +1128,11 @@ internal fun NavController.closeHonorOverview() {
 }
 
 /**
- * A listed Way's overview, from its "Shared with you" row or a finished
- * import: it takes the place of the Ways sheet (and the picker over it),
- * or of an overview already up, as iOS swaps the overview's Way (S1 §8.16);
- * anywhere else it opens over the screen showing.
+ * A listed Way's overview, from its "Shared with you" row, a route page's
+ * stage, or a finished import: it takes the place of the Ways sheet (and
+ * the picker, or the catalog and route page, over it), or of an overview
+ * already up, as iOS swaps the overview's Way (S1 §8.16); anywhere else it
+ * opens over the screen showing.
  */
 internal fun NavController.openStoredWayOverview(wayId: String) {
     val replaces = listOf(Routes.HONOR_WAYS, Routes.HONOR_OVERVIEW_PATTERN).firstOrNull(::hasBackStackEntry)
