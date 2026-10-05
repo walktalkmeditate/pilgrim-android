@@ -2,12 +2,13 @@
 package org.walktalkmeditate.pilgrim.domain.honor
 
 import java.text.BreakIterator
+import java.text.Normalizer
 import java.util.Locale
 
 /*
- * The two Swift string operations Honor's iOS code applies to sharer and
- * walker text, so Android cuts and trims the same characters (shared-walk
- * spec S1 §7.1–§7.2).
+ * The Swift string operations Honor's iOS code applies to sharer and
+ * walker text, so Android cuts, trims and orders the same characters
+ * (shared-walk spec S1 §7.1–§7.2; pilgrimage spec P1 A10).
  */
 
 /**
@@ -54,4 +55,24 @@ internal fun String.prefixCharacters(maxCharacters: Int): String {
         end = next
     }
     return substring(0, end)
+}
+
+/**
+ * Swift's `String <`: both sides compared in NFC, by Unicode scalar.
+ * Kotlin's `compareTo` compares the raw UTF-16 units instead, which puts a
+ * decomposed accent, or a character beyond the BMP, somewhere else.
+ */
+internal fun String.swiftCompareTo(other: String): Int {
+    val a = Normalizer.normalize(this, Normalizer.Form.NFC)
+    val b = Normalizer.normalize(other, Normalizer.Form.NFC)
+    var i = 0
+    var j = 0
+    while (i < a.length && j < b.length) {
+        val ca = a.codePointAt(i)
+        val cb = b.codePointAt(j)
+        if (ca != cb) return ca.compareTo(cb)
+        i += Character.charCount(ca)
+        j += Character.charCount(cb)
+    }
+    return (a.length - i).compareTo(b.length - j)
 }

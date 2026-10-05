@@ -43,11 +43,11 @@ class HonorMomentTracker(
 
     /**
      * By frac, ties by id, with Swift's `==` and `<` on the frac, so -0.0
-     * ties 0.0 (`HonorMomentTracker.swift:42@7c200bf`).
+     * ties 0.0, and Swift's `<` on the id (`HonorMomentTracker.swift:42@7c200bf`).
      */
     private val moments: List<WayMoment> = moments.sortedWith { a, b ->
         when {
-            a.frac == b.frac -> a.id.compareTo(b.id)
+            a.frac == b.frac -> a.id.swiftCompareTo(b.id)
             a.frac < b.frac -> -1
             else -> 1
         }

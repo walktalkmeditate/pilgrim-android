@@ -225,6 +225,31 @@ class WayStoreTest {
         ).forEach { id -> assertFalse("'$id' must be refused", WayStore.isValidId(id)) }
     }
 
+    // The second half of iOS's `testTheStoreAcceptsStageIdsAndRefusesEverythingElse`
+    // (`PilgrimageWayImporterTests.swift@7c200bf`); the importer needs both rules.
+    @Test
+    fun `a route id is the dataset's slug, and a stage's Way id names its route and index`() {
+        assertTrue(WayStore.isValidId("pilgrimage:camino-frances:0"))
+        assertTrue(WayStore.isValidId("pilgrimage:camino-frances:199"))
+        assertFalse(WayStore.isValidId("pilgrimage"))
+        assertFalse(WayStore.isValidId("pilgrimage:../etc:0"))
+        assertFalse("slugs are lowercase", WayStore.isValidId("pilgrimage:Camino:0"))
+        assertFalse(WayStore.isValidId("pilgrimage:camino-frances:1000"))
+        assertTrue(WayStore.isValidRouteId("camino-frances"))
+        assertFalse(WayStore.isValidRouteId("../etc/passwd"))
+        assertEquals("pilgrimage:camino-frances:7", WayStore.stageWayId(routeId = "camino-frances", stageIndex = 7))
+    }
+
+    @Test
+    fun `a route id is 1 to 64 of lowercase ASCII letters, digits, and hyphens, the whole of it`() {
+        listOf("a", "-", "a--b", "x".repeat(64), "camino-norte").forEach {
+            assertTrue("'$it' must pass", WayStore.isValidRouteId(it))
+        }
+        listOf("", "x".repeat(65), "Camino", "caminofrancés", "camino frances", "camino_frances", "camino\n", "٣").forEach {
+            assertFalse("'$it' must be refused", WayStore.isValidRouteId(it))
+        }
+    }
+
     @Test
     fun `a refused id touches no file`() {
         assertThrows(IllegalArgumentException::class.java) { store.save(way("share:../x")) }
