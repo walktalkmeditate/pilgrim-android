@@ -97,8 +97,12 @@ fun markGlyphVector(kind: WayMarkKind): ImageVector = when (kind) {
  * zoom seeded at the follow-puck's 16. The marks follow the walker, not the
  * camera: a camera report re-selects only when its zoom crosses a whole
  * level, and a pan never does. Pure; the view model holds one per screen.
+ * [metersBetween] is the ruler, swapped only by a test that needs exactly
+ * 200 m.
  */
-internal class WalkMarkSelection {
+internal class WalkMarkSelection(
+    private val metersBetween: (from: WayCoordinate, to: WayCoordinate) -> Double = ::wayMeters,
+) {
 
     var anchor: WayCoordinate? = null
         private set
@@ -113,8 +117,7 @@ internal class WalkMarkSelection {
     /** True when [at] moves the anchor: the first fix always, then one at least 200 m from it. */
     fun onFix(at: WayCoordinate): Boolean {
         anchor?.let { from ->
-            val moved = wgs84MidLatitudeMeters(from.lat, from.lon, at.lat, at.lon)
-            if (!(moved >= HonorTuning.MARK_PIN_REFRESH_METERS)) return false
+            if (!(metersBetween(from, at) >= HonorTuning.MARK_PIN_REFRESH_METERS)) return false
         }
         anchor = at
         return true

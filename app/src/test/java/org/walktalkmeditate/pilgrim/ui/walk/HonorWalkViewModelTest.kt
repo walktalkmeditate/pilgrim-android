@@ -15,11 +15,13 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.TestScope
@@ -49,6 +51,7 @@ import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
+import org.walktalkmeditate.pilgrim.data.honor.HonorDao
 import org.walktalkmeditate.pilgrim.data.honor.HonorMomentStateEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorNoticeEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorNoticeKind
@@ -95,6 +98,7 @@ import org.walktalkmeditate.pilgrim.ui.honor.HonorArrivalCopy
 import org.walktalkmeditate.pilgrim.ui.honor.HonorArrivalSummary
 import org.walktalkmeditate.pilgrim.ui.honor.WayRelation
 import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.StageFormat
+import org.walktalkmeditate.pilgrim.ui.walk.map.CameraReportThrottle
 import org.walktalkmeditate.pilgrim.ui.walk.map.WayGlyph
 import org.walktalkmeditate.pilgrim.ui.walk.map.WayMarkPin
 import org.walktalkmeditate.pilgrim.ui.walk.map.WayPinTint
@@ -1261,6 +1265,59 @@ class HonorWalkViewModelTest {
         assertEquals(3 to 0, during to vm.marks.value.size)
     }
 
+    @Test
+    fun `at Start, before the walk's first fix, the marks are chosen around the camera`() = runTest(dispatcher) {
+        store.save(stageWayWithMarks())
+        val vm = viewModel()
+        recordMarks(vm)
+        vm.showWay(HonorWayChoice.Stored(STAGE_WAY_ID))
+        vm.state.awaitValue { it != null }
+        vm.onCameraChanged(east(200.0), zoom = 16.3)
+        val beforeStart = vm.marks.value.size
+
+        startStageWalk()
+
+        assertEquals(0 to listOf("m2", "m1", "m0"), beforeStart to vm.marks.value.map { it.markId })
+    }
+
+    @Test
+    fun `Start lets go of the last walk's anchor`() = runTest(dispatcher) {
+        startStageWalk()
+        val vm = viewModel()
+        recordMarks(vm)
+        vm.state.awaitValue { it?.session != null }
+        walkerAt(east(199.0).lon)
+        val firstWalk = vm.marks.value.firstOrNull()?.markId
+        controller.state.value = WalkState.Idle
+
+        // The origin is under 200 m from the first walk's anchor.
+        startStageWalk(uuid = NEXT_UUID)
+        vm.state.awaitValue { it?.session?.walkId == liveWalkId }
+        walkerAt(0.0)
+
+        assertEquals("m2" to "m0", firstWalk to vm.marks.value.firstOrNull()?.markId)
+    }
+
+    @Test
+    fun `before Start a Way that loads after a zoom-14 seed draws its marks from the report taken as the map's listeners install`() =
+        runTest(dispatcher) {
+            store.save(stageWayWithMarks())
+            val vm = viewModel()
+            recordMarks(vm)
+            vm.showWay(HonorWayChoice.Stored(STAGE_WAY_ID))
+            vm.state.awaitValue { it != null }
+            // The map seeded at the last walk's end before the Way loaded, so
+            // its listeners, installed only now, report the camera as it stands.
+            val seed = WayCoordinate(lat = 0.0, lon = 0.0)
+            val throttle = CameraReportThrottle()
+
+            if (throttle.report(seed, MapCameraSeed.LAST_WALK_END_ZOOM, throttled = false, nowUptimeMillis = 10_000L)) {
+                vm.onCameraChanged(seed, MapCameraSeed.LAST_WALK_END_ZOOM)
+            }
+
+            assertEquals(listOf("m0", "m1", "m2"), vm.marks.value.map { it.markId })
+        }
+
     // The water caption (P3 §7, P5 §6, A2)
 
     /** iOS `testWaterAheadBorrowsTheCaptionLineAndNothingElse`, the caption's half; `HonorSessionTest` holds the rest. */
@@ -1319,6 +1376,32 @@ class HonorWalkViewModelTest {
         collectCards(vm)
 
         assertNull(vm.sheet.awaitValue { it != null }!!.caption)
+    }
+
+    @Test
+    fun `a water caption that ran out while the screen was away is gone on its first frame back`() = runTest(dispatcher) {
+        startStageWalk()
+        val roomAnswers = MutableStateFlow(true)
+        val slowNotices = object : HonorDao by db.honorDao() {
+            override fun observeLatestNotice(walkId: Long): Flow<HonorNoticeEntity?> =
+                db.honorDao().observeLatestNotice(walkId).onStart { roomAnswers.first { it } }
+        }
+        val vm = viewModel(honorDao = slowNotices)
+        val screen = backgroundScope.launch { vm.sheet.collect {} }
+        db.honorDao().insertNotice(waterNotice(refId = "m1", meters = 280.0, firedAt = clock.now()))
+        vm.sheet.awaitValue { it?.caption != null }
+
+        // Locked past the 5 s grace and the 20 s: the sheet keeps what it last held.
+        screen.cancel()
+        advanceTimeBy(60_000L)
+        runCurrent()
+        val kept = vm.sheet.value?.caption
+        // Back, with Room not yet answering the notice query again.
+        roomAnswers.value = false
+        backgroundScope.launch { vm.sheet.collect {} }
+        runCurrent()
+
+        assertEquals(HonorCaption.Water(280.0) to null, kept to vm.sheet.value?.caption)
     }
 
     @Test
@@ -1569,10 +1652,12 @@ class HonorWalkViewModelTest {
         way: Way = stageWayWithMarks(),
         session: (HonorSessionEntity) -> HonorSessionEntity = { it },
         rows: List<HonorMomentStateEntity> = emptyList(),
+        uuid: String = LIVE_UUID,
     ) = startLiveWalk(
         way = way,
         session = { session(it.copy(wayId = way.id, sourceKind = HonorSourceKind.PILGRIMAGE, voicesEnabled = false)) },
         rows = rows,
+        uuid = uuid,
     )
 
     /** The walk's latest recorded fix, as `:tracker` records it. */
@@ -1663,9 +1748,10 @@ class HonorWalkViewModelTest {
         honorEnabled: Boolean = true,
         send: (HonorCommand) -> Unit = { sentCommands += it },
         stageHandoff: HonorStageHandoff = HonorStageHandoff(),
+        honorDao: HonorDao = db.honorDao(),
     ) = HonorWalkViewModel(
         controller = controller,
-        honorDao = db.honorDao(),
+        honorDao = honorDao,
         repository = repository,
         wayStore = store,
         ownWalkWays = OwnWalkWays(repository, VoiceRecordingFileSystem(context), dispatcher, { UTC }, { Locale.US }),
@@ -1729,10 +1815,11 @@ class HonorWalkViewModelTest {
         way: Way? = way(),
         session: (HonorSessionEntity) -> HonorSessionEntity = { it },
         rows: List<HonorMomentStateEntity> = emptyList(),
+        uuid: String = LIVE_UUID,
     ) {
         liveStartedAt = clock.now()
-        liveWalkId = db.walkDao().insert(Walk(uuid = LIVE_UUID, startTimestamp = liveStartedAt))
-        way?.let { store.stage(LIVE_UUID, it) }
+        liveWalkId = db.walkDao().insert(Walk(uuid = uuid, startTimestamp = liveStartedAt))
+        way?.let { store.stage(uuid, it) }
         db.honorDao().insertSession(
             session(
                 HonorSessionEntity(
@@ -1865,6 +1952,7 @@ class HonorWalkViewModelTest {
         const val T0 = 1_700_100_000_000L
         const val SOURCE_UUID = "0e8d6f8a-5b1c-4f1e-9a53-2f1d8c7b6a50"
         const val LIVE_UUID = "7f3c2a10-9d4e-4b8a-8c1f-5e6d7a8b9c0d"
+        const val NEXT_UUID = "2b9e4c61-0a7d-4f35-b8e2-6c1d9f0a3e47"
         const val OWN_WAY_ID = "walk:$SOURCE_UUID"
         const val SHARE_WAY_ID = "share:AbCdEf1234"
         const val STAGE_WAY_ID = "pilgrimage:camino-frances:0"

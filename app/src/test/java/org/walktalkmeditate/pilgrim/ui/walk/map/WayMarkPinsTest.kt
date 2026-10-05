@@ -18,9 +18,9 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayMarkKind
 /**
  * A stage's service marks on the map (pilgrimage-stage spec P5 §1, §4,
  * §5): iOS `WayMarkPinsTests.swift@7c200bf`, names kept; then the camera
- * report's rules in iOS's order, and the one layer the marks share with the
- * moment pins (owner decision 9). Robolectric only for the rasters a layer
- * carries.
+ * report's rules in iOS's order, the walk anchor's 200 m, and the one layer
+ * the marks share with the moment pins (owner decision 9). Robolectric only
+ * for the rasters a layer carries.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -131,9 +131,23 @@ class WayMarkPinsTest {
     /** [meters] east of the origin along the equator, where a degree of longitude is the WGS84 semi-major axis's. */
     private fun east(meters: Double) = WayCoordinate(lat = 0.0, lon = meters / (6_378_137.0 * Math.PI / 180))
 
+    /** A ruler that puts every two places exactly 200 m apart, which no pair of equatorial coordinates measures. */
+    private val exactly200Meters: (WayCoordinate, WayCoordinate) -> Double = { _, _ -> 200.0 }
+
     @Test
     fun `the first camera event always reports`() {
         assertTrue(CameraReportThrottle().report(origin, zoom = 15.3, throttled = true, nowUptimeMillis = 10_000L))
+    }
+
+    /** The walk map's listeners, installed after its seed, report the camera as it stands, as idle does. */
+    @Test
+    fun `the report taken as the listeners install gets through, and the seed's own change after it repeats nothing`() {
+        val throttle = CameraReportThrottle()
+
+        val installed = throttle.report(origin, zoom = 14.0, throttled = false, nowUptimeMillis = 10_000L)
+        val seedsOwnChange = throttle.report(origin, zoom = 14.0, throttled = true, nowUptimeMillis = 10_400L)
+
+        assertEquals(true to false, installed to seedsOwnChange)
     }
 
     @Test
@@ -175,7 +189,6 @@ class WayMarkPinsTest {
         assertFalse(throttle.report(east(150.0), zoom = 15.8, throttled = false, nowUptimeMillis = 20_000L))
     }
 
-    /** No pair of doubles measures exactly 200 m here, so the strict `>` is pinned from either side. */
     @Test
     fun `a centre must be more than 200 m from the last report`() {
         val throttle = CameraReportThrottle()
@@ -185,6 +198,26 @@ class WayMarkPinsTest {
         val past = throttle.report(east(200.001), zoom = 15.0, throttled = false, nowUptimeMillis = 20_000L)
 
         assertEquals(false to true, short to past)
+    }
+
+    /** iOS's strict `>`: the walk's own rule is `>=` (below). */
+    @Test
+    fun `a centre exactly 200 m from the last report sends nothing`() {
+        val throttle = CameraReportThrottle(metersBetween = exactly200Meters)
+        throttle.report(origin, zoom = 15.0, throttled = true, nowUptimeMillis = 10_000L)
+
+        assertFalse(throttle.report(east(200.0), zoom = 15.0, throttled = false, nowUptimeMillis = 20_000L))
+    }
+
+    // ---- The walk's anchor (P5 §2) --------------------------------------------
+
+    /** iOS's `>=`, where the camera report's is a strict `>`. */
+    @Test
+    fun `a fix exactly 200 m from the anchor moves it`() {
+        val selection = WalkMarkSelection(metersBetween = exactly200Meters)
+        selection.onFix(origin)
+
+        assertTrue(selection.onFix(east(200.0)))
     }
 
     @Test

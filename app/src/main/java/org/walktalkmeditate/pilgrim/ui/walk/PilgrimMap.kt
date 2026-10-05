@@ -532,6 +532,10 @@ internal fun PilgrimMap(
         view.gestures.addOnMapClickListener(listener)
         onDispose { view.gestures.removeOnMapClickListener(listener) }
     }
+    // One-shot: seed the camera exactly once, on whichever composition
+    // first has a seed AND fewer than two route points. The follow
+    // viewport drives the camera from there.
+    var didSeedCamera by remember { mutableStateOf(false) }
     // The camera report (P5 §4), only for a screen that reads it: the walk
     // of a Way with marks, and the overview. It keeps apart from the seek's
     // camera subscriptions, which only a seek holds. The throttle lives as
@@ -556,6 +560,13 @@ internal fun PilgrimMap(
         // A gesture's last frame can land inside the throttle window; idle
         // skips the window, but not the level-or-200 m rule.
         val idleSub = view.mapboxMap.subscribeMapIdle { report(false) }
+        // The walk's seed can land before its Way loads and these listeners
+        // come. Its camera is reported once now, as idle would report it, so
+        // it reaches the marks as iOS's always-listening map's report does
+        // (P5 §2: a zoom-14 seed draws them before Start). Mapbox's default
+        // camera, before any seed, isn't reported: no screen chose it, and
+        // its level would make a zoom-16 seed draw marks iOS doesn't.
+        if (didSeedCamera) report(false)
         onDispose {
             cameraSub.cancel()
             idleSub.cancel()
@@ -586,10 +597,6 @@ internal fun PilgrimMap(
     // the AndroidView update lambda can render the placeholder bitmap
     // immediately and swap in the real thumbnail when ready.
     val photoPinBitmaps = rememberPhotoPinBitmaps(walkAnnotations, darkMode)
-    // One-shot: seed the camera exactly once, on whichever composition
-    // first has a seed AND fewer than two route points. The follow
-    // viewport drives the camera from there.
-    var didSeedCamera by remember { mutableStateOf(false) }
     // Fade the AndroidView in once the Mapbox style has loaded. First
     // style-load on a cold MapView is visually chunky (black flash
     // while tiles fetch); fading from 0 → 1 when `loadStyle` invokes

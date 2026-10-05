@@ -21,9 +21,12 @@ import org.walktalkmeditate.pilgrim.domain.wgs84MidLatitudeMeters
  * 4. A report keeps its time, level and centre.
  *
  * One per map, kept across style reloads and lost with the map, as iOS's
- * coordinator keeps it.
+ * coordinator keeps it. [metersBetween] is the ruler, swapped only by a
+ * test that needs exactly 200 m.
  */
-internal class CameraReportThrottle {
+internal class CameraReportThrottle(
+    private val metersBetween: (from: WayCoordinate, to: WayCoordinate) -> Double = ::wayMeters,
+) {
 
     private var lastLevel: Int? = null
     private var lastCenter: WayCoordinate? = null
@@ -35,7 +38,7 @@ internal class CameraReportThrottle {
         if (!zoom.isFinite()) return false
         val level = zoom.toInt()
         val movedFar = lastCenter?.let { last ->
-            wgs84MidLatitudeMeters(last.lat, last.lon, center.lat, center.lon) > HonorTuning.MARK_PIN_REFRESH_METERS
+            metersBetween(last, center) > HonorTuning.MARK_PIN_REFRESH_METERS
         } ?: true
         if (level == lastLevel && !movedFar) return false
         lastReportUptimeMillis = nowUptimeMillis
@@ -49,3 +52,7 @@ internal class CameraReportThrottle {
         const val MIN_INTERVAL_MILLIS = 250L
     }
 }
+
+/** Metres from [from] to [to] as `CLLocation.distance` measures them: both 200 m rules' ruler. */
+internal fun wayMeters(from: WayCoordinate, to: WayCoordinate): Double =
+    wgs84MidLatitudeMeters(from.lat, from.lon, to.lat, to.lon)

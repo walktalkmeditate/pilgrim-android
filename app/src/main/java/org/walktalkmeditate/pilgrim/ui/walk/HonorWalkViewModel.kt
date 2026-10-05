@@ -302,6 +302,10 @@ class HonorWalkViewModel internal constructor(
     @Volatile
     private var latestQueue: HonorCardQueue? = null
 
+    /** The walk's latest notice as the water caption last read it. */
+    @Volatile
+    private var lastNotice: HonorNoticeEntity? = null
+
     private val live: Flow<LiveHonor?> = if (!enabled) {
         flowOf(null)
     } else {
@@ -926,24 +930,34 @@ class HonorWalkViewModel internal constructor(
      * and a wall clock set back can't stretch it. A revived `:tracker` never
      * writes it again, so it never replays (P5 A2). A kind this build doesn't
      * know shows nothing.
+     *
+     * A screen back from the background starts from the last notice read,
+     * worked out against the clock at once, so the sheet never waits on
+     * Room with an expired caption still drawn.
      */
     private fun waterCaption(): Flow<HonorCaption.Water?> =
         live.map { it?.walkId }.distinctUntilChanged()
             .flatMapLatest { walkId -> if (walkId == null) flowOf(null) else honorDao.observeLatestNotice(walkId) }
             .distinctUntilChanged()
+            .onEach { lastNotice = it }
             .flatMapLatest(::noticeCaption)
+            .onStart { emit(waterCaptionAt(lastNotice, clock.now())) }
             .distinctUntilChanged()
 
     private fun noticeCaption(notice: HonorNoticeEntity?): Flow<HonorCaption.Water?> = flow {
-        val caption = notice?.takeIf { it.kind == HonorNoticeKind.WATER }?.let { HonorCaption.Water(it.meters) }
-        val age = notice?.let { clock.now() - it.firedAt }
-        if (caption == null || age == null || age < 0 || age >= SOFT_TAP_CAPTION_MILLIS) {
-            emit(null)
-            return@flow
-        }
+        val now = clock.now()
+        val caption = waterCaptionAt(notice, now)
         emit(caption)
-        delay(SOFT_TAP_CAPTION_MILLIS - age)
+        if (caption == null || notice == null) return@flow
+        delay(SOFT_TAP_CAPTION_MILLIS - (now - notice.firedAt))
         emit(null)
+    }
+
+    /** What [notice] shows at [now]: water, fired less than 20 s before it and not after it. */
+    private fun waterCaptionAt(notice: HonorNoticeEntity?, now: Long): HonorCaption.Water? {
+        if (notice == null || notice.kind != HonorNoticeKind.WATER) return null
+        val age = now - notice.firedAt
+        return if (age in 0 until SOFT_TAP_CAPTION_MILLIS) HonorCaption.Water(notice.meters) else null
     }
 
     /** The walk's Start and end, its fixes, and the Way on screen, as they reach the marks. */
