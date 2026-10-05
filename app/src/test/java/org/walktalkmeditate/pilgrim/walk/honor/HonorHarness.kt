@@ -8,6 +8,7 @@ import java.io.File
 import java.time.Instant
 import java.util.Collections
 import java.util.UUID
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -27,11 +28,16 @@ import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.honor.VoiceKind
 import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.domain.honor.WayCoordinate
+import org.walktalkmeditate.pilgrim.domain.honor.WayMark
+import org.walktalkmeditate.pilgrim.domain.honor.WayMarkKind
 import org.walktalkmeditate.pilgrim.domain.honor.WayMedia
 import org.walktalkmeditate.pilgrim.domain.honor.WayMoment
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.domain.honor.WayPoint
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
+import org.walktalkmeditate.pilgrim.domain.honor.WayStage
+import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
+import org.walktalkmeditate.pilgrim.domain.honor.WayStagePlace
 import org.walktalkmeditate.pilgrim.sensor.fakeStepCounter
 import org.walktalkmeditate.pilgrim.walk.HonorSettings
 import org.walktalkmeditate.pilgrim.walk.HonorStart
@@ -77,6 +83,7 @@ internal class HonorHarness(private val folder: File) {
         ports: FakePorts = FakePorts(),
         honorEnabled: Boolean = true,
         arrivalRecorder: HonorArrivalRecorder = controller,
+        sessionDispatcher: CoroutineDispatcher = Dispatchers.IO,
     ) = HonorSession(
         database = db,
         wayStore = store,
@@ -89,7 +96,7 @@ internal class HonorHarness(private val folder: File) {
         releaseFlags = FixedReleaseFlags(honor = honorEnabled),
         clock = clock,
         arrivalLabel = { title -> "Walked their way: $title" },
-        sessionDispatcher = Dispatchers.IO,
+        sessionDispatcher = sessionDispatcher,
         tickMillis = 0,
     )
 
@@ -161,9 +168,48 @@ internal class HonorHarness(private val folder: File) {
             weather = null,
         )
 
-        fun fix(lon: Double, atMillis: Long, accuracy: Float = 5f, speed: Float? = 1.2f) = LocationPoint(
+        const val STAGE_ID = "pilgrimage:camino-frances:4"
+
+        /** On-way water [offLine] metres north of the line at [lon]. */
+        fun water(id: String, lon: Double, offLine: Double = 10.0) = WayMark(
+            id = id,
+            kind = WayMarkKind.WATER,
+            name = "Fuente $id",
+            at = WayCoordinate(lat = offLine / 111_320, lon = lon),
+            frac = lon / END_LON,
+            offLineMeters = offLine,
+        )
+
+        /**
+         * A pilgrimage stage on [way]'s line, as its package installs it:
+         * water at 0.3 and 0.8 and a waypoint at 0.5, and no voices.
+         */
+        fun stage(
+            marks: List<WayMark> = listOf(water("wp-osm-water-node1", 0.003), water("wp-osm-water-node2", 0.008)),
+            title: String = "Larrasoaña to Pamplona",
+        ) = way(moments = listOf(waypoint(1, 0.005)), title = title).copy(
+            id = STAGE_ID,
+            source = WaySource.Pilgrimage(routeId = "camino-frances", stageIndex = 4),
+            marks = marks,
+            stage = WayStage(
+                routeId = "camino-frances", index = 4, count = 33, name = title, theme = "The city",
+                narrative = "The way crosses the river into Pamplona.", closing = "You walked into a city on foot.",
+                warnings = emptyList(), distanceKm = 15.6, gainMeters = 210.0,
+                hours = WayStageHours(min = 4.0, max = 5.0), difficulty = "moderate",
+                start = WayStagePlace(name = "Larrasoaña", at = WayCoordinate(lat = 0.0, lon = 0.0)),
+                end = WayStagePlace(name = "Pamplona", at = WayCoordinate(lat = 0.0, lon = END_LON)),
+            ),
+        )
+
+        fun fix(
+            lon: Double,
+            atMillis: Long,
+            accuracy: Float = 5f,
+            speed: Float? = 1.2f,
+            lat: Double = 0.0,
+        ) = LocationPoint(
             timestamp = atMillis,
-            latitude = 0.0,
+            latitude = lat,
             longitude = lon,
             horizontalAccuracyMeters = accuracy,
             speedMetersPerSecond = speed,
@@ -183,6 +229,12 @@ internal class FakePorts {
 
     /** Runs inside [WayVoicePort.play], before the call returns: what the rows say at the first sound. */
     var onPlay: (File) -> Unit = {}
+
+    /** Runs inside [HonorHapticsPort.waterAhead]: what the rows say as the water haptic plays. */
+    var onWaterAhead: () -> Unit = {}
+
+    /** Runs as each haptic plays, with the name its call line carries ("water", "arrival", …). */
+    var onHaptic: (String) -> Unit = {}
 
     val voice = object : WayVoicePort {
         override fun play(file: File, gain: Float, listener: WayVoiceListener) {
@@ -228,17 +280,23 @@ internal class FakePorts {
     }
 
     val haptics = object : HonorHapticsPort {
-        override fun momentReached() {
-            calls += "haptic moment"
+        override fun momentReached() = haptic("moment")
+
+        override fun softTap() = haptic("softTap")
+
+        override fun waterAhead() {
+            onWaterAhead()
+            haptic("water")
         }
 
-        override fun softTap() {
-            calls += "haptic softTap"
-        }
+        override fun arrival() = haptic("arrival")
 
-        override fun arrival() {
-            calls += "haptic arrival"
-        }
+        override val arrivalMillis = ARRIVAL_MILLIS
+    }
+
+    private fun haptic(name: String) {
+        onHaptic(name)
+        calls += "haptic $name"
     }
 
     val gates = object : HonorGatePort {
@@ -260,4 +318,9 @@ internal class FakePorts {
     }
 
     fun clear() = calls.clear()
+
+    companion object {
+        /** The fake arrival's length, as long as the real one's. */
+        const val ARRIVAL_MILLIS = 370L
+    }
 }

@@ -22,7 +22,7 @@ import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPhase
 
-/** The v10 Honor tables: writes that never clobber, guards that win once, and what outlives a walk. */
+/** The Honor tables: writes that never clobber, guards that win once, and what outlives a walk. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
 class HonorDaoTest {
@@ -70,6 +70,7 @@ class HonorDaoTest {
         softTapSince = null,
         softTapArmed = true,
         arrivalInsideFixes = 2,
+        lastNoticeSeconds = null,
     )
 
     @Test
@@ -130,13 +131,65 @@ class HonorDaoTest {
     fun `arrival's compare-and-set wins once and keeps the first numbers`() = runTest {
         dao.insertSession(session())
 
-        assertEquals(1, dao.recordArrival(walkId, theirSeconds = 2_400.0, yourSeconds = 2_100.0))
-        assertEquals(0, dao.recordArrival(walkId, theirSeconds = 1.0, yourSeconds = 1.0))
+        assertEquals(1, dao.recordArrival(walkId, theirSeconds = 2_400.0, yourSeconds = 2_100.0, walkedMeters = 9_000.0))
+        assertEquals(0, dao.recordArrival(walkId, theirSeconds = 1.0, yourSeconds = 1.0, walkedMeters = 1.0))
 
         val row = dao.getSession(walkId)!!
         assertEquals(HonorPhase.ARRIVED, row.phase)
         assertEquals(2_400.0, row.arrivalTheirSeconds!!, 0.0)
         assertEquals(2_100.0, row.arrivalYourSeconds!!, 0.0)
+        assertEquals(9_000.0, row.arrivalWalkedMeters!!, 0.0)
+    }
+
+    // Schema 12: a stage's notices, its quiet clock, and its identity
+
+    @Test
+    fun `an engine update writes the quiet clock and leaves the stage identity alone`() = runTest {
+        dao.insertSession(session())
+        dao.recordStageIdentity(walkId, "camino-frances", index = 3, name = "Larrasoaña to Pamplona", distanceKm = 15.6)
+
+        dao.updateEngineState(engine(progress = 0.4).copy(lastNoticeSeconds = 1_234.4))
+
+        val row = dao.getSession(walkId)!!
+        assertEquals(1_234.4, row.lastNoticeSeconds!!, 0.0)
+        assertEquals(
+            listOf<Any?>("camino-frances", 3, "Larrasoaña to Pamplona", 15.6),
+            listOf(row.stageRouteId, row.stageIndex, row.stageName, row.stageDistanceKm),
+        )
+    }
+
+    @Test
+    fun `a new session row is no stage, with nothing spoken and the first notice free`() = runTest {
+        dao.insertSession(session())
+
+        val row = dao.getSession(walkId)!!
+        assertEquals(
+            listOf<Any?>(null, null, null, null, null, null),
+            listOf(
+                row.lastNoticeSeconds, row.arrivalWalkedMeters, row.stageRouteId,
+                row.stageIndex, row.stageName, row.stageDistanceKm,
+            ),
+        )
+        assertTrue(dao.getNotices(walkId).isEmpty())
+    }
+
+    @Test
+    fun `a notice is spoken once, and a second insert keeps the first`() = runTest {
+        val first = HonorNoticeEntity(walkId, HonorNoticeKind.WATER, "wp-osm-water-node1", meters = 250.5, firedAt = 5_000L)
+        dao.insertNotice(first)
+        dao.insertNotice(first.copy(meters = 90.0, firedAt = 9_000L))
+
+        assertEquals(listOf(first), dao.getNotices(walkId))
+    }
+
+    @Test
+    fun `a notice of a kind this build doesn't know reads as unknown`() = runTest {
+        db.openHelper.writableDatabase.execSQL(
+            "INSERT INTO honor_notices (walk_id, kind, ref_id, meters, fired_at) " +
+                "VALUES ($walkId, 'STAMP', 'wp-temple-10', 1.0, 2)",
+        )
+
+        assertEquals(HonorNoticeKind.UNKNOWN, dao.getNotices(walkId).single().kind)
     }
 
     @Test
@@ -240,6 +293,7 @@ class HonorDaoTest {
         dao.insertSession(session())
         dao.upsertMomentState(HonorMomentStateEntity(walkId, "voice-1"))
         dao.markCardTouched(walkId, "voice-1")
+        dao.insertNotice(HonorNoticeEntity(walkId, HonorNoticeKind.WATER, "w1", meters = 200.0, firedAt = 5_000L))
         dao.insertMarker(HonorWalkMarkerEntity(walkUuid, finishedAt = 9_000L, finishKind = HonorFinishKind.CLEAN))
 
         dao.deleteLiveRows(walkId)
@@ -247,6 +301,7 @@ class HonorDaoTest {
         assertNull(dao.getSession(walkId))
         assertTrue(dao.getMomentStates(walkId).isEmpty())
         assertTrue(dao.getCardStates(walkId).isEmpty())
+        assertTrue(dao.getNotices(walkId).isEmpty())
         assertNotNull(dao.getMarker(walkUuid))
     }
 
@@ -255,6 +310,7 @@ class HonorDaoTest {
         dao.insertSession(session())
         dao.upsertMomentState(HonorMomentStateEntity(walkId, "voice-1"))
         dao.markCardTouched(walkId, "voice-1")
+        dao.insertNotice(HonorNoticeEntity(walkId, HonorNoticeKind.WATER, "w1", meters = 200.0, firedAt = 5_000L))
         dao.insertMarker(HonorWalkMarkerEntity(walkUuid, finishedAt = 9_000L, finishKind = HonorFinishKind.CLEAN))
 
         db.walkDao().deleteById(walkId)
@@ -262,6 +318,7 @@ class HonorDaoTest {
         assertNull(dao.getSession(walkId))
         assertTrue(dao.getMomentStates(walkId).isEmpty())
         assertTrue(dao.getCardStates(walkId).isEmpty())
+        assertTrue(dao.getNotices(walkId).isEmpty())
         assertEquals(HonorFinishKind.CLEAN, dao.getMarker(walkUuid)!!.finishKind)
     }
 

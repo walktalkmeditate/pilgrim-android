@@ -2,13 +2,22 @@
 package org.walktalkmeditate.pilgrim.walk.honor
 
 import android.app.Application
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
 import java.io.File
+import java.time.ZoneId
+import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -22,18 +31,27 @@ import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.honor.HonorFinishKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorMomentStateEntity
+import org.walktalkmeditate.pilgrim.data.honor.HonorNoticeEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorVoiceEnd
+import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPhase
+import org.walktalkmeditate.pilgrim.domain.honor.WayGeometry
+import org.walktalkmeditate.pilgrim.honor.BeginHonorWalk
+import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
+import org.walktalkmeditate.pilgrim.walk.HonorSettings
 import org.walktalkmeditate.pilgrim.walk.WalkControllerImpl
+import org.walktalkmeditate.pilgrim.walk.honor.HonorHarness.Companion.STAGE_ID
 import org.walktalkmeditate.pilgrim.walk.honor.HonorHarness.Companion.fix
+import org.walktalkmeditate.pilgrim.walk.honor.HonorHarness.Companion.water
 
 /**
  * The `:tracker` Honor session against a real Room, Ways store, and
@@ -492,6 +510,301 @@ class HonorSessionTest {
 
         assertEquals(1, h.repository.eventsFor(walk.id).count { it.eventType == WalkEventType.HONOR_ARRIVAL })
         assertEquals(0, revivedPorts.calls.count { it == "haptic arrival" })
+    }
+
+    // A pilgrimage stage (pilgrimage-stage spec P3 §6, §9, §11, §12; owner decision 2)
+
+    private val stage = HonorHarness.stage()
+
+    private suspend fun notices(walk: Walk): List<HonorNoticeEntity> = dao.getNotices(walk.id)
+
+    /** Where the engine puts the walker at [lon]: the stage's own geometry, as iOS's `ahead` measures it. */
+    private fun aheadOfWater(markLon: Double, walkerLon: Double): Double =
+        (markLon - walkerLon) / HonorHarness.END_LON * WayGeometry(stage.route).totalMeters
+
+    @Test
+    fun `a stage's water notice commits before its haptic plays`() = runBlocking {
+        val walk = h.startHonorWalk(stage)
+        val ports = FakePorts()
+        var noticesAtHaptic: List<HonorNoticeEntity>? = null
+        var clockAtHaptic: Double? = null
+        ports.onWaterAhead = {
+            runBlocking {
+                noticesAtHaptic = notices(walk)
+                clockAtHaptic = dao.getSession(walk.id)!!.lastNoticeSeconds
+            }
+        }
+        val session = h.newSession(ports)
+        session.begin(walk, trailhead())
+        assertTrue("334 m out, too far yet", notices(walk).isEmpty())
+
+        session.walkTo(0.001)
+
+        val notice = noticesAtHaptic!!.single()
+        assertEquals("wp-osm-water-node1" to h.clock.millis, notice.refId to notice.firedAt)
+        assertEquals(aheadOfWater(0.003, 0.001), notice.meters, 1e-6)
+        assertEquals("the Begin's clock, the first notice free", 0.0, clockAtHaptic!!, 0.0)
+        assertEquals(1, ports.calls.count { it == "haptic water" })
+    }
+
+    /** A first `:tracker` speaks node 1 at 0.001 and is killed; a second revives the walk from Room on [ports]. */
+    private suspend fun revivedAfterNodeOne(walk: Walk, ports: FakePorts): HonorSession {
+        val firstProcess = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val first = h.newSession(FakePorts())
+        first.begin(walk, trailhead(), scope = firstProcess)
+        first.walkTo(0.001)
+        firstProcess.coroutineContext[Job]!!.cancelAndJoin()
+        val revivedController = h.newController().also { it.restoreActiveWalk() }
+        val revived = h.newSession(ports, arrivalRecorder = revivedController)
+        assertEquals(HonorSessionStart.Started(revived = true), revived.begin(walk, trailhead(), revivedController))
+        return revived
+    }
+
+    @Test
+    fun `a revival keeps the water spoken, so node 1 stays silent with the hour out and still ahead`() = runBlocking {
+        val walk = h.startHonorWalk(stage)
+        val ports = FakePorts()
+        val revived = revivedAfterNodeOne(walk, ports)
+        val spoken = notices(walk).single()
+
+        h.clock.millis += 3_600_000
+        revived.tickNow()
+        revived.walkTo(0.002)
+
+        assertEquals("node 1, 111 m ahead, never speaks twice", 0, ports.calls.count { it == "haptic water" })
+        assertEquals("the quiet clock still reads node 1's", 0.0, dao.getSession(walk.id)!!.lastNoticeSeconds!!, 0.0)
+
+        revived.walkTo(0.003, 0.004, 0.005, 0.006)
+
+        assertEquals("the hour is out: node 2 speaks", listOf(spoken.refId, "wp-osm-water-node2"), notices(walk).map { it.refId })
+        assertEquals(spoken, notices(walk).first())
+        assertEquals(1, ports.calls.count { it == "haptic water" })
+    }
+
+    @Test
+    fun `a revival keeps the quiet hour, so node 2 in reach waits for it`() = runBlocking {
+        val walk = h.startHonorWalk(stage)
+        val ports = FakePorts()
+        val revived = revivedAfterNodeOne(walk, ports)
+        val spoken = notices(walk)
+
+        revived.walkTo(0.002, 0.003, 0.004, 0.005, 0.006)
+
+        assertEquals("node 2, 222 m ahead inside the hour, stays silent", spoken, notices(walk))
+        assertEquals(0, ports.calls.count { it == "haptic water" })
+
+        h.clock.millis += 3_600_000
+        revived.tickNow()
+        revived.walkTo(0.006)
+
+        assertEquals(listOf("wp-osm-water-node1", "wp-osm-water-node2"), notices(walk).map { it.refId })
+        assertEquals(1, ports.calls.count { it == "haptic water" })
+    }
+
+    // iOS `testWaterAheadBorrowsTheCaptionLineAndNothingElse` (`PilgrimageStageWalkTests.swift:356-367@7c200bf`),
+    // its "nothing else" half (P3 §6.1); the caption is U39's.
+    @Test
+    fun `a water notice writes nothing else, no moment or card row, no walk event, no waypoint`() = runBlocking {
+        val walk = h.startHonorWalk(stage)
+        val session = h.newSession(FakePorts())
+        session.begin(walk, trailhead())
+        val momentRows = dao.getMomentStates(walk.id)
+        val events = h.repository.eventsFor(walk.id)
+
+        session.walkTo(0.001)
+
+        assertEquals("the notice spoke", listOf("wp-osm-water-node1"), notices(walk).map { it.refId })
+        assertEquals(momentRows, dao.getMomentStates(walk.id))
+        assertTrue("a mark is never a card", dao.getCardStates(walk.id).isEmpty())
+        assertEquals(events, h.repository.eventsFor(walk.id))
+        assertTrue(h.repository.waypointsFor(walk.id).isEmpty())
+    }
+
+    // iOS `testTheEngineReportsWhetherItEverAnchoredOnTheWay` (`PilgrimageStageWalkTests.swift:115-127@7c200bf`),
+    // the row twin of `HonorEngineTest`'s port (P3 §10.2): what U36's outcome will read.
+    @Test
+    fun `a stage begun a kilometre north of the line reads the fallback on its row until a fix joins it`() = runBlocking {
+        val walk = h.startHonorWalk(stage)
+        assertNull("no fix yet", dao.getSession(walk.id)!!.startFrac)
+        val session = h.newSession(FakePorts())
+
+        session.begin(walk, fix(0.0, h.clock.millis, lat = 0.01))
+        val approach = dao.getSession(walk.id)!!
+        session.walkTo(0.001)
+        val joined = dao.getSession(walk.id)!!
+
+        assertEquals("the frac-0 fallback is not a stage joined", 0.0 to true, approach.startFrac to approach.anchoredByFallback)
+        assertFalse(joined.anchoredByFallback)
+        assertEquals(0.1, joined.startFrac!!, 1e-9)
+    }
+
+    // Correctness review P3-1: a vibration still playing is cut by the next one, where iOS layers the two.
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `water on arrival's own fix taps once arrival's three taps have played`() = runTest {
+        val plaza = water("wp-osm-water-plaza", 0.0099)
+        val walk = h.startHonorWalk(HonorHarness.stage(marks = listOf(water("wp-osm-water-node1", 0.003), plaza)))
+        val ports = FakePorts()
+        val played = mutableListOf<Pair<String, Long>>()
+        ports.onHaptic = { name -> played += name to testScheduler.currentTime }
+        val session = h.newSession(ports, sessionDispatcher = StandardTestDispatcher(testScheduler))
+        try {
+            session.begin(walk, trailhead())
+            session.walkTo(*(1..19).map { it * 0.0005 }.toDoubleArray())
+            // Inside the end's 30 m twice, the plaza 11 m ahead and silent in node 1's hour.
+            session.walkTo(0.0098, 0.0098)
+            h.clock.millis += 3_600_000
+            session.tickNow()
+            session.walkTo(0.0098)
+
+            assertEquals("arrival's taps play, alone", "haptic arrival", ports.calls.last())
+            testScheduler.advanceTimeBy(FakePorts.ARRIVAL_MILLIS)
+            assertEquals("until they end", "haptic arrival", ports.calls.last())
+            testScheduler.runCurrent()
+            val (arrival, plazaTap) = played.takeLast(2)
+            assertEquals("water" to arrival.second + FakePorts.ARRIVAL_MILLIS, plazaTap)
+
+            assertEquals(HonorPhase.ARRIVED, dao.getSession(walk.id)!!.phase)
+            assertEquals(listOf("wp-osm-water-node1", plaza.id), notices(walk).map { it.refId })
+        } finally {
+            withContext(NonCancellable) { session.stop() }
+        }
+    }
+
+    @Test
+    fun `a cached tracker's second walk on the same stage starts with no water spoken`() = runBlocking {
+        val ports = FakePorts()
+        val session = h.newSession(ports)
+        val first = h.startHonorWalk(stage)
+        session.begin(first, trailhead())
+        session.walkTo(0.001)
+        h.controller.finishWalk()
+        session.awaitIdle()
+        assertTrue("the finalize took the notices with the live rows", notices(first).isEmpty())
+
+        val second = h.startHonorWalk(stage)
+        session.begin(second, trailhead())
+        session.walkTo(0.001)
+
+        val notice = notices(second).single()
+        assertEquals("wp-osm-water-node1" to h.clock.millis, notice.refId to notice.firedAt)
+        assertEquals(2, ports.calls.count { it == "haptic water" })
+    }
+
+    @Test
+    fun `a stage start never schedules a soft tap, whatever the preference says`() = runBlocking {
+        h.store.save(stage)
+        val begin = BeginHonorWalk(
+            repository = h.repository,
+            wayStore = h.store,
+            walkController = h.controller,
+            recordingFiles = VoiceRecordingFileSystem(ApplicationProvider.getApplicationContext<Context>()),
+            releaseFlags = FixedReleaseFlags(honor = true),
+            ioDispatcher = Dispatchers.IO,
+            mintWalkUuid = { "11111111-2222-4333-8444-555555555555" },
+            zone = { ZoneId.of("UTC") },
+            locale = { Locale.US },
+        )
+        val started = begin(
+            BeginHonorWalk.Request(
+                way = HonorWayChoice.Stored(STAGE_ID),
+                intention = null,
+                settings = HonorSettings(voicesEnabled = true, softTapEnabled = true),
+            ),
+        ) as BeginHonorWalk.Result.Started
+        val ports = FakePorts()
+        val session = h.newSession(ports)
+        session.begin(started.walk, trailhead())
+
+        walkOffTheWayForTwoMinutes(session)
+
+        assertFalse(dao.getSession(started.walk.id)!!.softTapEnabled)
+        assertEquals(0, ports.calls.count { it == "haptic softTap" })
+    }
+
+    @Test
+    fun `an own walk with the soft tap on taps two minutes off the way, the stage case's control`() = runBlocking {
+        val walk = h.startHonorWalk(way, settings = HonorSettings(voicesEnabled = true, softTapEnabled = true))
+        val ports = FakePorts()
+        val session = h.newSession(ports)
+        session.begin(walk, trailhead())
+
+        walkOffTheWayForTwoMinutes(session)
+
+        assertEquals(1, ports.calls.count { it == "haptic softTap" })
+    }
+
+    /** Onto the line, then 280 m north of it for two minutes and a second, each fix read at its own time. */
+    private suspend fun walkOffTheWayForTwoMinutes(session: HonorSession) {
+        session.walkTo(0.001)
+        for (step in 0..2) {
+            h.clock.millis += if (step == 0) 1_000 else 60_500
+            session.onFix(fix(0.001, h.clock.millis, lat = 280.0 / 111_320))
+            session.awaitIdle()
+        }
+    }
+
+    @Test
+    fun `the stage walked lands on the session row at Start`() = runBlocking {
+        val walk = h.startHonorWalk(stage)
+
+        h.newSession().begin(walk, trailhead())
+
+        val row = dao.getSession(walk.id)!!
+        assertEquals(
+            listOf<Any?>("camino-frances", 4, "Larrasoaña to Pamplona", 15.6),
+            listOf(row.stageRouteId, row.stageIndex, row.stageName, row.stageDistanceKm),
+        )
+    }
+
+    @Test
+    fun `an own walk's row names no stage`() = runBlocking {
+        val walk = h.startHonorWalk(way)
+
+        h.newSession().begin(walk, trailhead())
+
+        assertNull(dao.getSession(walk.id)!!.stageRouteId)
+    }
+
+    @Test
+    fun `a stage walks the copy staged at Begin, revival included, not the package redrawn since`() = runBlocking {
+        h.store.save(stage)
+        val walk = h.startHonorWalk(stage)
+        val redrawn = HonorHarness.stage(marks = listOf(water("wp-osm-water-node9", 0.0015)), title = "Redrawn")
+        h.store.save(redrawn)
+        val firstProcess = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val first = h.newSession(FakePorts())
+        first.begin(walk, trailhead(), scope = firstProcess)
+        first.walkTo(0.001)
+        firstProcess.coroutineContext[Job]!!.cancelAndJoin()
+        h.store.save(redrawn.copy(marks = emptyList()))
+
+        val revivedController = h.newController().also { it.restoreActiveWalk() }
+        val second = h.newSession(FakePorts(), arrivalRecorder = revivedController)
+        second.begin(walk, trailhead(), revivedController)
+        h.clock.millis += 3_600_000
+        second.tickNow()
+        second.walkTo(0.002, 0.003, 0.004, 0.005, 0.006)
+
+        assertEquals(listOf("wp-osm-water-node1", "wp-osm-water-node2"), notices(walk).map { it.refId })
+        assertEquals("Larrasoaña to Pamplona", dao.getSession(walk.id)!!.stageName)
+    }
+
+    @Test
+    fun `a stage's arrival freezes the walked distance while the walk goes on`() = runBlocking {
+        val walk = h.startHonorWalk(stage)
+        val session = h.newSession(FakePorts())
+        session.begin(walk, trailhead())
+        session.walkTo(*(1..19).map { it * 0.0005 }.toDoubleArray())
+        session.walkTo(0.0098, 0.0098, 0.0098)
+        val arrived = dao.getSession(walk.id)!!
+        assertEquals(HonorPhase.ARRIVED, arrived.phase)
+
+        session.walkTo(0.0099, 0.01)
+
+        val later = dao.getSession(walk.id)!!
+        assertTrue("the walk credits on", later.walkedFrac > arrived.walkedFrac)
+        assertEquals(arrived.walkedFrac * WayGeometry(stage.route).totalMeters, later.arrivalWalkedMeters!!, 0.0)
     }
 
     // Finish, and writes after it

@@ -37,6 +37,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.honor.HonorImportCoordinator
 import org.walktalkmeditate.pilgrim.honor.HonorImportState
+import org.walktalkmeditate.pilgrim.honor.HonorStageHandoff
 import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.honor.OwnWalkWays
 import org.walktalkmeditate.pilgrim.location.LocationSource
@@ -124,6 +125,7 @@ class HonorOverviewViewModel internal constructor(
     private val recordingFiles: VoiceRecordingFileSystem,
     private val waveformCache: WaveformCache,
     private val ioDispatcher: CoroutineDispatcher,
+    private val stageHandoff: HonorStageHandoff = HonorStageHandoff(),
     /** A shared voice's bars: iOS's peaks, read from its `.m4a` (S4 §9.3). */
     private val loadSharedWaveform: suspend (File) -> FloatArray? = { WaveformGenerator.generate(it, WAVEFORM_BARS) },
 ) : ViewModel() {
@@ -141,9 +143,10 @@ class HonorOverviewViewModel internal constructor(
         playback: VoicePlaybackController,
         recordingFiles: VoiceRecordingFileSystem,
         waveformCache: WaveformCache,
+        stageHandoff: HonorStageHandoff,
     ) : this(
         savedStateHandle, ownWalkWays, wayStore, imports, honorPreferences, unitsPreferences, locationSource,
-        weatherFetching, playback, recordingFiles, waveformCache, Dispatchers.IO,
+        weatherFetching, playback, recordingFiles, waveformCache, Dispatchers.IO, stageHandoff,
     )
 
     private val choice: HonorWayChoice = choiceOf(savedStateHandle)
@@ -209,6 +212,21 @@ class HonorOverviewViewModel internal constructor(
         // current fix; silent offline or without a fix (F §10.5).
         val today = weatherFetching.fetchCurrent(here.latitude, here.longitude) ?: return
         updateOverview { it.copy(todayCondition = today.condition.rawValue) }
+    }
+
+    /**
+     * Begin, which only navigates (spec correction 1). A stage goes to the
+     * walk screen as this overview loaded it, as iOS's Begin hands its
+     * captured `way` on (`MainCoordinatorView.swift:94@7c200bf`), so the
+     * walk's Start stages that copy whatever the package does meanwhile
+     * (pilgrimage-stage spec, owner decision 2).
+     *
+     * @return what the walk screen walks.
+     */
+    fun begin(): HonorWayChoice {
+        val way = (_state.value as? HonorOverviewUiState.Ready)?.overview?.way
+        if (way != null && way.isPilgrimageStage) stageHandoff.hand(way)
+        return choice
     }
 
     fun setVoicesEnabled(enabled: Boolean) {

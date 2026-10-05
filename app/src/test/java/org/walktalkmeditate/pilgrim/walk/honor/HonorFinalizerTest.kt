@@ -45,6 +45,7 @@ import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageLedgerStore
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPhase
+import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.honor.WaySweeper
 import org.walktalkmeditate.pilgrim.walk.honor.HonorHarness.Companion.WAY_ID
@@ -76,6 +77,8 @@ class HonorFinalizerTest {
         kind: HonorFinishKind?,
         arrival: WayArrival? = this.arrival,
         endTimestamp: Long? = 9_000L,
+        staged: Way = way,
+        sourceKind: HonorSourceKind = HonorSourceKind.OWN_WALK,
     ): Walk {
         val uuid = UUID.randomUUID().toString()
         val id = h.db.walkDao().insert(Walk(uuid = uuid, startTimestamp = 1_000L, endTimestamp = endTimestamp))
@@ -83,8 +86,8 @@ class HonorFinalizerTest {
         dao.insertSession(
             HonorSessionEntity(
                 walkId = id,
-                wayId = WAY_ID,
-                sourceKind = HonorSourceKind.OWN_WALK,
+                wayId = staged.id,
+                sourceKind = sourceKind,
                 voicesEnabled = true,
                 softTapEnabled = false,
                 phase = if (arrival != null) HonorPhase.ARRIVED else HonorPhase.WALKING,
@@ -95,7 +98,7 @@ class HonorFinalizerTest {
         )
         dao.upsertMomentState(HonorMomentStateEntity(walkId = id, momentId = "voice-1", reachedAt = 2_000L, heard = true))
         dao.insertCardStateIfAbsent(HonorCardStateEntity(walkId = id, momentId = "voice-1", touched = true))
-        h.store.stage(uuid, way)
+        h.store.stage(uuid, staged)
         return h.db.walkDao().getById(id)!!
     }
 
@@ -293,6 +296,27 @@ class HonorFinalizerTest {
         assertNotNull(h.store.staged(live))
         assertNotNull("a pending step still needs it", h.store.staged(pending.uuid))
     }
+
+    @Test
+    fun `a stage walk's staging is never listed over its package, and the sweep takes it as it takes an own walk's`() =
+        runBlocking {
+            h.store.save(HonorHarness.stage())
+            val packageWay = File(folder.root, "Ways/${HonorHarness.STAGE_ID}/way.json")
+            val installed = packageWay.readText()
+            val walk = finishedHonorWalk(
+                HonorFinishKind.CLEAN,
+                staged = HonorHarness.stage(title = "as it stood at Begin"),
+                sourceKind = HonorSourceKind.PILGRIMAGE,
+            )
+
+            h.finalizer.finalize(walk.id)
+            age(stagingDir(walk.uuid))
+            h.finalizer.sweepStaging()
+
+            assertEquals(WayLink(HonorHarness.STAGE_ID, 600.0, 540.0), h.store.wayLink(walk.uuid))
+            assertEquals("the package's own file", installed, packageWay.readText())
+            assertFalse(stagingDir(walk.uuid).exists())
+        }
 
     @Test
     fun `the sweep clears old temp files a killed write left, and spares young ones`() = runBlocking {

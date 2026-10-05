@@ -31,11 +31,23 @@ import org.walktalkmeditate.pilgrim.walk.WalkStartRequest
  * at Start). It mints the new walk's uuid and starts the walk through the
  * existing chain with the uuid, the Way id, and the preferences frozen
  * for the walk. An own walk's Way is built from the source walk's rows
- * and staged under that uuid; a shared Way is read back from the store,
- * where it has been listed since its acceptance, and staged nowhere. iOS
- * builds nothing here and stages nothing (`startRecording`, D §3.1); the
- * uuid and the staging are Android's, so `:tracker` can rebuild the
- * session from files and Room alone.
+ * and staged under that uuid. A pilgrimage stage is the copy its overview
+ * loaded, handed over at Begin ([HonorStageHandoff]), and staged under the
+ * uuid the same way, so `:tracker` walks, and revives on, the stage the
+ * walker saw at the door whatever the package does from then on: iOS's
+ * view model holds the Way it captured at the door (pilgrimage-stage
+ * spec, owner decision 2). Only when the hand-off is gone, after a UI
+ * process death between Begin and Start, is the stage read from its
+ * package at Start. A shared Way is read back from the store, where it
+ * has been listed since its acceptance, and staged nowhere. iOS builds
+ * nothing here and stages nothing (`startRecording`, D §3.1); the uuid
+ * and the staging are Android's, so `:tracker` can rebuild the session
+ * from files and Room alone.
+ *
+ * A stage has no other walker to be off the Way from, so its soft tap is
+ * off whatever the preference says, iOS's `&& !way.isPilgrimageStage`
+ * (`ActiveWalkViewModel+Honor.swift:53-59@7c200bf`). It is applied here,
+ * where the Way is loaded, since [HonorSettings.atStart] runs before it is.
  *
  * A staging write that fails refuses the start. A start that fails after
  * staging (the tracker's 5 s wait, or its refusal) leaves the staging for
@@ -54,6 +66,7 @@ class BeginHonorWalk internal constructor(
     private val begins: HonorBeginsInFlight = HonorBeginsInFlight(),
     /** Returns once the walk's live session row exists; [invoke] bounds the wait. */
     private val awaitSessionRow: suspend (walkId: Long) -> Unit = {},
+    private val stageHandoff: HonorStageHandoff = HonorStageHandoff(),
 ) {
     private val ownWalkWays = OwnWalkWays(repository, recordingFiles, ioDispatcher, zone, locale)
 
@@ -66,6 +79,7 @@ class BeginHonorWalk internal constructor(
         releaseFlags: ReleaseFlags,
         begins: HonorBeginsInFlight,
         honorDao: HonorDao,
+        stageHandoff: HonorStageHandoff,
     ) : this(
         repository = repository,
         wayStore = wayStore,
@@ -78,9 +92,13 @@ class BeginHonorWalk internal constructor(
         locale = Locale::getDefault,
         begins = begins,
         awaitSessionRow = { walkId -> honorDao.observeSession(walkId).first { it != null } },
+        stageHandoff = stageHandoff,
     )
 
-    /** [settings] are the preferences read at Start: see [HonorSettings.atStart]. */
+    /**
+     * [settings] are the preferences read at Start: see [HonorSettings.atStart].
+     * A stage's soft tap is then turned off.
+     */
     data class Request(
         val way: HonorWayChoice,
         val intention: String?,
@@ -136,22 +154,28 @@ class BeginHonorWalk internal constructor(
                 OwnWalkWays.Built.SourceMissing -> return Result.Refused(Refusal.SOURCE_MISSING)
                 OwnWalkWays.Built.NotWalkable -> return Result.Refused(Refusal.NOT_WALKABLE)
             }
-            // Listed since its acceptance, and `:tracker` reads a share from the store: nothing to stage.
-            is HonorWayChoice.Stored -> withContext(ioDispatcher) { wayStore.load(choice.wayId) }
+            // A share is listed since its acceptance, a stage installed with its package.
+            is HonorWayChoice.Stored -> stageHandoff.stage(choice.wayId)
+                ?: withContext(ioDispatcher) { wayStore.load(choice.wayId) }
                 ?: return Result.Refused(Refusal.SOURCE_MISSING)
         }
         val walkUuid = mintWalkUuid()
-        if (request.way is HonorWayChoice.OwnWalk && !stage(walkUuid, way)) {
+        val stagesPerWalk = request.way is HonorWayChoice.OwnWalk || way.isPilgrimageStage
+        if (stagesPerWalk && !stage(walkUuid, way)) {
             return Result.Refused(Refusal.STAGING_FAILED)
         }
+        val settings = request.settings.copy(
+            softTapEnabled = request.settings.softTapEnabled && !way.isPilgrimageStage,
+        )
         val walk = walkController.startWalk(
             WalkStartRequest(
                 intention = request.intention,
                 mode = WalkMode.Honor,
                 walkUuid = walkUuid,
-                honor = HonorStart(wayId = way.id, settings = request.settings),
+                honor = HonorStart(wayId = way.id, settings = settings),
             ),
         )
+        stageHandoff.release(way.id)
         return Result.Started(walk)
     }
 

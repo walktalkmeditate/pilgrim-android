@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.data
 
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import org.walktalkmeditate.pilgrim.data.honor.HonorNoticeKind
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 
@@ -48,5 +49,18 @@ class ConvertersTest {
     fun `unknown ActivityType name falls back to WALKING instead of throwing`() {
         val decoded = converters.stringToActivityType("REST_OF_TIME")
         assertEquals(ActivityType.WALKING, decoded)
+    }
+
+    @Test
+    fun `a water notice's kind round trips through storage`() {
+        assertEquals(
+            HonorNoticeKind.WATER,
+            converters.stringToHonorNoticeKind(converters.honorNoticeKindToString(HonorNoticeKind.WATER)),
+        )
+    }
+
+    @Test
+    fun `a notice kind a later build wrote reads as unknown instead of throwing`() {
+        assertEquals(HonorNoticeKind.UNKNOWN, converters.stringToHonorNoticeKind("STAMP"))
     }
 }

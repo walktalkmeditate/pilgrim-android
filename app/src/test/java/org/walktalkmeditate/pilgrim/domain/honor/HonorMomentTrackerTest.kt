@@ -11,11 +11,12 @@ import org.walktalkmeditate.pilgrim.domain.honor.HonorMomentTracker.Gates
 
 /**
  * Ports iOS `UnitTests/Honor/HonorMomentTrackerTests.swift@7c200bf` test
- * for test (the first eleven, same cases and numbers), then pins the
- * per-fix order and the id tiebreak parity spec B §3 and §8.1 state. The
- * six water tests in that file's extension are stage-only and wait for
- * Stage 21-2 with `waterAhead` itself. Distances run on the default
- * haversine, which moves no iOS number across a threshold here.
+ * for test (the first twelve, same cases and numbers), then pins the
+ * per-fix order and the id tiebreak parity spec B §3 and §8.1 state; then
+ * the six water tests of that file's extension, names kept, and the water
+ * cases the pilgrimage-stage spec adds (P3 §2–§3, corrections 4, 5, 13).
+ * Distances run on the default haversine, which moves no iOS number
+ * across a threshold here.
  */
 class HonorMomentTrackerTest {
 
@@ -223,6 +224,246 @@ class HonorMomentTrackerTest {
         )
         val t = trackerOf(waypoint, photo1)
         assertEquals(listOf(Action.Reached(photo1), Action.Reached(waypoint)), t.fixAt(700.0, progress = 0.7))
+    }
+
+    // iOS's water tests (`HonorMomentTrackerTests.swift` extension), names kept
+
+    private fun water(id: String, frac: Double, offLine: Double = 10.0) = WayMark(
+        id = id,
+        kind = WayMarkKind.WATER,
+        name = "Fuente $id",
+        at = WayCoordinate(lat = 0.0, lon = frac * 1000 / 111_320),
+        frac = frac,
+        offLineMeters = offLine,
+    )
+
+    private fun markTracker(vararg marks: WayMark) =
+        HonorMomentTracker(moments = emptyList(), marks = marks.toList(), geometry = geometry, voicesEnabled = false)
+
+    private fun markAhead(actions: List<Action>): List<String> =
+        actions.filterIsInstance<Action.MarkAhead>().map { it.mark.id }
+
+    private fun HonorMomentTracker.waterAt(
+        meters: Double,
+        progress: Double,
+        clock: Double,
+        onWay: Boolean = true,
+        gates: Gates = open,
+    ): List<Action> = update(
+        coord(meters),
+        progressFrac = progress,
+        gates = gates,
+        isStationary = false,
+        activeSeconds = clock,
+        isOnWay = onWay,
+    )
+
+    @Test
+    fun testWaterFiresOnceInsideThreeHundredMetresBeforeIt() {
+        val t = markTracker(water("a", frac = 0.5))
+        // 400 m short: too early.
+        assertEquals(emptyList<String>(), markAhead(t.waterAt(100.0, progress = 0.1, clock = 0.0)))
+        // 250 m short: the caption.
+        val hit = t.waterAt(250.0, progress = 0.25, clock = 60.0)
+        assertEquals(listOf("a"), markAhead(hit))
+        assertEquals(250.0, (hit.first() as Action.MarkAhead).meters, 5.0)
+        // And never again — not inside the quiet hour, and not after it
+        // either while the mark is still ahead.
+        assertEquals(emptyList<String>(), markAhead(t.waterAt(300.0, progress = 0.3, clock = 120.0)))
+        assertEquals(
+            "a mark that has spoken stays silent even once the hour has passed",
+            emptyList<String>(),
+            markAhead(t.waterAt(300.0, progress = 0.3, clock = 4000.0)),
+        )
+    }
+
+    @Test
+    fun testWaterNeverFiresOnceItIsBehindYou() {
+        val t = markTracker(water("a", frac = 0.5))
+        assertEquals(
+            "a fountain you have already passed is not news",
+            emptyList<String>(),
+            markAhead(t.waterAt(600.0, progress = 0.6, clock = 0.0)),
+        )
+    }
+
+    @Test
+    fun testAFountainOffTheTrailIsADetourNotADrink() {
+        val t = markTracker(water("far", frac = 0.5, offLine = 250.0))
+        assertEquals(emptyList<String>(), markAhead(t.waterAt(250.0, progress = 0.25, clock = 0.0)))
+    }
+
+    @Test
+    fun testOffWayWalkersGetNothing() {
+        val t = markTracker(water("a", frac = 0.5))
+        assertEquals(emptyList<String>(), markAhead(t.waterAt(250.0, progress = 0.25, clock = 0.0, onWay = false)))
+    }
+
+    @Test
+    fun testTheFirstIsFreeThenOnePerHourOfWalking() {
+        val t = markTracker(water("a", frac = 0.3), water("b", frac = 0.5), water("c", frac = 0.9))
+        assertEquals(listOf("a"), markAhead(t.waterAt(100.0, progress = 0.1, clock = 0.0)))
+        // b is 200 m ahead, 20 minutes later: inside the quiet hour.
+        assertEquals(
+            "a skipped mark stays a silent pin",
+            emptyList<String>(),
+            markAhead(t.waterAt(300.0, progress = 0.3, clock = 1200.0)),
+        )
+        // c is 200 m ahead, an hour and a half in.
+        assertEquals(listOf("c"), markAhead(t.waterAt(700.0, progress = 0.7, clock = 5400.0)))
+    }
+
+    @Test
+    fun testOnlyWaterSpeaks() {
+        val bed = WayMark(
+            id = "bed",
+            kind = WayMarkKind.BED,
+            name = "Albergue",
+            at = WayCoordinate(lat = 0.0, lon = 500.0 / 111_320),
+            frac = 0.5,
+            offLineMeters = 10.0,
+        )
+        val t = markTracker(bed)
+        assertEquals(emptyList<String>(), markAhead(t.waterAt(250.0, progress = 0.25, clock = 0.0)))
+    }
+
+    // The pilgrimage-stage spec's water cases (P3 §2–§3)
+
+    @Test
+    fun `the Begin fix can be the first notice, its clock at 0, and the hour runs from there`() {
+        val t = markTracker(water("a", frac = 0.25), water("b", frac = 0.6))
+        assertEquals(listOf("a"), markAhead(t.waterAt(0.0, progress = 0.0, clock = 0.0)))
+        assertEquals(0.0, t.snapshot().lastNoticeSeconds!!, 0.0)
+        val short = t.waterAt(400.0, progress = 0.4, clock = 3599.6)
+        assertEquals("0.4 s short of the hour", emptyList<String>(), markAhead(short))
+        assertEquals(
+            "strict: exactly an hour after the last notice the next may speak",
+            listOf("b"),
+            markAhead(t.waterAt(400.0, progress = 0.4, clock = 3600.0)),
+        )
+    }
+
+    @Test
+    fun `a mark skipped in the quiet hour speaks once the hour ends if it is still within 300 m`() {
+        val t = markTracker(water("a", frac = 0.3), water("b", frac = 0.5))
+        markAhead(t.waterAt(100.0, progress = 0.1, clock = 0.0))
+        assertEquals(emptyList<String>(), markAhead(t.waterAt(250.0, progress = 0.25, clock = 1200.0)))
+
+        val late = t.waterAt(350.0, progress = 0.35, clock = 3600.0)
+
+        assertEquals(listOf("b"), markAhead(late))
+        assertEquals("the metres left at that fix", 150.0, (late.single() as Action.MarkAhead).meters, 5.0)
+    }
+
+    @Test
+    fun `a fountain 250 m off the line never announces, the whole way along`() {
+        val t = markTracker(water("far", frac = 0.5, offLine = 250.0))
+        val heard = (0..100).flatMap { step ->
+            markAhead(t.waterAt(step * 10.0, progress = step / 100.0, clock = step * 600.0))
+        }
+        assertEquals(emptyList<String>(), heard)
+    }
+
+    @Test
+    fun `water exactly 60 m off the line is on the way, and a centimetre farther is not`() {
+        val t = markTracker(water("past", frac = 0.4, offLine = 60.01), water("edge", frac = 0.5, offLine = 60.0))
+        assertEquals(listOf("edge"), markAhead(t.waterAt(250.0, progress = 0.25, clock = 0.0)))
+    }
+
+    @Test
+    fun `water speaks while recording, sitting, paused, or under a whisper, as iOS does`() {
+        val closed = listOf(
+            Gates(paused = true),
+            Gates(meditating = true),
+            Gates(recording = true),
+            Gates(externalAudio = true),
+        )
+        for (gates in closed) {
+            val t = markTracker(water("a", frac = 0.5))
+            assertEquals("$gates", listOf("a"), markAhead(t.waterAt(250.0, progress = 0.25, clock = 0.0, gates = gates)))
+        }
+    }
+
+    @Test
+    fun `the water sort ties -0_0 with 0_0 and keeps the package's order`() {
+        val zero = water("zero", frac = 0.0)
+        val negativeZero = water("negative-zero", frac = -0.0)
+        val zeroFirst = markTracker(zero, negativeZero).waterAt(0.0, progress = 0.0, clock = 0.0)
+        assertEquals(listOf("zero"), markAhead(zeroFirst))
+        assertEquals(
+            listOf("negative-zero"),
+            markAhead(markTracker(negativeZero, zero).waterAt(0.0, progress = 0.0, clock = 0.0)),
+        )
+    }
+
+    @Test
+    fun `water exactly 300 m ahead speaks`() {
+        val t = markTracker(water("a", frac = 0.4))
+
+        val hit = t.waterAt(100.0, progress = progressPutting(frac = 0.4, aheadMeters = 300.0), clock = 0.0)
+
+        assertEquals(listOf(300.0), hit.filterIsInstance<Action.MarkAhead>().map { it.meters })
+    }
+
+    @Test
+    fun `one fix speaks only the nearer of two, and the other waits for the next hour`() {
+        val t = markTracker(water("a", frac = 0.3), water("b", frac = 0.35))
+        assertEquals(listOf("a"), markAhead(t.waterAt(100.0, progress = 0.1, clock = 0.0)))
+        assertEquals(emptyList<String>(), markAhead(t.waterAt(100.0, progress = 0.1, clock = 60.0)))
+        assertEquals(listOf("b"), markAhead(t.waterAt(200.0, progress = 0.2, clock = 3600.0)))
+    }
+
+    /** The progress that puts a mark at [frac] exactly [aheadMeters] ahead in iOS's arithmetic. */
+    private fun progressPutting(frac: Double, aheadMeters: Double): Double {
+        var progress = frac - aheadMeters / geometry.totalMeters
+        repeat(64) {
+            val ahead = (frac - progress) * geometry.totalMeters
+            if (ahead == aheadMeters) return progress
+            progress = if (ahead > aheadMeters) Math.nextUp(progress) else Math.nextDown(progress)
+        }
+        error("no progress puts the mark exactly $aheadMeters m ahead")
+    }
+
+    @Test
+    fun `water comes after the drops and before a voice starts, in one fix`() {
+        val t = HonorMomentTracker(
+            moments = listOf(voice1),
+            marks = listOf(water("a", frac = 0.5)),
+            geometry = geometry,
+            voicesEnabled = true,
+        )
+        val actions = t.update(coord(300.0), progressFrac = 0.3, gates = open, isStationary = false)
+        assertEquals(listOf(Action.MarkAhead::class, Action.VoiceStart::class), actions.map { it::class })
+    }
+
+    @Test
+    fun `a restore brings back the water spoken and the quiet clock, keeping only marks it watches`() {
+        val live = markTracker(water("a", frac = 0.3), water("b", frac = 0.5))
+        live.waterAt(100.0, progress = 0.1, clock = 42.0)
+        val snapshot = live.snapshot()
+        assertEquals(setOf("a") to 42.0, snapshot.firedMarks to snapshot.lastNoticeSeconds)
+
+        val revived = markTracker(water("a", frac = 0.3), water("b", frac = 0.5))
+        revived.restore(snapshot.copy(firedMarks = snapshot.firedMarks + "a-food-mark"))
+
+        assertEquals(snapshot, revived.snapshot())
+        assertEquals(
+            "a spoken mark stays silent, and b waits for the hour",
+            emptyList<String>(),
+            markAhead(revived.waterAt(250.0, progress = 0.25, clock = 1_000.0)),
+        )
+        assertEquals(listOf("b"), markAhead(revived.waterAt(250.0, progress = 0.25, clock = 3_642.0)))
+    }
+
+    @Test
+    fun `a restored null clock leaves the first notice free`() {
+        val t = markTracker(water("a", frac = 0.5))
+        t.restore(HonorMomentTracker.Snapshot(emptySet(), emptyList(), emptySet(), lastNoticeSeconds = null))
+        assertEquals(
+            "a minute in: a clock restored as 0 would still be inside its hour",
+            listOf("a"),
+            markAhead(t.waterAt(250.0, progress = 0.25, clock = 60.0)),
+        )
     }
 
     @Test

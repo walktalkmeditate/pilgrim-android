@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import Foundation
 
-// The synthetic corpus: nine Ways and the GPS traces walked on them. No
-// point comes from a real walk. Every place is a round-number origin and
-// every line is drawn here, in local metres around that origin, so the
-// corpus can be regenerated exactly (`harness corpus <dir>`).
+// The synthetic corpus: nine own-walk Ways, nine pilgrimage stages with
+// water marks, and the GPS traces walked on them. No point comes from a
+// real walk. Every place is a round-number origin and every line is drawn
+// here, in local metres around that origin, so the corpus can be
+// regenerated exactly (`harness corpus <dir>`).
 
 /// One input to the engine, in the order the view model delivers it.
 struct TraceInput: Codable, Equatable {
@@ -332,7 +333,9 @@ func assemble(fixes: [TraceInput], scripted: [TraceInput], pauses: [(Double, Dou
 let corpusT0 = 1_777_622_400.0  // 2026-05-01T08:00:00Z
 
 func corpus() -> [(Way, Trace)] {
-    [straight(), loopLong(), loopShort(), outAndBack(), detour(), blackout(), stationary(), pauseMidVoice(), sitMidVoice()]
+    [straight(), loopLong(), loopShort(), outAndBack(), detour(), blackout(), stationary(), pauseMidVoice(), sitMidVoice(),
+     waterFirstFree(), waterQuietHour(), waterSkippedThenSpoken(), waterOffLineAndKinds(), waterOncePerMark(),
+     waterOffWayGate(), waterPauseSitting(), waterFallbackJoin(), waterTwoInOneFix()]
 }
 
 private func trace(_ name: String, _ about: String, softTap: Bool = true, voices: Bool = true,
@@ -583,4 +586,221 @@ func sitMidVoice() -> (Way, Trace) {
         finish(at: 525.7), finish(at: 570.7),
     ])
     return (way, trace("sit-mid-voice-64n", "A sitting mid-voice: the voice pauses and a second queues; the engine clock and the companion run on; one fix leaning 22 m ahead reaches a photo during the sitting; the voice resumes when it ends; arrival counts the sitting.", inputs))
+}
+
+// MARK: - Pilgrimage stages: the water traces (U35, pilgrimage-stage spec P3 §17)
+
+/// A service point drawn `off` metres north of the line, `along` metres from its start.
+struct MarkSpec {
+    let id: String
+    let kind: WayMarkKind
+    let along: Double
+    let off: Double
+}
+
+func water(_ id: String, along: Double, off: Double) -> MarkSpec { MarkSpec(id: id, kind: .water, along: along, off: off) }
+
+/// A stage running straight east from the site's origin for `length`
+/// metres, a route point every 100 m at a synthesized 1 m/s, as a package
+/// stages one: a pilgrimage source, a stage block, and marks. Each mark's
+/// frac is its `along` over the drawn length, as the dataset projects a
+/// mark onto its slice, and its `offLineMeters` is its offset as drawn.
+func makeStage(name: String, routeId: String, site: Site, length: Double, marks: [MarkSpec]) -> Way {
+    let line = Polyline([P(e: 0, n: 0), P(e: length, n: 0)])
+    let build = RouteBuild(site: site, path: line, spacing: 100, speed: 1.0)
+    var way = Way(id: "pilgrimage:\(routeId):0", source: .pilgrimage(routeId: routeId, stageIndex: 0), title: name,
+                  departedAt: Date(timeIntervalSince1970: 1_775_030_400), tzIdentifier: "UTC", expires: nil,
+                  route: build.route, totalDistanceMeters: build.geometry.totalMeters.rounded(),
+                  theirActiveSeconds: build.geometry.totalSeconds, moments: [], weather: nil)
+    way.marks = marks.map { mark in
+        WayMark(id: mark.id, kind: mark.kind, name: "golden \(mark.id)", at: site.coordinate(P(e: mark.along, n: mark.off)),
+                frac: mark.along / length, offLineMeters: mark.off)
+    }
+    way.stage = WayStage(routeId: routeId, index: 0, count: 1, name: name, theme: "golden",
+                         narrative: "A stage drawn for a test.", closing: "You walked a drawn line.", warnings: [],
+                         distanceKm: (length / 100).rounded() / 10, gainMeters: 0, hours: WayStageHours(min: 1, max: 2),
+                         difficulty: "easy",
+                         start: WayStagePlace(name: "start", at: site.coordinate(P(e: 0, n: 0))),
+                         end: WayStagePlace(name: "end", at: site.coordinate(P(e: length, n: 0))))
+    return way
+}
+
+/// Every stage trace's fixes: one every 14 s, so no fix's clock ever lands
+/// exactly an hour after an earlier fix's, and the quiet hour never ends on
+/// a tie (14 doesn't divide 3,600, nor 3,600 plus any pause drawn here).
+let stageFixInterval = 14.0
+
+/// A stage has no other walker to be off the way from: the view model turns
+/// the soft tap off (`ActiveWalkViewModel+Honor.swift:53-59@7c200bf`).
+private func stageTrace(_ name: String, _ about: String, _ inputs: [TraceInput]) -> Trace {
+    Trace(name: name, about: about, t0: corpusT0, softTapEnabled: false, voicesEnabled: true,
+          missingMedia: [], inputs: inputs)
+}
+
+private func stageFixes(_ site: Site, _ motion: Motion, seed: UInt64) -> [TraceInput] {
+    fixes(site: site, motion: motion, seed: seed, interval: stageFixInterval)
+}
+
+/// W1: Begun on the line 250 m before water, which speaks on the Begin fix
+/// at clock 0, before the first tick.
+func waterFirstFree() -> (Way, Trace) {
+    let site = Site(lat0: 12.0, lon0: 15.0)
+    let way = makeStage(name: "water first free", routeId: "golden-w1", site: site, length: 1500,
+                        marks: [water("w-a", along: 250, off: 12)])
+    var motion = Motion(start: P(e: 0, n: 0))
+    motion.stand(6)
+    motion.walk([P(e: 400, n: 0)], speed: 1.2)
+    motion.stand(10)
+    let inputs = assemble(fixes: stageFixes(site, motion, seed: 101), scripted: [])
+    return (way, stageTrace("water-first-free-12n", "W1: begun on the line 250 m before water; it speaks on the Begin fix, with the clock still at 0, and the quiet hour runs from 0.", inputs))
+}
+
+/// W2: three waters on a 6 km stage walked at 0.9 m/s with no pause. The
+/// first speaks 300 m out; the second is passed inside the hour; the third
+/// speaks on the first fix after the hour ends, already within 300 m.
+func waterQuietHour() -> (Way, Trace) {
+    let site = Site(lat0: 23.0, lon0: 80.0)
+    let way = makeStage(name: "water quiet hour", routeId: "golden-w2", site: site, length: 6000,
+                        marks: [water("w-a", along: 1000, off: 5), water("w-b", along: 2500, off: 8),
+                                water("w-c", along: 4000, off: 12)])
+    var motion = Motion(start: P(e: 0, n: 0))
+    motion.walk([P(e: 4120, n: 0)], speed: 0.9)
+    let inputs = assemble(fixes: stageFixes(site, motion, seed: 102), scripted: [])
+    return (way, stageTrace("water-quiet-hour-23n", "W2: three waters on a 6 km stage at 0.9 m/s: the first speaks 300 m out, the second is passed inside the quiet hour and never speaks, the third speaks on the first fix after the hour ends.", inputs))
+}
+
+/// W3: the probe's walk. Begun 100 m north of the trailhead, the walker
+/// joins on a diagonal, where the first water speaks; a 610 s pause and a
+/// 10 min sitting 104 m short of a second water fall in the hour; a water
+/// reached 300 m out inside the hour speaks once it ends, with the metres
+/// left, and the next, already within 300 m, is silenced by the new hour.
+func waterSkippedThenSpoken() -> (Way, Trace) {
+    let site = Site(lat0: 43.5, lon0: -2.0)
+    let way = makeStage(name: "water skipped then spoken", routeId: "golden-w3", site: site, length: 6000, marks: [
+        water("w-free", along: 250, off: 12), water("w-quiet", along: 1500, off: 5),
+        water("w-far", along: 2000, off: 250), MarkSpec(id: "f-food", kind: .food, along: 2200, off: 0),
+        water("w-late", along: 3750, off: 40), water("w-after", along: 3800, off: 60),
+    ])
+    var motion = Motion(start: P(e: 0, n: 100))
+    motion.walk([P(e: 60, n: 0)], speed: 1.2)
+    motion.walk([P(e: 600, n: 0)], speed: 1.2)
+    motion.stand(1210.7 - motion.now + 1)
+    motion.walk([P(e: 1396, n: 0)], speed: 1.2)
+    motion.stand(2410.7 - motion.now + 1)
+    motion.walk([P(e: 3950, n: 0)], speed: 1.2)
+    let inputs = assemble(fixes: stageFixes(site, motion, seed: 103), scripted: [
+        gate("paused", true, at: 600.7), gate("paused", false, at: 1210.7),
+        gate("meditating", true, at: 1810.7), gate("meditating", false, at: 2410.7),
+    ], pauses: [(600.7, 1210.7)])
+    return (way, stageTrace("water-skipped-then-spoken-43n", "W3: begun 100 m off the line, the first water speaks at the join; a pause stretches the quiet hour in wall time and a sitting doesn't; a water reached 300 m out inside the hour speaks once it ends, and the next, already within 300 m, is silenced by the new hour.", inputs))
+}
+
+/// W4: which marks are watched. Water 61 m and 250 m off the line, and
+/// food, a bed, transport, supplies and a clinic on it, never speak; water
+/// exactly 60 m off does.
+func waterOffLineAndKinds() -> (Way, Trace) {
+    let site = Site(lat0: -38.0, lon0: 145.0)
+    let way = makeStage(name: "water off line and kinds", routeId: "golden-w4", site: site, length: 2000, marks: [
+        MarkSpec(id: "m-food", kind: .food, along: 300, off: 0), MarkSpec(id: "m-bed", kind: .bed, along: 350, off: 0),
+        MarkSpec(id: "m-transport", kind: .transport, along: 400, off: 0),
+        MarkSpec(id: "m-supply", kind: .supply, along: 450, off: 0),
+        MarkSpec(id: "m-medical", kind: .medical, along: 500, off: 0),
+        water("w-61", along: 600, off: 61), water("w-250", along: 700, off: 250), water("w-60", along: 900, off: 60),
+    ])
+    var motion = Motion(start: P(e: 0, n: 0))
+    motion.walk([P(e: 1000, n: 0)], speed: 1.2)
+    let inputs = assemble(fixes: stageFixes(site, motion, seed: 104), scripted: [])
+    return (way, stageTrace("water-off-line-and-kinds-38s", "W4: only on-way water speaks: water 61 m and 250 m off the line and five other kinds on it stay silent; water exactly 60 m off speaks.", inputs))
+}
+
+/// W5: one water, spoken once ever: walked past, walked back past within
+/// the backward tolerance, and walked past again after the hour.
+func waterOncePerMark() -> (Way, Trace) {
+    let site = Site(lat0: 55.0, lon0: 12.0)
+    let way = makeStage(name: "water once per mark", routeId: "golden-w5", site: site, length: 3000,
+                        marks: [water("w-a", along: 800, off: 10)])
+    var motion = Motion(start: P(e: 0, n: 0))
+    motion.walk([P(e: 1000, n: 0)], speed: 1.2)
+    motion.walk([P(e: 450, n: 0)], speed: 1.2)
+    motion.stand(4300 - motion.now)
+    motion.walk([P(e: 1100, n: 0)], speed: 1.2)
+    let inputs = assemble(fixes: stageFixes(site, motion, seed: 105), scripted: [])
+    return (way, stageTrace("water-once-per-mark-55n", "W5: one water speaks once ever: walked past, walked back past it within the backward tolerance, and walked past again after the hour.", inputs))
+}
+
+/// W6: off the Way, water waits. After the first water, the walker rests;
+/// a second water comes within 300 m inside the hour; they step 80 m off
+/// the line, the hour ends while they are off it, and the water speaks on
+/// the fix that rejoins, with that fix's metres. Off the line under 120 s,
+/// so no re-acquire.
+func waterOffWayGate() -> (Way, Trace) {
+    let site = Site(lat0: -28.0, lon0: -48.5)
+    let way = makeStage(name: "water off way gate", routeId: "golden-w6", site: site, length: 3000,
+                        marks: [water("w-a", along: 400, off: 10), water("w-b", along: 2200, off: 15)])
+    var motion = Motion(start: P(e: 0, n: 0))
+    motion.walk([P(e: 1500, n: 0)], speed: 1.2)
+    motion.stand(3207 - motion.now)
+    motion.walk([P(e: 2000, n: 0)], speed: 1.2)
+    motion.walk([P(e: 2000, n: 80)], speed: 1.2)
+    motion.walk([P(e: 2040, n: 80)], speed: 1.2)
+    motion.walk([P(e: 2040, n: 0)], speed: 1.2)
+    motion.walk([P(e: 2300, n: 0)], speed: 1.2)
+    let inputs = assemble(fixes: stageFixes(site, motion, seed: 106), scripted: [])
+    return (way, stageTrace("water-off-way-gate-28s", "W6: a water within 300 m when the quiet hour ends stays silent while the walker is 80 m off the line, and speaks on the fix that rejoins, with that fix's metres.", inputs))
+}
+
+/// W7: water reads no gate, and its hour is the engine's. The first water
+/// speaks while the walk is paused and a reply records, the clock frozen;
+/// after the pause, the walker sits within 300 m of a second water, and
+/// the hour ends during the sitting under a whisper: the pause delayed it
+/// in wall time, the sitting didn't.
+func waterPauseSitting() -> (Way, Trace) {
+    let site = Site(lat0: 46.0, lon0: 7.0)
+    let way = makeStage(name: "water pause sitting", routeId: "golden-w7", site: site, length: 5000,
+                        marks: [water("w-a", along: 400, off: 10), water("w-b", along: 4150, off: 10)])
+    var motion = Motion(start: P(e: 0, n: 0))
+    motion.walk([P(e: 150, n: 0)], speed: 1.2)
+    motion.stand(670.7 - motion.now + 0.3)
+    motion.walk([P(e: 4000, n: 0)], speed: 1.2)
+    motion.stand(4600.7 - motion.now + 1)
+    motion.walk([P(e: 4300, n: 0)], speed: 1.2)
+    let inputs = assemble(fixes: stageFixes(site, motion, seed: 107), scripted: [
+        gate("paused", true, at: 60.7), gate("recording", true, at: 70.7), gate("recording", false, at: 100.7),
+        gate("paused", false, at: 670.7),
+        gate("meditating", true, at: 3900.7), gate("externalAudio", true, at: 4200.7),
+        gate("externalAudio", false, at: 4400.7), gate("meditating", false, at: 4600.7),
+    ], pauses: [(60.7, 670.7)])
+    return (way, stageTrace("water-pause-sitting-46n", "W7: water reads no gate: the first speaks while paused and recording, at the frozen clock; the hour ends on engine seconds during a sitting under a whisper, 610 s of pause later in wall time.", inputs))
+}
+
+/// W8: begun 100 m off the line, nothing speaks until the walker joins it;
+/// the water 250 m in speaks at the join, the first notice free.
+func waterFallbackJoin() -> (Way, Trace) {
+    let site = Site(lat0: -17.0, lon0: -65.0)
+    let way = makeStage(name: "water fallback join", routeId: "golden-w8", site: site, length: 1500,
+                        marks: [water("w-a", along: 250, off: 10)])
+    var motion = Motion(start: P(e: 0, n: 100))
+    motion.walk([P(e: 40, n: 0)], speed: 1.2)
+    motion.walk([P(e: 450, n: 0)], speed: 1.2)
+    let inputs = assemble(fixes: stageFixes(site, motion, seed: 108), scripted: [])
+    return (way, stageTrace("water-fallback-join-17s", "W8: begun 100 m off the line on the frac-0 fallback, nothing speaks until the join, where the water 250 m in speaks, free.", inputs))
+}
+
+/// W9: after the hour, a re-acquire lands the walker with two unfired
+/// waters within 300 m ahead: the nearer speaks, and the other waits for
+/// the next hour and is passed.
+func waterTwoInOneFix() -> (Way, Trace) {
+    let site = Site(lat0: 50.0, lon0: 19.0)
+    let way = makeStage(name: "water two in one fix", routeId: "golden-w9", site: site, length: 4000, marks: [
+        water("w-a", along: 250, off: 10), water("w-b", along: 2500, off: 10), water("w-c", along: 2600, off: 20),
+    ])
+    var motion = Motion(start: P(e: 0, n: 0))
+    motion.walk([P(e: 700, n: 0)], speed: 1.2)
+    motion.walk([P(e: 700, n: 200)], speed: 1.2)
+    motion.walk([P(e: 2350, n: 200)], speed: 1.2)
+    motion.stand(3650 - motion.now)
+    motion.walk([P(e: 2350, n: 0)], speed: 1.2)
+    motion.walk([P(e: 2800, n: 0)], speed: 1.2)
+    let inputs = assemble(fixes: stageFixes(site, motion, seed: 109), scripted: [])
+    return (way, stageTrace("water-two-in-one-fix-50n", "W9: after the hour, a re-acquire lands the walker with two waters within 300 m ahead: only the nearer speaks; the other waits for the next hour and is passed.", inputs))
 }

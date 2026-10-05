@@ -23,8 +23,9 @@ enum class HonorFinishKind { CLEAN, RECOVERED }
  * The engine's `activeDuration` is not here: it is the walk's elapsed
  * time minus pauses, which the walk's own events already give. Nor are
  * the published `isOnWay`, `offWayMeters`, `distanceRemainingMeters`, and
- * `companionFrac`, which the next fix or tick recomputes. The stage-only
- * water marks (`firedMarks`, `lastMarkSeconds`) wait for Stage 21-2.
+ * `companionFrac`, which the next fix or tick recomputes. A stage's water
+ * marks spoken are rows of `honor_notices`; their quiet clock is
+ * [lastNoticeSeconds] (schema 12, pilgrimage-stage spec Annex A.5.2).
  *
  * Times are epoch milliseconds on the wall clock the engine's timers use;
  * the `_seconds` columns are active-duration seconds, as in the engine.
@@ -118,4 +119,41 @@ data class HonorSessionEntity(
     /** Set inside `finishWalkAtomic`'s transaction; null while the walk is on. */
     @ColumnInfo(name = "finish_kind")
     val finishKind: HonorFinishKind? = null,
+    /**
+     * The engine clock at the last notice, in seconds; null while the first
+     * is free. A water caption writes it today; iOS PR #91's temple notice
+     * shares the clock (Annex A.5.2).
+     */
+    @ColumnInfo(name = "last_notice_seconds")
+    val lastNoticeSeconds: Double? = null,
+    /**
+     * The engine's walked distance at arrival, frozen beside the arrival
+     * numbers for the stage arrival card, as iOS freezes it into its card
+     * (`ActiveWalkViewModel+Honor.swift:253-259@7c200bf`): the live
+     * [walkedFrac] runs on after it.
+     */
+    @ColumnInfo(name = "arrival_walked_meters")
+    val arrivalWalkedMeters: Double? = null,
+    /**
+     * The stage walked, as the Way staged at Begin names it, recorded when
+     * the session first starts so the ledger's record never needs the
+     * stage's `way.json`; null on every walk that isn't a stage.
+     */
+    @ColumnInfo(name = "stage_route_id")
+    val stageRouteId: String? = null,
+    /** Zero-based, as `WayStage.index`. */
+    @ColumnInfo(name = "stage_index")
+    val stageIndex: Int? = null,
+    @ColumnInfo(name = "stage_name")
+    val stageName: String? = null,
+    @ColumnInfo(name = "stage_distance_km")
+    val stageDistanceKm: Double? = null,
 )
+
+/**
+ * An own walk's Way and a pilgrimage stage's are staged under the walk at
+ * Start and walked from that copy (owner decision 2 of the pilgrimage-stage
+ * spec); a shared Way is read from the store, where it is listed.
+ */
+val HonorSourceKind.isStagedPerWalk: Boolean
+    get() = this == HonorSourceKind.OWN_WALK || this == HonorSourceKind.PILGRIMAGE

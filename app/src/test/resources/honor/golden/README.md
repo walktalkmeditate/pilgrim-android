@@ -1,6 +1,6 @@
-# Honor golden engine traces (Phase 21, U16)
+# Honor golden engine traces (Phase 21, U16 and U35)
 
-Nine synthetic Ways and GPS traces, run through iOS's own Honor engine at the parity pin. `HonorGoldenTraceTest` runs Android's `HonorEngine` over the same inputs and checks it against iOS input for input: the same events, in the same order, at the same fix, with the same moment ids; the same engine state after every input; and the same `CLLocation.distance` calls, in the same order, to the same places. All nine match with no allowance.
+Eighteen synthetic Ways and GPS traces, run through iOS's own Honor engine at the parity pin: nine own walks (U16) and nine pilgrimage stages with water marks (U35, pilgrimage-stage spec P3 §17). `HonorGoldenTraceTest` runs Android's `HonorEngine` over the same inputs and checks it against iOS input for input: the same events, in the same order, at the same fix, with the same moment and mark ids and the same metres; the same engine state after every input; and the same `CLLocation.distance` calls, in the same order, to the same places. All eighteen match with no allowance. A tenth water check, W10, is Android's alone (see [The water traces](#the-water-traces)).
 
 This directory also pins the distance behind iOS's `CLLocation.distance(from:)` call sites (parity spec B §16.1, D1–D4: moment radii of 42 and 60 m, voice drops at 300 m, arrival at 30 m), which Apple does not document. See [What `CLLocation.distance` computes](#what-cllocationdistance-computes).
 
@@ -8,7 +8,7 @@ This directory also pins the distance behind iOS's `CLLocation.distance(from:)` 
 
 - `capture/capture.sh` fetches six files verbatim from pilgrim-ios at the pin with `git show`: `Pilgrim/Models/Honor/{Way,WayGeometry,HonorTuning,HonorMomentTracker,HonorEngine}.swift` and `Pilgrim/Models/Walk/Seek/ArrivalDebounce.swift`. It compiles them with the three files here and rewrites `corpus/` and `expected/`. No iOS source is copied into this repository, and nothing is written to pilgrim-ios.
 - `capture/Stubs.swift` holds the two `SeekEngineTuning` constants that `HonorTuning.swift` reads, with `SeekEngine.swift:27-28@7c200bf`'s values.
-- `capture/Corpus.swift` defines the corpus: every Way and every trace, drawn in local metres around a round-number origin, with seeded integer-only noise.
+- `capture/Corpus.swift` defines the corpus: every Way and every trace, drawn in local metres around a round-number origin, with seeded integer-only noise. A stage is a straight line east with marks drawn north of it: each mark's `frac` is its distance along over the drawn length, as the dataset projects a mark onto its slice, and its `offLineMeters` is the offset as drawn.
 - `capture/main.swift` is the harness. It writes the corpus, drives the engine, writes the event streams and the distance pairs, and checks the distance model.
 - `corpus/<trace>/way.json` is the Way, encoded as `WayStore` encodes one (`.iso8601`, `[.sortedKeys]`: U13's format). `corpus/<trace>/trace.json` holds the inputs, one per line.
 - `expected/<trace>.jsonl` holds what iOS did, one record per input. `expected/cl-distance-pairs.txt` holds `GeoDistanceTest`'s literals.
@@ -18,10 +18,10 @@ This directory also pins the distance behind iOS's `CLLocation.distance(from:)` 
 | | |
 |---|---|
 | Pin | `pilgrim-ios` `v2.0.0` = `7c200bf` |
-| Captured | 2026-09-29, `TZ=UTC` |
+| Captured | 2026-09-29, `TZ=UTC` (the nine own walks); 2026-10-02 (the nine water traces, with the own walks recaptured byte for byte) |
 | macOS | 26.7.1 (25G241) |
 | Swift | 6.3.3 (swiftlang-6.3.3.1.3), `swiftc -O`, Swift 5 language mode |
-| Cross-check | iOS 26.5 simulator (23F77, iPhone 17 Pro). The same harness, built for `arm64-apple-ios26.0-simulator` and run with `xcrun simctl spawn`, loads the runtime's own `CoreLocation.framework` and writes byte-identical `corpus/` and `expected/` |
+| Cross-check | iOS 26.5 simulator (23F77, iPhone 17 Pro), for the nine own walks. The same harness, built for `arm64-apple-ios26.0-simulator` and run with `xcrun simctl spawn`, loads the runtime's own `CoreLocation.framework` and writes byte-identical `corpus/` and `expected/`. The water traces were captured on macOS only; they make no `CLLocation.distance` call, so CoreLocation can't move them |
 
 To reproduce, run `capture/capture.sh`. It needs macOS with `swiftc` and a pilgrim-ios checkout, by default this repository's sibling (set `IOS_REPO` otherwise). It rewrites every file under `corpus/` and `expected/`. A clean `git status` afterwards means the capture reproduced byte for byte. The run takes about 10 s.
 
@@ -39,20 +39,22 @@ The harness follows `ActiveWalkViewModel+Honor.swift@7c200bf` (`startHonorEngine
 - **`now()`** is injected, as `HonorEngineTests` does. For every input it is the input's own time, `t0 + t`, where `t0` is 2026-05-01T08:00:00Z. Fixes land on whole even seconds, so every wall-clock interval is exact on both platforms: `Date` holds whole seconds exactly, and Android's clock is milliseconds.
 - **`voiceDidFinish()`** is called directly, as the view model calls it. A `finish` input is the player ending or a skip, and the harness fails if nothing is playing then. A voice listed in `missingMedia` has no file, so the event sink hands the turn straight back from inside `.voiceStart`, as `startVoice` does.
 - **Fixes** become `CLLocation(coordinate:altitude:horizontalAccuracy:verticalAccuracy:course:speed:timestamp:)`, as `honorLocationFixes` builds them. A missing accuracy or speed is iOS's `-1`. Android sees `null` for these, and `-1` where the trace says `-1`. The trace feeds the engine directly, as parity spec B resolution 3 asks, so the route filter's 10/20 m differences never enter. Before each fix, the harness also runs `LocationManagement`'s route-distance call (`LocationManagement.swift:291@7c200bf`, the new fix measured from the previous one), so CoreLocation's cache follows the walker as it does in the app.
-- **Private state** (`softTapArmed`/`softTapSince`, the debounce count, `offWaySince`, `lastReacquireAttempt`, the tracker's `queue`) is read with `Mirror` on iOS and with reflection in the Android test. Nothing in either engine was changed to expose it.
+- **Private state** (`softTapArmed`/`softTapSince`, the debounce count, `offWaySince`, `lastReacquireAttempt`, the tracker's `queue`, and on a stage the tracker's `firedMarks` and quiet clock) is read with `Mirror` on iOS and with reflection in the Android test. Nothing in either engine was changed to expose it.
+- **A stage** runs with the soft tap off, as the view model sets it for one (`ActiveWalkViewModel+Honor.swift:53-59@7c200bf`), and its fixes come every 14 s, so that no fix's engine clock is ever exactly an hour after an earlier one's (14 divides neither 3,600 nor 3,600 plus the 610 s pauses drawn here).
 - **Distance calls.** `-[CLLocation distanceFromLocation:]` is swizzled so the harness can see each call the engine makes. The value still comes from Apple's implementation. Each trace runs twice: once with CoreLocation's cache as the run leaves it (`cl`), and once with a far-away measurement before every call, which makes CoreLocation recompute its radii for the pair (`fresh`, the value with no history). The two runs must produce identical events and states, or the harness stops: a difference would mean CoreLocation's cache decided something.
 
 ### Record format
 
 A `trace.json` input has a `kind` (`fix`, `tick`, `gates`, `gate`, or `finish`) and a time `t` in seconds since `t0`. A fix adds `lat`, `lon`, `accuracy`, and `speed`, where absent means none. A tick adds `activeSeconds`. `gates` carries all four gates. A `gate` input carries one `gate` and its `value`.
 
-An `expected/*.jsonl` record has an input index `i` and a `kind`. A fix also has `fix`, its ordinal among the fixes, dropped ones included. A tick has only `companionFrac`. Every other record has `events` (with `id`, `offWayMeters`, `theirSeconds`, and `yourSeconds` where they apply) and `state`:
+An `expected/*.jsonl` record has an input index `i` and a `kind`. A fix also has `fix`, its ordinal among the fixes, dropped ones included. A tick has only `companionFrac`. Every other record has `events` (with `id`, `offWayMeters`, `theirSeconds`, `yourSeconds`, and a `markAhead`'s unrounded `meters` where they apply) and `state`:
 
 - the published values: `progressFrac`, `distanceRemainingMeters`, `offWayMeters`, `isOnWay`, `companionFrac`, `phase`, `startFrac`, `companionT0`, `distanceWalkedMeters`, and `isAnchoredOnWay`;
 - `softTap`: `armed`, `timing`, or `disarmed`;
 - `arrivalCount`;
 - `offWaySince` and `lastReacquireAttempt`, in seconds since `t0`;
-- the tracker's `playing`, `voicePaused`, and `queue`.
+- the tracker's `playing`, `voicePaused`, and `queue`;
+- on a stage only, so the own-walk records keep their bytes: the tracker's `firedMarks` (sorted) and `lastNoticeSeconds`, the engine clock at the last water notice, absent until the first. iOS names that clock `lastMarkSeconds` at the pin; the key is the name iOS PR #91 gives it, so a fold-in changes one label in `main.swift` and no expected file.
 
 A fix record also has `calls`. Each call has a `target` (`end`, or a moment id), the place measured to (`to`), and the `cl` and `fresh` values.
 
@@ -72,6 +74,26 @@ A fix record also has `calls`. Each call has a `target` (`end`, or a moment id),
 
 Latitudes run from 33.87°S through the equator to 64.14°N, so the distance pin is exercised where `tan φ` is near 0 and above 2.
 
+### The water traces
+
+A stage's water watcher (`HonorMomentTracker.swift:124-139@7c200bf`): on-way water only (`offLineMeters <= 60`), each mark spoken once, within 300 m ahead along the line, only on the Way, at most one notice per 3,600 s of the engine clock with the first free, no gate read, and only on a fix. Each trace is named for the scenario of pilgrimage-stage spec P3 §17.3 it captures.
+
+| Trace | Where | What it proves (fix indices from the capture) |
+|---|---|---|
+| `water-first-free-12n` (W1) | 12°N; 1.5 km | Begun on the line 250 m before water: it speaks on the Begin fix (input 0), 249.7 m out, with the clock at 0, because the replayed fix comes before the clock's first value. |
+| `water-quiet-hour-23n` (W2) | 23°N; 6 km at 0.9 m/s, no pause | Three waters 1.5 km apart: `w-a` speaks 294.1 m out (fix 56, clock 783.4); `w-b` is passed inside the hour and never speaks; `w-c` speaks on the first fix after the hour (fix 314, clock 4,395.4), 43.8 m out. |
+| `water-skipped-then-spoken-43n` (W3) | 43.5°N; 6 km | The probe's walk: begun 100 m north of the trailhead (the frac-0 fallback), `w-free` speaks at the join (fix 3, clock 41.4). A 610 s pause and a 10 min sitting 104 m short of `w-quiet` fall in the hour, and `w-quiet` is passed in it. `w-late`, reached 300 m out inside the hour, speaks once it ends (fix 304, clock 3,645.4), 141.9 m out; `w-after`, 60 m off and within 300 m then, is silenced by the new hour. `w-far` (250 m off) and `f-food` are never watched. |
+| `water-off-line-and-kinds-38s` (W4) | 38°S; 2 km | Of eight marks, only water exactly 60 m off speaks (fix 36): water 61 m and 250 m off, and food, a bed, transport, supplies and a clinic on the line, stay silent. |
+| `water-once-per-mark-55n` (W5) | 55°N; 3 km | One water speaks once ever (fix 30): walked past, walked back past it within the backward tolerance, and walked past again after the hour. |
+| `water-off-way-gate-28s` (W6) | 28°S; 3 km | The hour ends while the walker is 80 m off the line (off it 70 s, short of a re-acquire), with `w-b` 200 m ahead of the progress held: nothing; it speaks on the fix that rejoins (fix 268), 161.2 m out. |
+| `water-pause-sitting-46n` (W7) | 46°N; 5 km | `w-a` speaks while the walk is paused and a reply records (fix 6), at the clock the pause froze, 60.7. The hour ends on engine seconds during a sitting under a whisper (fix 306, clock 3,673.4): wall time runs 610 s ahead of the clock, the pause's length, and nothing of the sitting's. |
+| `water-fallback-join-17s` (W8) | 17°S; 1.5 km | Begun 100 m off the line, nothing speaks on the approach; the water 250 m in speaks at the join (fix 3, clock 41.4), free. |
+| `water-two-in-one-fix-50n` (W9) | 50°N; 4 km | Off the line from fix 46 until the hour has passed, a re-acquire lands the walker with two waters within 300 m: only the nearer, `w-b`, speaks (fix 270); `w-c`, 249 m out, waits for the next hour and is passed. |
+
+**W10, Android only.** iOS never revives a walk, so the uninterrupted iOS trace is what a revival must go on to say. `HonorGoldenTraceTest` snapshots the engine on `water-skipped-then-spoken-43n` just after the first notice and again inside the quiet hour, restores a fresh engine, and checks every later input's events and water state against iOS's. `HonorSessionWaterGoldenTest` walks the same trace through the real `:tracker` session, kills it inside the quiet hour and revives it from Room, and checks the notice rows, their metres and firing times, the quiet clock, and one haptic per notice.
+
+Water decides by frac arithmetic (`(mark.frac − progressFrac) × totalMeters`, spec B's D10), with no `CLLocation.distance` call, so the cache bound below doesn't apply to it. Libm's last bit still moves the progress a fix projects to, so the test asserts that no unfired water sits within 1e-6 m of 0 or 300 m ahead on any on-Way fix, and that wherever one is inside the look-ahead, the quiet hour is not within 1e-6 s of its end.
+
 ## What `CLLocation.distance` computes
 
 Measured on macOS 26.7.1 and the iOS 26.5 simulator, which agree bit for bit. `harness cache` checks the model below against CoreLocation over a seeded random walk of 200,000 calls, 1 to 3,000 m apart at |φ| ≤ 70°. The largest relative difference is 6.2e-16.
@@ -83,7 +105,7 @@ Android pins the stateless formula as `wgs84MidLatitudeMeters` in `domain/GeoDis
 
 ### Divergence over the corpus
 
-Measured over all 978 distance calls the engines make at D1–D4 (`HonorGoldenTraceTest` asserts each bound):
+Measured over all 978 distance calls the engines make at D1–D4 (`HonorGoldenTraceTest` asserts each bound). The water traces make none: a stage with no moments measures only to its end, and none of them gets close enough to arrive.
 
 | Compared | Largest difference |
 |---|---|
