@@ -310,15 +310,46 @@ object PromptAssembler {
                 }
                 text.toString()
             }
-            PracticeMode.Honor -> context.honorStory?.let(::honorLexicon) ?: HONOR_BASE_TEXT
+            PracticeMode.Honor -> {
+                val story = context.honorStory
+                when {
+                    story == null -> HONOR_BASE_TEXT
+                    story.routeName == null -> honorLexicon(story)
+                    else -> stageLexicon(story)
+                }
+            }
         }
+
+    /**
+     * iOS `stageLexicon` (`PromptAssembler.swift:183-194@7c200bf`,
+     * pilgrimage-stage spec P3 §15): a stage has no other walker, so the
+     * route itself is the company, and no voice is put where there is none.
+     */
+    private fun stageLexicon(story: HonorStoryContext): String {
+        val text = StringBuilder(
+            "**About this practice:** This walk was an Honor on a pilgrimage route. The walker followed " +
+                "one day's stage of a route walked for centuries, guided by the route's own places rather " +
+                "than by a companion's voice. The line was traced, not raced.",
+        )
+        story.routeName?.let { text.append(" The route: ").append(it).append('.') }
+        story.stageLabel?.let { text.append(" The stage: ").append(it).append('.') }
+        story.wayTitle?.let { text.append(" Named: ").append(it).append('.') }
+        text.append(
+            if (story.arrived) {
+                " The end of the stage was reached."
+            } else {
+                " The stage was left before its end, which the practice honors too."
+            },
+        )
+        return text.toString()
+    }
 
     /**
      * iOS's one Honor form for own and shared walks alike
      * (`sharedWalkLexicon`, `PromptAssembler.swift:170-201@7c200bf`): it
      * speaks of another walker even when the Way is the walker's own
-     * earlier walk (pilgrim-ios #109). The stage form, selected on iOS by a
-     * route name, arrives with Stage 21-2.
+     * earlier walk (pilgrim-ios #109), and on a stage walk whose Way is gone
+     * (pilgrim-ios #122 item 3, matched as shipped).
      */
     private fun honorLexicon(story: HonorStoryContext): String {
         val text = StringBuilder(HONOR_BASE_TEXT)

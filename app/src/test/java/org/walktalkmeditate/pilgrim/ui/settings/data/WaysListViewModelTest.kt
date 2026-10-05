@@ -38,6 +38,8 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness.Companion.awaitBlocking
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.honor.VoiceKind
 import org.walktalkmeditate.pilgrim.domain.honor.Way
@@ -51,7 +53,9 @@ import org.walktalkmeditate.pilgrim.honor.WaySweeper
 /**
  * Settings → Ways and its Data card row (shared-walk spec S4 §2–§5): a
  * port of iOS `WaysListModelTests.swift@7c200bf`, plus the list's order,
- * details, sweeps, deletes, and the R6 hiding.
+ * details, sweeps, deletes, and the R6 hiding; and the package footer
+ * with iOS's Ways list case from `PilgrimageStageWalkTests.swift`
+ * (pilgrimage-stage spec P2 §11).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -87,12 +91,14 @@ class WaysListViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun sweeper() = WaySweeper(store, { emptySet() }, { cancelled += it }, Clock { clockMillis }, dispatcher)
-
-    private fun list() = WaysListViewModel(
+    private fun list(
+        installedRouteName: suspend () -> String? = { null },
+        store: WayStore = this.store,
+    ) = WaysListViewModel(
         store = store,
-        sweeper = sweeper(),
+        sweeper = WaySweeper(store, { emptySet() }, { cancelled += it }, Clock { clockMillis }, dispatcher),
         cancelGather = { cancelled += it },
+        installedRouteName = installedRouteName,
         availability = WaysAvailability(shown, shownAtFirst = true),
         zone = { ZoneId.of("America/Los_Angeles") },
         locale = { Locale.US },
@@ -130,7 +136,8 @@ class WaysListViewModelTest {
         return way("walk:$uuid", WaySource.OwnWalk(uuid))
     }
 
-    private fun stage(index: Int) = way("pilgrimage:kumano-kodo:$index", WaySource.Pilgrimage(routeId = "kumano-kodo", stageIndex = index))
+    private fun stage(index: Int, routeId: String = "kumano-kodo") =
+        way(WayStore.stageWayId(routeId, index), WaySource.Pilgrimage(routeId = routeId, stageIndex = index))
 
     private fun saveInOrder(vararg ways: Way) = ways.forEach {
         store.save(it)
@@ -149,7 +156,7 @@ class WaysListViewModelTest {
     fun `listable drops pilgrimage stages and nothing else`() {
         val shared = share("9mYhRL7GWx")
         val own = own()
-        val stages = (0 until 4).map(::stage)
+        val stages = (0 until 4).map { stage(it, routeId = "kumano-kodo-nakahechi") }
 
         assertEquals(listOf(shared.id, own.id), WaysListModel.listable(listOf(shared) + stages + own).map { it.id })
     }
@@ -169,6 +176,144 @@ class WaysListViewModelTest {
             assertEquals("2 ways · 1.5 MB", WaysListModel.rowDetail(resources, WaysTotals(2, 1_500_000)))
         } finally {
             Locale.setDefault(previous)
+        }
+    }
+
+    /** iOS `testTheFooterNamesTheRouteAndItsStagesOnlyWhenThereAreAny`. */
+    @Test
+    fun `the footer names the route and its stages only when there are any`() {
+        assertEquals(
+            "the Nakahechi (Central Route) keeps its 4 stages on its route page",
+            WaysListModel.packageFooter(resources, routeName = "Nakahechi (Central Route)", stageCount = 4),
+        )
+        assertEquals(
+            "the Kohechi keeps its 1 stage on its route page",
+            WaysListModel.packageFooter(resources, routeName = "Kohechi", stageCount = 1),
+        )
+        assertNull(WaysListModel.packageFooter(resources, routeName = "Nakahechi (Central Route)", stageCount = 0))
+        assertNull(
+            "stages with no installed route to name — a Replace cut short — say nothing",
+            WaysListModel.packageFooter(resources, routeName = null, stageCount = 4),
+        )
+    }
+
+    // iOS `PilgrimageStageWalkTests.swift`: the Ways list case (pilgrimage-stage spec P2 §Test inventory).
+
+    /**
+     * iOS `testTheWaysListNeitherShowsAnInstalledStageNorTakesItWithTheRest`.
+     * Both are in the store, which `list()` no longer shows for the stage,
+     * stepped over before its `way.json` is read (P2 A-11), so the store's
+     * hold on it is read through the stage listing (C-9).
+     */
+    @Test
+    fun `the Ways list neither shows an installed stage nor takes it with the rest`() {
+        val stage = stage(0, routeId = "camino-frances")
+        val shared = way(
+            id = "share:9mYhRL7GWx",
+            source = WaySource.Share("9mYhRL7GWx", "https://walk.pilgrimapp.org/9mYhRL7GWx"),
+        ).copy(title = "Rúa do Franco → Obradoiro")
+        store.save(stage)
+        store.save(shared)
+        assertEquals("both are in the store", listOf(stage.id), store.stageWayIds())
+        assertEquals("both are in the store", listOf(shared.id), store.list().map { it.id })
+
+        val listed = WaysListModel.listable(store.list())
+        assertEquals("only the shared walk is offered", listOf("share:9mYhRL7GWx"), listed.map { it.id })
+
+        listed.forEach { store.delete(it.id) }
+        assertNotNull(
+            "delete-all left the package's stage where the route screen can still find it",
+            store.load(WayStore.stageWayId("camino-frances", 0)),
+        )
+        assertNull(store.load("share:9mYhRL7GWx"))
+    }
+
+    // The package footer (P2 §11).
+
+    private fun footer(vm: WaysListViewModel): String? {
+        val loaded = vm.state.value as WaysListUiState.Loaded
+        return WaysListModel.packageFooter(resources, loaded.packageRouteName, loaded.packageStageCount)
+    }
+
+    /**
+     * iOS's `all.count - ways.count`: every package-owned Way in the store,
+     * whichever route it came from, named by the one installed (pilgrim-ios
+     * #120 item 6, matched as shipped).
+     */
+    @Test
+    fun `the footer counts every route's stages under the installed route's name`() = runTest(dispatcher) {
+        saveInOrder(share("9mYhRL7GWx"), stage(0), stage(1), stage(2), stage(0, routeId = "camino-frances"), own())
+
+        val vm = list(installedRouteName = { "Nakahechi (Central Route)" })
+
+        assertEquals("the stages never list", 2, rows(vm).size)
+        assertEquals("the Nakahechi (Central Route) keeps its 4 stages on its route page", footer(vm))
+    }
+
+    @Test
+    fun `no footer with no installed route to name the stages, and none with no stages`() = runTest(dispatcher) {
+        saveInOrder(stage(0), share("9mYhRL7GWx"))
+        assertNull("stages, and no route installed", footer(list()))
+
+        store.delete(stage(0).id)
+        assertNull("a route installed, and no stages", footer(list(installedRouteName = { "Kohechi" })))
+    }
+
+    @Test
+    fun `the footer follows a delete, after no ways yet when the list is empty`() = runTest(dispatcher) {
+        val shared = share("9mYhRL7GWx")
+        saveInOrder(shared, stage(0))
+        val vm = list(installedRouteName = { "Kohechi" })
+
+        vm.delete(shared.id)
+
+        assertEquals(emptyList<WayListRow>(), rows(vm))
+        assertEquals("the Kohechi keeps its 1 stage on its route page", footer(vm))
+    }
+
+    @Test
+    fun `a failed installed read names no route, and the list still loads`() = runTest(dispatcher) {
+        saveInOrder(share("9mYhRL7GWx"), stage(0))
+
+        val vm = list(installedRouteName = { throw java.io.IOException("the live-session read failed") })
+
+        assertEquals(1, rows(vm).size)
+        assertNull(footer(vm))
+    }
+
+    /**
+     * The spec's own example, through the real package manager: two stages
+     * walked of one route, then a Replace with another two-stage route.
+     * The walked pair stays (`retireMany`), so the footer counts four, under
+     * the name the installed `route.json` carries (the harness's re-slugged
+     * copy keeps the first route's name), never the catalog entry's
+     * "Camino del Norte".
+     */
+    @Test
+    fun `after a Replace the footer counts the walked stages it kept, named by the installed route file`() = runTest(dispatcher) {
+        val packages = PilgrimagePackageHarness(File(folder.root, "packages"))
+        try {
+            val manager = packages.makeManager()
+            manager.download(packages.entry, PilgrimagePackageHarness.RELEASE).awaitBlocking()
+            (0..1).forEach { index ->
+                packages.wayStore.link(
+                    UUID.randomUUID().toString(),
+                    WayStore.stageWayId(PilgrimagePackageHarness.ROUTE_ID, index),
+                    arrival = null,
+                )
+            }
+            packages.stubNorte()
+            manager.replace(packages.norte, PilgrimagePackageHarness.RELEASE).awaitBlocking()
+
+            val vm = list(
+                installedRouteName = { runBlocking { manager.installed() }?.route?.name },
+                store = packages.wayStore,
+            )
+
+            assertEquals(PilgrimagePackageHarness.NORTE_ID, runBlocking { manager.installed() }?.routeId)
+            assertEquals("the Camino de Santiago (Francés) keeps its 4 stages on its route page", footer(vm))
+        } finally {
+            packages.close()
         }
     }
 
@@ -265,7 +410,7 @@ class WaysListViewModelTest {
 
         vm.deleteAll()
 
-        assertEquals(WaysListUiState.Loaded(emptyList()), vm.state.value)
+        assertEquals(emptyList<WayListRow>(), rows(vm))
         assertEquals(setOf(shared.id, own.id), cancelled.toSet())
         assertNotNull(store.load(stage.id))
     }

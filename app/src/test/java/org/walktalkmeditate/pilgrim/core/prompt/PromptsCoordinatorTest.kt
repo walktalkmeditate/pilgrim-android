@@ -46,6 +46,9 @@ import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageWayImporter
 import org.walktalkmeditate.pilgrim.data.photo.BitmapLoader
 import org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository
@@ -54,6 +57,7 @@ import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.honor.honorWalkRecordsForTests
+import org.walktalkmeditate.pilgrim.walk.honor.HonorHarness
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -140,6 +144,7 @@ class PromptsCoordinatorTest {
             ),
         honorEnabled: Boolean = false,
         wayStore: WayStore = WayStore({ File(context.cacheDir, "prompts-ways-${System.nanoTime()}") }),
+        installedRoute: suspend () -> PilgrimagePackageManager.Installed? = { null },
         defaultDispatcher: kotlinx.coroutines.CoroutineDispatcher = dispatcher,
     ): PromptsCoordinator = PromptsCoordinator(
         repository = repository,
@@ -155,6 +160,7 @@ class PromptsCoordinatorTest {
         threadsAnalysisEnvironment = threadsAnalysisEnvironment,
         releaseFlags = FixedReleaseFlags(honor = honorEnabled),
         honorWalkRecords = honorWalkRecordsForTests(db, context, wayStore),
+        installedRoute = installedRoute,
         defaultDispatcher = defaultDispatcher,
     )
 
@@ -666,6 +672,75 @@ class PromptsCoordinatorTest {
 
         assertEquals(PracticeMode.Wander, ctx.mode)
         assertNull(ctx.honorStory)
+    }
+
+    // A pilgrimage stage (pilgrimage-stage spec P3 §15, iOS `PromptListView.swift:226-246@7c200bf`).
+
+    private val installedFrances = PilgrimagePackageManager.Installed(
+        routeId = "camino-frances",
+        release = "v1.7.0",
+        route = PilgrimageWayImporter.route(from = PilgrimagePackageHarness.fixture("route.json")),
+    )
+
+    private suspend fun linkedStageWalk(store: WayStore, arrived: Boolean): Walk {
+        val walk = insertWalkRow()
+        recordHonorEvents(walk, arrived = arrived)
+        val stage = HonorHarness.stageWay(index = 4)
+        store.save(stage)
+        store.link(walk.uuid, stage.id, arrival = null)
+        return walk
+    }
+
+    @Test
+    fun `buildContext stage walk names the installed route and the stage's place on it`() = runTest(dispatcher) {
+        val store = WayStore({ File(context.cacheDir, "prompts-ways-${System.nanoTime()}") })
+        val walk = linkedStageWalk(store, arrived = true)
+
+        val ctx = newCoordinator(honorEnabled = true, wayStore = store, installedRoute = { installedFrances })
+            .buildContext(walkId = walk.id, zone = nyZone)!!
+
+        assertEquals(
+            HonorStoryContext(
+                wayTitle = "Saint-Jean-Pied-de-Port to Roncesvalles",
+                arrived = true,
+                routeName = "Camino de Santiago (Francés)",
+                stageLabel = "stage 5 of 33",
+            ),
+            ctx.honorStory,
+        )
+    }
+
+    @Test
+    fun `buildContext stage walk names its route by the slug once another route, or none, is installed`() = runTest(dispatcher) {
+        val store = WayStore({ File(context.cacheDir, "prompts-ways-${System.nanoTime()}") })
+        val walk = linkedStageWalk(store, arrived = false)
+        val norte = installedFrances.copy(routeId = "camino-norte")
+
+        val otherRoute = newCoordinator(honorEnabled = true, wayStore = store, installedRoute = { norte })
+            .buildContext(walkId = walk.id, zone = nyZone)!!
+        val noRoute = newCoordinator(honorEnabled = true, wayStore = store, installedRoute = { null })
+            .buildContext(walkId = walk.id, zone = nyZone)!!
+
+        assertEquals("camino-frances", otherRoute.honorStory?.routeName)
+        assertEquals("camino-frances", noRoute.honorStory?.routeName)
+        assertEquals("stage 5 of 33", noRoute.honorStory?.stageLabel)
+        assertEquals(false, noRoute.honorStory?.arrived)
+    }
+
+    /** iOS's `routeName` is nil without a Way, so the shared form follows (pilgrim-ios #122 item 3, matched). */
+    @Test
+    fun `buildContext stage walk whose Way is gone has no route, and the package is never asked`() = runTest(dispatcher) {
+        val store = WayStore({ File(context.cacheDir, "prompts-ways-${System.nanoTime()}") })
+        val walk = insertWalkRow()
+        recordHonorEvents(walk, arrived = true)
+        store.link(walk.uuid, WayStore.stageWayId("camino-frances", 4), arrival = null)
+        var asked = 0
+
+        val ctx = newCoordinator(honorEnabled = true, wayStore = store, installedRoute = { asked++; installedFrances })
+            .buildContext(walkId = walk.id, zone = nyZone)!!
+
+        assertEquals(HonorStoryContext(wayTitle = null, arrived = true), ctx.honorStory)
+        assertEquals(0, asked)
     }
 
     private suspend fun recordHonorEvents(walk: Walk, arrived: Boolean) {

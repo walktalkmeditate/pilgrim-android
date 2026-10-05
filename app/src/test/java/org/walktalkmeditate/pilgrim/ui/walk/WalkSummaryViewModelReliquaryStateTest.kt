@@ -213,6 +213,7 @@ class WalkSummaryViewModelReliquaryStateTest {
             threadsAnalyzer = org.walktalkmeditate.pilgrim.core.threads.realTranscriptContextAnalyzerForTests(context),
             releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
             honorWalkRecords = org.walktalkmeditate.pilgrim.honor.honorWalkRecordsForTests(db, context),
+            honorMediaFiles = org.walktalkmeditate.pilgrim.honor.honorMediaFilesForTests(context),
             savedStateHandle = SavedStateHandle(mapOf(WalkSummaryViewModel.ARG_WALK_ID to walkId)),
         )
         createdViewModels += vm
@@ -286,6 +287,7 @@ class WalkSummaryViewModelReliquaryStateTest {
             ),
             releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
             honorWalkRecords = org.walktalkmeditate.pilgrim.honor.honorWalkRecordsForTests(db, ctx),
+            installedRoute = { null },
         ) {
             override suspend fun buildContext(walkId: Long, zone: java.time.ZoneId) = null
             override suspend fun generateAll(walkId: Long, zone: java.time.ZoneId) =

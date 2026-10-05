@@ -2,25 +2,33 @@
 package org.walktalkmeditate.pilgrim.ui.walk.summary
 
 import android.app.Application
+import androidx.test.core.app.ApplicationProvider
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
 
 /**
@@ -28,7 +36,8 @@ import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
  * iOS sets no grouping, header, or label, so VoiceOver reads each row's
  * text on its own, in visual order, and there is nothing to tap. The
  * stage-only reply button ("Play your reply to this stage") never shows
- * on an own or shared walk.
+ * on an own or shared walk; on a stage it is the one thing to tap, and
+ * its label stays while its face says "pause" (pilgrimage-stage spec P5 §12).
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -36,10 +45,12 @@ class HonorSummarySemanticsTest {
 
     @get:Rule val composeRule = createComposeRule()
 
-    private fun show(data: HonorSummaryData) {
+    private fun show(data: HonorSummaryData, reply: HonorSummaryReplyPlayer? = null) {
         composeRule.setContent {
             PilgrimTheme {
-                Box(Modifier.size(400.dp, 600.dp)) { HonorSummarySection(data = data) }
+                Box(Modifier.size(400.dp, 600.dp)) {
+                    HonorSummarySection(data = data, units = UnitSystem.Metric, reply = reply)
+                }
             }
         }
     }
@@ -77,6 +88,105 @@ class HonorSummarySemanticsTest {
         composeRule.onAllNodes(
             SemanticsMatcher.expectValue(SemanticsProperties.ContentDescription, listOf("Play your reply to this stage")),
         ).assertCountEquals(0)
+    }
+
+    // A pilgrimage stage (pilgrimage-stage spec P5 §11.3, §12).
+
+    private val arrivedStage = HonorSummaryData(
+        wayTitle = "Saint-Jean-Pied-de-Port to Roncesvalles",
+        arrivedBeforeTheirsSeconds = null,
+        voicesAlongTheWay = 0,
+        repliesMade = 1,
+        isPilgrimageStage = true,
+        stageProgress = HonorStageProgress(kmWalked = 24.2, distanceKm = 24.2),
+        closing = "You crossed a border on foot.",
+        replyRelativePath = "recordings/stage-reply.wav",
+    )
+
+    private class Taps {
+        var toggles = 0
+        var stops = 0
+        fun player(isPlaying: Boolean) = HonorSummaryReplyPlayer(isPlaying, toggle = { toggles++ }, stop = { stops++ })
+    }
+
+    private val replyLabel = SemanticsMatcher.expectValue(
+        SemanticsProperties.ContentDescription,
+        listOf("Play your reply to this stage"),
+    )
+
+    @Test
+    fun `a stage's rows read kicker, title, progress, counts, then closing, each as written`() {
+        show(arrivedStage, Taps().player(isPlaying = false))
+        val rows = listOf(
+            "the stage you walked",
+            "Saint-Jean-Pied-de-Port to Roncesvalles",
+            "24.2 km of 24.2 km of the stage",
+            "1 reply",
+            "You crossed a border on foot.",
+        )
+        val tops = rows.map { text ->
+            val node = composeRule.onNodeWithText(text).fetchSemanticsNode()
+            assertNull("no label replaces \"$text\"", node.config.getOrNull(SemanticsProperties.ContentDescription))
+            assertNull("no header trait on \"$text\"", node.config.getOrNull(SemanticsProperties.Heading))
+            node.boundsInRoot.top
+        }
+        assertEquals("rows read top to bottom", tops.sorted(), tops)
+        val button = composeRule.onNode(replyLabel).fetchSemanticsNode()
+        assertTrue("the reply comes last", button.boundsInRoot.top > tops.last())
+        composeRule.onAllNodesWithText("they arrived", substring = true).assertCountEquals(0)
+    }
+
+    @Test
+    fun `your reply plays on a tap, under the one label TalkBack reads`() {
+        val taps = Taps()
+        show(arrivedStage, taps.player(isPlaying = false))
+
+        composeRule.onAllNodes(hasClickAction()).assertCountEquals(1)
+        composeRule.onNode(replyLabel).assertHasClickAction()
+        composeRule.onNode(replyLabel).performClick()
+
+        assertEquals(1, taps.toggles)
+    }
+
+    /** pilgrim-ios #123 item 7, matched as shipped: the face says "pause", the label still says play. */
+    @Test
+    fun `while it plays the button shows pause and keeps its play label`() {
+        val resources = ApplicationProvider.getApplicationContext<Application>().resources
+        assertEquals(
+            "your reply" to "pause",
+            resources.getString(HonorSummaryModel.replyTitle(isPlaying = false)) to
+                resources.getString(HonorSummaryModel.replyTitle(isPlaying = true)),
+        )
+
+        show(arrivedStage, Taps().player(isPlaying = true))
+
+        composeRule.onNode(replyLabel).assertHasClickAction()
+        composeRule.onAllNodesWithText("pause").assertCountEquals(0)
+    }
+
+    @Test
+    fun `no recording on the phone, no reply button`() {
+        show(arrivedStage, reply = null)
+
+        composeRule.onAllNodes(hasClickAction()).assertCountEquals(0)
+        composeRule.onAllNodes(replyLabel).assertCountEquals(0)
+    }
+
+    @Test
+    fun `the reply stops when the section leaves`() {
+        val taps = Taps()
+        var shown by mutableStateOf(true)
+        composeRule.setContent {
+            PilgrimTheme {
+                if (shown) HonorSummarySection(data = arrivedStage, units = UnitSystem.Metric, reply = taps.player(isPlaying = true))
+            }
+        }
+        assertEquals(0, taps.stops)
+
+        shown = false
+        composeRule.waitForIdle()
+
+        assertEquals(1, taps.stops)
     }
 
     @Test

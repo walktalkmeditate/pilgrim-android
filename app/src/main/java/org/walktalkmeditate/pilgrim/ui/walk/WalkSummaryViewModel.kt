@@ -83,6 +83,7 @@ import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
 import org.walktalkmeditate.pilgrim.honor.HonorWalkRecord
 import org.walktalkmeditate.pilgrim.honor.HonorWalkRecords
+import org.walktalkmeditate.pilgrim.walk.honor.HonorMediaFiles
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
 import org.walktalkmeditate.pilgrim.ui.design.seals.sealWatermark
@@ -272,6 +273,12 @@ data class WalkSummary(
      */
     val isHonorWalk: Boolean = false,
     /**
+     * U40: the walk carries a `HONOR_ARRIVAL` event, the one thing that
+     * lets a stage's closing line show (iOS reads the walk's events in
+     * `summaryData`, pilgrimage-stage spec P5 C11).
+     */
+    val honorArrived: Boolean = false,
+    /**
      * U23: the Honor section and ghost line as the summary first read
      * them, so they draw with the summary's first frame, as iOS computes
      * them in `init` (`WalkSummaryView.swift:35-37@7c200bf`). Null on
@@ -309,6 +316,8 @@ class WalkSummaryViewModel @Inject constructor(
     private val threadsAnalyzer: org.walktalkmeditate.pilgrim.core.threads.TranscriptContextAnalyzer,
     private val releaseFlags: ReleaseFlags,
     private val honorWalkRecords: HonorWalkRecords,
+    /** Resolves a stage's reflection reply to its recording, contained under the files root as the walk's replies are. */
+    private val honorMediaFiles: HonorMediaFiles,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -453,9 +462,12 @@ class WalkSummaryViewModel @Inject constructor(
      * once from the walk's live session row and the Way while the Honor
      * step is still to run (or failed and waits for the next launch), then
      * from the link, when the delta line appears: the record re-reads as
-     * the marker lands and the live rows go. Until it first reads, and
-     * after a failed read, the screen keeps [WalkSummary.honorSummary].
-     * The model and the ghost's slicing run off Main.
+     * the marker lands and the live rows go. A stage's "X of Y km of the
+     * stage" moves to this walk's ledger entry the same way (P5 A3), and
+     * its closing line follows the walk's arrival event (C11). Until it
+     * first reads, and after a failed read, the screen keeps
+     * [WalkSummary.honorSummary]. The model, the reply's file check and
+     * the ghost's slicing run off Main.
      */
     @kotlin.OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val honorSummary: StateFlow<HonorSummaryState?> = state
@@ -465,7 +477,9 @@ class WalkSummaryViewModel @Inject constructor(
                 kotlinx.coroutines.flow.flowOf(null)
             } else {
                 honorWalkRecords.observe(summary.walk.id, summary.walk.uuid)
-                    .map<HonorWalkRecord, HonorSummaryState?> { record -> HonorSummaryModel.summaryState(record) }
+                    .map<HonorWalkRecord, HonorSummaryState?> { record ->
+                        HonorSummaryModel.summaryState(record, summary.honorArrived, honorMediaFiles::recordingFile)
+                    }
                     .flowOn(Dispatchers.Default)
                     .catch { t ->
                         if (t is CancellationException) throw t
@@ -479,6 +493,43 @@ class WalkSummaryViewModel @Inject constructor(
             started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
             initialValue = null,
         )
+
+    /**
+     * U40: the stage's "your reply" plays now. iOS gives the section its
+     * own `AudioPlayerModel`; here the reply plays through the summary's
+     * one player under an id no recording row has, so a voice row never
+     * reads it as its own, and a row that starts playing takes it over.
+     */
+    val stageReplyPlaying: StateFlow<Boolean> = playback.state
+        .map { it is PlaybackState.Playing && it.recordingId == STAGE_REPLY_PLAYBACK_ID }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = false,
+        )
+
+    /**
+     * iOS `player.toggle(url:)`: a reply playing pauses, a paused one
+     * resumes where it stopped, and otherwise [file] plays from its start.
+     */
+    fun toggleStageReply(file: java.io.File) {
+        val current = playback.state.value
+        if (current is PlaybackState.Playing && current.recordingId == STAGE_REPLY_PLAYBACK_ID) {
+            playback.pause()
+        } else {
+            playback.playFile(STAGE_REPLY_PLAYBACK_ID, file)
+        }
+    }
+
+    /** iOS's `.onDisappear { player.stop() }`: the reply stops with its section, and nothing else does. */
+    fun stopStageReply() {
+        val id = when (val current = playback.state.value) {
+            is PlaybackState.Playing -> current.recordingId
+            is PlaybackState.Paused -> current.recordingId
+            else -> return
+        }
+        if (id == STAGE_REPLY_PLAYBACK_ID) playback.stop()
+    }
 
     /**
      * U6: whether THIS walk moved the collective counter — a
@@ -1868,7 +1919,9 @@ class WalkSummaryViewModel @Inject constructor(
         // (e.g. WalkSummaryScreen's `walk_stat_distance` row) DOES flip
         // with [distanceUnits].
         val distanceLabel = WalkFormat.distanceLabel(distance, UnitSystem.Metric)
-        val isHonorWalk = HonorSummaryModel.isHonorWalk(events.map { it.eventType }, releaseFlags.honor)
+        val eventTypes = events.map { it.eventType }
+        val isHonorWalk = HonorSummaryModel.isHonorWalk(eventTypes, releaseFlags.honor)
+        val honorArrived = HonorSummaryModel.arrived(eventTypes)
         // The seal's Way line reads the summary's own record, live session
         // row included: iOS renders a seal first at the reveal, after the
         // link is written, so a fresh honor seal carries the line. It goes
@@ -1876,7 +1929,9 @@ class WalkSummaryViewModel @Inject constructor(
         // Honor section its first frame.
         val honorRecord = if (isHonorWalk) honorWalkRecords.record(walkId, walk.uuid) else null
         val (watermark, honorSummary) = withContext(Dispatchers.Default) {
-            sealWatermark(points, honorRecord?.way) to honorRecord?.let { HonorSummaryModel.summaryState(it) }
+            sealWatermark(points, honorRecord?.way) to honorRecord?.let {
+                HonorSummaryModel.summaryState(it, honorArrived, honorMediaFiles::recordingFile)
+            }
         }
         val sealSpec = walk.toSealSpec(
             // Reuse the haversine sum computed above — `toSealSpec`
@@ -2136,6 +2191,7 @@ class WalkSummaryViewModel @Inject constructor(
                 calloutInputs = calloutInputs,
                 seekSummary = seekSummary,
                 isHonorWalk = isHonorWalk,
+                honorArrived = honorArrived,
                 honorSummary = honorSummary,
             ),
         )
@@ -2339,6 +2395,9 @@ class WalkSummaryViewModel @Inject constructor(
         private const val SUBSCRIBER_GRACE_MS = 5_000L
         private const val TAG = "WalkSummaryViewModel"
         private const val MILESTONE_CALLOUT_PAST_WALKS_LIMIT = 100
+
+        /** The stage reply's playback id: no recording row's, and no shared Way voice's (those count down from -1). */
+        internal const val STAGE_REPLY_PLAYBACK_ID = Long.MIN_VALUE
     }
 }
 

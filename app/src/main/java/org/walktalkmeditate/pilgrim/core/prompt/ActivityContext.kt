@@ -28,11 +28,18 @@ data class SeekStoryContext(val arrivalTimes: List<Long>)
  * What this honor held: the Way's title, null until a caller that can
  * reach the Ways store fills it (and when the Way is gone), and whether
  * its end was reached (iOS `HonorStoryContext`,
- * `ActivityContext.swift:17-26@7c200bf`). The stage's route name and
- * label wait for Stage 21-2.
+ * `ActivityContext.swift:17-37@7c200bf`). A pilgrimage stage adds its
+ * route's name ([routeName], never null for a stage, so it alone selects
+ * the stage lexicon) and its place on the route ([stageLabel],
+ * "stage 1 of 33"); both stay null on every other Way.
  */
 @Immutable
-data class HonorStoryContext(val wayTitle: String?, val arrived: Boolean)
+data class HonorStoryContext(
+    val wayTitle: String?,
+    val arrived: Boolean,
+    val routeName: String? = null,
+    val stageLabel: String? = null,
+)
 
 data class WalkPractice(
     val mode: PracticeMode,

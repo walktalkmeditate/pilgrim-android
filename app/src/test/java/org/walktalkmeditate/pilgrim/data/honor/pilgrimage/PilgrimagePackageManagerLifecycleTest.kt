@@ -26,6 +26,8 @@ import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarne
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness.Companion.awaitBlocking
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness.Companion.fixture
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager.Phase
+import org.walktalkmeditate.pilgrim.domain.WalkEventType
+import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
 import org.walktalkmeditate.pilgrim.honor.HonorWalkRecord
 import org.walktalkmeditate.pilgrim.ui.walk.summary.HonorSummaryModel
 
@@ -64,9 +66,8 @@ class PilgrimagePackageManagerLifecycleTest {
 
     /**
      * Remove promises "Walks in your journal stay": a walked stage keeps its
-     * folder, its reply and its link. iOS reads the summary model's stage
-     * fields; Android's arrive with U40, so the Way and its reply are read
-     * here, and the summary's title through the model as it stands.
+     * folder, its reply and its link, so the summary model still reads it
+     * as a stage, by its own title, with its reply, as iOS checks it.
      */
     @Test
     fun `a removed route's walked stage keeps its link, its reply and its stage identity`() {
@@ -75,16 +76,23 @@ class PilgrimagePackageManagerLifecycleTest {
         val walk = UUID.randomUUID().toString()
         val stageId = WayStore.stageWayId(ROUTE_ID, 0)
         h.wayStore.link(walk, stageId, arrival = null)
-        h.wayStore.setReply(stageId, originN = STAGE_REFLECTION_ORIGIN, relativePath = "Recordings/reply.m4a")
+        h.wayStore.setReply(stageId, originN = HonorPersistence.STAGE_REFLECTION_ORIGIN, relativePath = "Recordings/reply.m4a")
 
         manager.remove(ROUTE_ID).awaitBlocking()
 
         assertEquals("the walk still names its stage", stageId, h.wayStore.wayLink(walk)?.wayId)
         val way = requireNotNull(h.wayStore.way(walk)) { "the walked stage went" }
-        assertTrue("not the shared-walk lexicon", way.isPilgrimageStage)
-        val summary = HonorSummaryModel.summaryState(HonorWalkRecord(way, arrival = null, replies = h.wayStore.replies(stageId)))
-        assertEquals("not 'a way that has been removed'", way.title, summary.data.wayTitle)
-        assertEquals("Recordings/reply.m4a", h.wayStore.replies(stageId)[STAGE_REFLECTION_ORIGIN])
+        val summary = requireNotNull(
+            HonorSummaryModel.summaryState(
+                events = listOf(WalkEventType.HONOR_MODE),
+                honorEnabled = true,
+                record = HonorWalkRecord(way, arrival = null, replies = h.wayStore.replies(stageId), ledger = null),
+                recordingFile = { null },
+            ),
+        ).data
+        assertTrue("not the shared-walk lexicon", summary.isPilgrimageStage)
+        assertEquals("not 'a way that has been removed'", way.title, summary.wayTitle)
+        assertEquals("Recordings/reply.m4a", summary.replyRelativePath)
         assertNull("the stage nobody walked goes whole", h.wayStore.load(WayStore.stageWayId(ROUTE_ID, 1)))
         assertNull("what is kept never reads as installed", manager.installedBlocking())
     }
@@ -124,6 +132,40 @@ class PilgrimagePackageManagerLifecycleTest {
         assertNull("the abandoned route's stages are taken", h.wayStore.load("pilgrimage:camino-frances:0"))
         assertFalse(h.wayStore.routeFile(ROUTE_ID)!!.exists())
         assertFalse("the marker is cleared once the swap it described is finished", marker.exists())
+    }
+
+    // ---- The lexicon's read-only lookup (owner decision 11, P3 addition 8) -------------------
+
+    /** The words `installed()` would give, and none of its writes: the launch finishes the swap. */
+    @Test
+    fun `the read-only lookup names the route installed would, leaving an interrupted Replace alone`() {
+        val manager = h.makeManager()
+        manager.download(h.entry, RELEASE).awaitBlocking()
+        h.stubNorte()
+        manager.download(h.norte, RELEASE).awaitBlocking()
+        marker.writeText(ROUTE_ID)
+
+        val looked = runBlocking { manager.installedRoute() }
+
+        assertEquals("the route installed() keeps", NORTE_ID, looked?.routeId)
+        assertEquals("the marker stays for the launch", ROUTE_ID, marker.readText())
+        assertNotNull("the route let go keeps its stages", h.wayStore.load("pilgrimage:camino-frances:0"))
+        assertTrue(h.wayStore.routeFile(ROUTE_ID)!!.exists())
+        assertEquals("and installed() then finishes the swap", NORTE_ID, manager.installedBlocking()?.routeId)
+        assertFalse(marker.exists())
+    }
+
+    @Test
+    fun `the read-only lookup reads the one route there, a marker naming it or not, and nothing with none`() {
+        val manager = h.makeManager()
+        assertNull(runBlocking { manager.installedRoute() })
+
+        manager.download(h.entry, RELEASE).awaitBlocking()
+        marker.writeText(ROUTE_ID)
+
+        assertEquals(ROUTE_ID, runBlocking { manager.installedRoute() }?.routeId)
+        assertEquals("Camino de Santiago (Francés)", runBlocking { manager.installedRoute() }?.route?.name)
+        assertTrue("left for installed() to clear", marker.exists())
     }
 
     @Test
@@ -333,8 +375,6 @@ class PilgrimagePackageManagerLifecycleTest {
     }
 
     private companion object {
-        /** The arrival reflection's reply key (iOS `HonorPersistence.stageReflectionOrigin`; U36 names it on Android). */
-        const val STAGE_REFLECTION_ORIGIN = -1
         const val LONG_AGO_MILLIS = 1_000_000_000_000L
     }
 }

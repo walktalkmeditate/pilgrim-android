@@ -186,7 +186,7 @@ private fun StageReplyControls(row: StageReplyRow) {
 
 /** iOS's `Label` in caption and stone with a 44 dp hit area; [label] is all TalkBack reads. */
 @Composable
-private fun CaptionButton(icon: ImageVector, title: String, label: String, onClick: () -> Unit) {
+internal fun CaptionButton(icon: ImageVector, title: String, label: String, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .heightIn(min = TAP_TARGET)

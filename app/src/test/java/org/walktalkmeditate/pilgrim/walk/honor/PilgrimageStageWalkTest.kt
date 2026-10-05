@@ -54,17 +54,12 @@ import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPhase
 import org.walktalkmeditate.pilgrim.domain.honor.VoiceKind
 import org.walktalkmeditate.pilgrim.domain.honor.Way
-import org.walktalkmeditate.pilgrim.domain.honor.WayCoordinate
 import org.walktalkmeditate.pilgrim.domain.honor.WayMedia
 import org.walktalkmeditate.pilgrim.domain.honor.WayMoment
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
-import org.walktalkmeditate.pilgrim.domain.honor.WayPoint
-import org.walktalkmeditate.pilgrim.domain.honor.WaySource
-import org.walktalkmeditate.pilgrim.domain.honor.WayStage
-import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
-import org.walktalkmeditate.pilgrim.domain.honor.WayStagePlace
 import org.walktalkmeditate.pilgrim.honor.HonorReplies
 import org.walktalkmeditate.pilgrim.honor.TheirSitting
+import org.walktalkmeditate.pilgrim.service.honorGlanceLine
 import org.walktalkmeditate.pilgrim.walk.CountingStateFlow
 import org.walktalkmeditate.pilgrim.walk.UiWalkController
 import org.walktalkmeditate.pilgrim.walk.WalkActionPublisher
@@ -95,12 +90,16 @@ import org.walktalkmeditate.pilgrim.walk.seek.SeekSessionStore
  * `testTheArrivalCardForAStageNamesTheStageAndCarriesNoDelta`,
  * `testAPinDrawsAtItsOwnCoordinateWhileTheTriggerStaysOnTheLine`, the caption half of
  * `testWaterAheadBorrowsTheCaptionLineAndNothingElse`, and `+Replies`'
- * `testTheArrivalCardAppendsTheStagesClosingLine` (`HonorWalkViewModelTest`).
- * Left for the unit that builds its surfaces: U40's
+ * `testTheArrivalCardAppendsTheStagesClosingLine` (`HonorWalkViewModelTest`),
  * `testTheSummaryForAStageReadsKilometresAndNoCompanionDelta`,
- * `testTheSummaryKickerDropsTheirStepsForAStage`,
- * `testTheWaysListNeitherShowsAnInstalledStageNorTakesItWithTheRest`, and `+Replies`'
- * `testTheSummaryCarriesTheClosingOnlyWhenArrivalFired`.
+ * `testTheSummaryKickerDropsTheirStepsForAStage` and `+Replies`'
+ * `testTheSummaryCarriesTheClosingOnlyWhenArrivalFired` (`HonorSummaryModelTest`),
+ * and `testTheWaysListNeitherShowsAnInstalledStageNorTakesItWithTheRest`
+ * (`WaysListViewModelTest`).
+ *
+ * Also the glance's pin (P3 §14): a stage walk's notification line at
+ * arrival is "their way, walked", a "their" iOS ships on a stage
+ * (pilgrim-ios #122 item 2, matched as shipped).
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -129,47 +128,7 @@ class PilgrimageStageWalkTest {
         recordingFolders.forEach { it.deleteRecursively() }
     }
 
-    /**
-     * iOS's `stageWay(index:)`: a 1 km stage east along the equator, so
-     * every distance is arithmetic (0.000898° of longitude is 100 m), with
-     * one waypoint at 0.3 that carries words, names, a sitting and a pin.
-     */
-    private fun stageWay(index: Int = 0): Way {
-        val orisson = WayMoment(
-            id = "wp-orisson",
-            frac = 0.3,
-            at = WayCoordinate(lat = 0.0, lon = 300.0 / 111_320),
-            kind = WayMomentKind.Waypoint(label = "Vierge d'Orisson", icon = "building.columns"),
-            text = "A shepherd carried this Madonna up from Lourdes.",
-            names = mapOf("eu" to "Orissongo Ama Birjina", "fr" to "Vierge d'Orisson"),
-            sitMinutes = 5,
-            pin = WayCoordinate(lat = 0.0002, lon = 300.0 / 111_320),
-        )
-        return Way(
-            id = WayStore.stageWayId("camino-frances", index),
-            source = WaySource.Pilgrimage(routeId = "camino-frances", stageIndex = index),
-            title = "Saint-Jean-Pied-de-Port to Roncesvalles",
-            departedAt = start,
-            tzIdentifier = "Europe/Madrid",
-            expires = null,
-            route = (0..10).map { WayPoint(lat = 0.0, lon = it * 0.000898, alt = null, t = it * 60.0) },
-            totalDistanceMeters = 1000.0,
-            theirActiveSeconds = 600.0,
-            moments = listOf(orisson),
-            weather = null,
-            marks = emptyList(),
-            stage = WayStage(
-                routeId = "camino-frances", index = index, count = 33,
-                name = "Saint-Jean-Pied-de-Port to Roncesvalles", theme = "Initiation",
-                narrative = "The Pyrenees are the first question the way asks.",
-                closing = "You crossed a border on foot.",
-                warnings = listOf("The Napoleon Route closes in winter."),
-                distanceKm = 24.2, gainMeters = 1419.0, hours = WayStageHours(min = 7.0, max = 9.0), difficulty = "hard",
-                start = WayStagePlace(name = "Saint-Jean-Pied-de-Port", at = WayCoordinate(lat = 0.0, lon = 0.0)),
-                end = WayStagePlace(name = "Roncesvalles", at = WayCoordinate(lat = 0.0, lon = 0.00898)),
-            ),
-        )
-    }
+    private fun stageWay(index: Int = 0): Way = HonorHarness.stageWay(index, departedAt = start)
 
     /**
      * A stage walk as Room holds it once its `:tracker` has stopped: the row
@@ -242,6 +201,33 @@ class PilgrimageStageWalkTest {
         session.stop()
 
         assertNull(dao.getSession(walk.id)!!.stageOutcome())
+    }
+
+    // ---- The glance (P3 §14): no stage branch ----
+
+    /**
+     * iOS's widget has no stage branch (`PilgrimWidgetLiveActivity.swift:190-199@7c200bf`):
+     * "their way, walked" on an arrived stage, though no one walked it
+     * before. Matched as shipped (pilgrim-ios #122 item 2), so nobody fixes
+     * it on Android alone.
+     */
+    @Test
+    fun `a stage walk's glance reads their way, walked at arrival, as iOS ships it`() = runBlocking {
+        val walk = h.startHonorWalk(stageWay())
+        val session = h.newSession()
+        session.begin(walk, fix(0.0, h.clock.millis))
+        assertFalse("on the line, short of the end", session.glance.value!!.isArrived)
+
+        for (lon in (1..17).map { it * 0.0005 } + listOf(0.0088, 0.0089, 0.00898, 0.00898, 0.00898)) {
+            h.clock.millis += 1_000
+            session.onFix(fix(lon, h.clock.millis))
+        }
+        session.awaitIdle()
+
+        assertEquals(HonorPhase.ARRIVED, dao.getSession(walk.id)!!.phase)
+        assertEquals("their way, walked", honorGlanceLine(session.glance.value!!, UnitSystem.Metric))
+        assertEquals("their way, walked", honorGlanceLine(session.glance.value!!, UnitSystem.Imperial))
+        session.stop()
     }
 
     @Test

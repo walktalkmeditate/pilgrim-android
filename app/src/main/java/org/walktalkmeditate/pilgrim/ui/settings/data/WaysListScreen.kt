@@ -80,7 +80,8 @@ fun WaysListScreen(
 /**
  * One grouped list, as iOS's plain `List`: "no ways yet" when empty, then
  * a row per Way (no tap, swipe to delete, unconfirmed), then "Delete all
- * Ways", which asks first with iOS's title, message, and buttons.
+ * Ways", which asks first with iOS's title, message, and buttons, then the
+ * package footer while pilgrimage stages are on the phone.
  */
 @Composable
 fun WaysListContent(
@@ -89,7 +90,9 @@ fun WaysListContent(
     onDeleteAll: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val rows = (state as? WaysListUiState.Loaded)?.rows ?: return
+    val loaded = state as? WaysListUiState.Loaded ?: return
+    val rows = loaded.rows
+    val footer = WaysListModel.packageFooter(LocalResources.current, loaded.packageRouteName, loaded.packageStageCount)
     var confirmDeleteAll by rememberSaveable { mutableStateOf(false) }
     Column(
         modifier = modifier
@@ -125,6 +128,15 @@ fun WaysListContent(
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
+            }
+            footer?.let {
+                SettingsDivider()
+                Text(
+                    text = it,
+                    style = pilgrimType.caption,
+                    color = pilgrimColors.fog,
+                    modifier = Modifier.padding(vertical = 12.dp),
+                )
             }
         }
     }

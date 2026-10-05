@@ -301,6 +301,110 @@ class PracticeLexiconTest {
         assertTrue("lexicon in prompt: $text", text.contains("This walk was an Honor."))
     }
 
+    // --- Honor on a pilgrimage stage (pilgrimage-stage spec P3 §15; iOS
+    // `PromptAssembler.swift:170-194@7c200bf`, `PracticeLexiconTests.swift`) ---
+
+    private fun honorLexicon(story: HonorStoryContext?): String =
+        PromptAssembler.practiceLexicon(context(mode = PracticeMode.Honor, honorStory = story), nyZone)
+
+    /** iOS `testTheLexiconForAStageNamesTheRouteAndNotAnotherWalker`. */
+    @Test
+    fun `the lexicon for a stage names the route and not another walker`() {
+        val text = honorLexicon(
+            HonorStoryContext(
+                wayTitle = "Saint-Jean-Pied-de-Port to Roncesvalles",
+                arrived = true,
+                routeName = "Camino de Santiago (Francés)",
+                stageLabel = "stage 1 of 33",
+            ),
+        )
+        assertTrue(text, text.contains("Camino de Santiago (Francés)"))
+        assertTrue(text, text.contains("stage 1 of 33"))
+        assertFalse(text, text.contains("another walker"))
+        assertFalse(text, text.contains("their voices"))
+        assertTrue(text, text.contains("The end of the stage was reached."))
+    }
+
+    /** iOS `testTheLexiconForASharedWalkIsUnchanged`. */
+    @Test
+    fun `the lexicon for a shared walk is unchanged`() {
+        val text = honorLexicon(HonorStoryContext(wayTitle = "Rúa do Franco → Obradoiro", arrived = false))
+        assertTrue(text, text.contains("a Way another walker laid down"))
+        assertTrue(text, text.contains("Rúa do Franco → Obradoiro"))
+        assertTrue(text, text.contains("The Way was left before its end"))
+        assertFalse("no stage vocabulary on a shared walk: $text", text.contains("stage"))
+        assertFalse(text, text.contains("pilgrimage route"))
+    }
+
+    /** iOS `testTheLexiconForAnUnresolvedHonorStoryMatchesTheSharedWalkBase`. */
+    @Test
+    fun `the lexicon for an unresolved honor story matches the shared walk base`() {
+        val text = honorLexicon(null)
+        assertTrue(text, text.contains("a Way another walker laid down"))
+        assertTrue(text, text.contains("hearing their voices where they were spoken"))
+    }
+
+    @Test
+    fun `an arrived stage with every part reads iOS's stage form verbatim`() {
+        val text = honorLexicon(
+            HonorStoryContext(
+                wayTitle = "Saint-Jean-Pied-de-Port to Roncesvalles",
+                arrived = true,
+                routeName = "Camino de Santiago (Francés)",
+                stageLabel = "stage 1 of 33",
+            ),
+        )
+        assertEquals(
+            "**About this practice:** This walk was an Honor on a pilgrimage route. The walker followed one " +
+                "day's stage of a route walked for centuries, guided by the route's own places rather than by a " +
+                "companion's voice. The line was traced, not raced. The route: Camino de Santiago (Francés). " +
+                "The stage: stage 1 of 33. Named: Saint-Jean-Pied-de-Port to Roncesvalles. " +
+                "The end of the stage was reached.",
+            text,
+        )
+    }
+
+    /** The package gone, the stage names its route by the slug it carries (`PromptListView.swift:239-246@7c200bf`). */
+    @Test
+    fun `a stage left before its end, its route named by the slug, honors that too`() {
+        val text = honorLexicon(
+            HonorStoryContext(
+                wayTitle = "Saint-Jean-Pied-de-Port to Roncesvalles",
+                arrived = false,
+                routeName = "camino-frances",
+                stageLabel = "stage 1 of 33",
+            ),
+        )
+        assertTrue(text, text.contains(" The route: camino-frances. The stage: stage 1 of 33."))
+        assertTrue(text, text.endsWith(" The stage was left before its end, which the practice honors too."))
+        assertFalse(text, text.contains("another walker"))
+    }
+
+    @Test
+    fun `a route name alone selects the stage form, each other part only when it is known`() {
+        val text = honorLexicon(HonorStoryContext(wayTitle = null, arrived = true, routeName = "camino-frances"))
+        assertEquals(
+            "**About this practice:** This walk was an Honor on a pilgrimage route. The walker followed one " +
+                "day's stage of a route walked for centuries, guided by the route's own places rather than by a " +
+                "companion's voice. The line was traced, not raced. The route: camino-frances. " +
+                "The end of the stage was reached.",
+            text,
+        )
+    }
+
+    /**
+     * A stage walk whose Way can't be found has no route name, so it gets
+     * the shared walk's companion and voices (pilgrim-ios #122 item 3,
+     * matched as shipped).
+     */
+    @Test
+    fun `a stage walk whose Way is gone gets the shared-walk lexicon`() {
+        val text = honorLexicon(HonorStoryContext(wayTitle = null, arrived = true, stageLabel = null))
+        assertTrue(text, text.contains("a Way another walker laid down, hearing their voices"))
+        assertTrue(text, text.endsWith(" The end of the Way was reached."))
+        assertFalse(text, text.contains("pilgrimage route"))
+    }
+
     @Test
     fun `walk practice model honor event is honor with its arrival, untitled`() {
         val practice = WalkPracticeModel.practice(

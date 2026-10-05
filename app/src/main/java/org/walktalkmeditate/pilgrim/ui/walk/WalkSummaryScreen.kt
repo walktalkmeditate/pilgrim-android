@@ -99,6 +99,7 @@ import org.walktalkmeditate.pilgrim.ui.walk.summary.RevealPhaseSaver
 import org.walktalkmeditate.pilgrim.ui.walk.summary.rememberRevealAlpha
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RouteSegmentColors
 import org.walktalkmeditate.pilgrim.ui.walk.map.HonorWayLine
+import org.walktalkmeditate.pilgrim.ui.walk.summary.HonorSummaryReplyPlayer
 import org.walktalkmeditate.pilgrim.ui.walk.summary.HonorSummarySection
 import org.walktalkmeditate.pilgrim.ui.walk.summary.SeekSummarySection
 import org.walktalkmeditate.pilgrim.ui.honor.WalkAgainDoor
@@ -205,6 +206,7 @@ fun WalkSummaryScreen(
     val cachedShare by viewModel.cachedShareFlow.collectAsStateWithLifecycle()
     // U23: the Honor section and the map's ghost line (parity spec G §2–§3).
     val liveHonorSummary by viewModel.honorSummary.collectAsStateWithLifecycle()
+    val stageReplyPlaying by viewModel.stageReplyPlaying.collectAsStateWithLifecycle()
     // Stage 13-XZ: AI Prompts surface state. Sheet stays Closed until
     // the user taps the section-17 row; transitions through Loading →
     // Listing → Detail / Editor.
@@ -514,7 +516,17 @@ fun WalkSummaryScreen(
                         // both events shows both, Seek first.
                         honorSummary?.let { honor ->
                             Spacer(Modifier.height(PilgrimSpacing.normal))
-                            HonorSummarySection(data = honor.data)
+                            HonorSummarySection(
+                                data = honor.data,
+                                units = distanceUnits,
+                                reply = honor.replyFile?.let { file ->
+                                    HonorSummaryReplyPlayer(
+                                        isPlaying = stageReplyPlaying,
+                                        toggle = { viewModel.toggleStageReply(file) },
+                                        stop = viewModel::stopStageReply,
+                                    )
+                                },
+                            )
                         }
 
                         // Stage 13-XZ: per-section reveal stagger replaces the

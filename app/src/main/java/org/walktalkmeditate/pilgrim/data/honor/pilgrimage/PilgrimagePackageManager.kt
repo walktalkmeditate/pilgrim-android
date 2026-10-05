@@ -203,6 +203,20 @@ class PilgrimagePackageManager internal constructor(
     suspend fun installed(): Installed? = onActor { installedOnActor() }
 
     /**
+     * [installed]'s answer with none of its writes, for a surface that only
+     * wants the route's name (owner decision 11, P3 addition 8): a Replace
+     * a kill interrupted is left for the launch and the route page to
+     * finish, and the route it was letting go is passed over as [installed]
+     * would have deleted it. iOS's prompt screen calls `installed()` itself
+     * (pilgrim-ios #123, matched in the words, not the write).
+     */
+    suspend fun installedRoute(): Installed? = onActor {
+        val found = store.pilgrimageRouteIds().mapNotNull(::readInstalled)
+        val abandonedId = if (isDownloading || found.size < 2) null else replacingMarker()
+        found.firstOrNull { it.routeId != abandonedId }
+    }
+
+    /**
      * The UI process's launch work, after the pending Honor steps (P2 §12,
      * C-12): [installed], which is iOS's launch call and so finishes an
      * interrupted Replace, then every temp set but the one in flight,

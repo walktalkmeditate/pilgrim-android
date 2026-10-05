@@ -211,6 +211,7 @@ class ThreadsEndToEndTest {
         threadsAnalysisEnvironment = ThreadsAnalysisEnvironment(context, WordNetLexicon(context, json)),
         releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
         honorWalkRecords = org.walktalkmeditate.pilgrim.honor.honorWalkRecordsForTests(db, context),
+        installedRoute = { null },
     )
 
     private val wordyText = "I was walking and I have to say I think about music because I can think about " +
