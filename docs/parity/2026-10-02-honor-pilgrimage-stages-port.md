@@ -138,8 +138,8 @@ Gathered from the clusters; the gate records each with its reason.
 - **Owner decision 2 (decided):** the stage Way is staged per walk at Start from the copy the door loaded, discarded at finalize and never promoted. The plan's file-stamp refusal and Start's wait (P2 A-8, A-9) are not built.
 - **The water haptic in the pocket** (P3 addition 2, R6's existing addition).
 - **Files and caches:** no HTTP cache on the CDN clients (P1 A1); redirects kept on the CDN host (P1 A2, owner decision 6); the temp set under `noBackupFilesDir`, swept at launch (P2 A-6); `list()` skipping stage ids (P2 A-11); `retireMany` bumping the deletion counter (P2 A-10).
-- **Kotlin and Compose mechanics, no visible change:** cancellation rethrown (P1 A3); a single-flight `load` (P1 A4); millisecond `fetchedAt` (P1 A5); list keys by id and position (P1 A6); wire integers as `Long` (P1 A7); work on `Dispatchers.IO` (P1 A8); kotlinx's decoding differences, recorded and not emulated (P1 A9); NFC-normalized name comparisons (P1 A10); the camera subscriptions only where marks exist (P5 A5).
-- **Screens:** the route page as a second sheet (P4 A-1, owner decision 8); the catalog plate in parchment (P4 A-2); process-death restore of the catalog, route page, morning card flag and redraw notice (P4 A-3); the offline note's connectivity reading (P4 A-4); `Locale.US` digits (P4 A-5); "the day"'s weather fallback after a UI restart (P4 A-6); spoken names for unlabelled glyphs (P4 A-7); no maps line until 21-3 (P4 A-8); the stage formatter (P4 A-9, owner decision 7); Material glyph stand-ins (P5 A6).
+- **Kotlin and Compose mechanics, no visible change:** cancellation rethrown (P1 A3); a single-flight `load` (P1 A4); millisecond `fetchedAt` (P1 A5); list keys by id and position (P1 A6); wire integers as `Long` (P1 A7); work on `Dispatchers.IO` (P1 A8); kotlinx's decoding differences, recorded and not emulated (P1 A9); NFC-normalized name comparisons (P1 A10); the camera subscriptions only where marks exist (P5 A5), with one report of the current camera when they're installed, so a zoom-14 opening camera still reaches the marks (U39); the ledger written to the folder of the route id the caller names, where iOS's `save` writes to the `routeId` stored in the file (they differ only for a hand-edited file; U33).
+- **Screens:** the route page as a second sheet (P4 A-1, owner decision 8); the catalog plate in parchment (P4 A-2); process-death restore of the catalog, route page, morning card flag and redraw notice (P4 A-3); the offline note's connectivity reading (P4 A-4); `Locale.US` digits (P4 A-5); "the day"'s weather fallback after a UI restart (P4 A-6); spoken names for unlabelled glyphs (P4 A-7); no maps line until 21-3 (P4 A-8); the stage formatter (P4 A-9, owner decision 7); Material glyph stand-ins (P5 A6); the route page's own hold (P4 A-10: the button and overflow held from the page's opening until its first reload has read what's installed, and from each Download, Update or Replace tap through the reload after it, counted, so an install refused at once never releases another's; Remove holds nothing, as on iOS; U37); the summary's stage reply on the app's one voice player, so a voice row and the reply never play at once, where iOS gives each its own player (U40).
 - **The lexicon's read-only route lookup** (P3 addition 8, owner decision 11).
 
 ---
@@ -180,6 +180,12 @@ The owner accepted every recommendation below on 2026-10-02, decision 2 included
 | 12 | **iOS PR #91** | Leave one review comment before it merges (PR91-D1, D2, D6, with D3 as a note), and say whether #91 is meant for the iOS build Android 2.0.0 claims parity with. R2 decides mechanically either way; decision 1 makes a late fold-in free | Annex A.12–A.14 |
 
 ---
+
+## Follow-ups found outside this stage
+
+Pre-existing Android differences the stage's reviews found, outside its scope; record at the gate or file after Stage 21-2:
+- The walk options sheet's rows draw the title, subtitle and chevron at full opacity; iOS draws them at 0.9, 0.5 and 0.3, and lets the title shrink to 0.8 (U38 review).
+- The walk map's weather chip (`WalkVignette.kt`) rounds a .5 temperature up and prints a bare "°"; iOS prints "°C" through its shared `%.0f`, which rounds half to even (U38 review; the summary and prompt formatters were fixed in U38).
 
 ## Open questions iOS leaves open (iPhone checks for the combined pass)
 
@@ -6726,6 +6732,8 @@ Android ports each exactly as shipped; they go upstream as themed issues later. 
 ---
 
 ## P5. On the walk and after: marks and the camera report, the card body, the water caption, "the day", the arrival reply, and the summary
+
+> **Superseded by owner decision 7 (2026-10-02):** wherever this cluster says `WalkFormat` for a stage surface (§8.1, §8.2, §11.4, §11.5, C9 and the §16 walked-distance and progress-line rows), the stage formatter `StageFormat` applies, since it prints as iOS's `StatsHelper` does ("24.2 km", "0.05 km"; `WalkFormat` would print "24.20 km", "50 m"). The summary's line reads "14.04 km of 24.2 km of the stage" (U39, U40).
 
 | | |
 |---|---|
