@@ -23,7 +23,8 @@ data class PendingReply(
      * first honoring of an own walk loses its replies, the one still
      * recording at walk end included, though the finalize step lists the Way
      * moments before that last one lands (pilgrim-ios #98, matched). A share
-     * is listed from acceptance, so its first honoring keeps them.
+     * is listed from acceptance, and a stage with its package, so their
+     * first honorings keep them.
      */
     val listed: Boolean,
 )
@@ -75,7 +76,8 @@ class HonorReplies internal constructor(
 
     /**
      * iOS `recordReplyIfPending`: files [recording] under the origin voice's
-     * own `n`, clearing the origin first. A write into a missing folder fails
+     * own `n`, or a stage's closing line's reserved −1 (pilgrimage-stage spec
+     * P3 §13), clearing the origin first. A write into a missing folder fails
      * silently, as iOS's `try?` does. A take that never saved files nothing
      * and leaves the origin armed for the walk's next recording (pilgrim-ios
      * #99, matched): no caller reaches here without a saved row.

@@ -22,6 +22,7 @@ import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageLedgerStore
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkMode
@@ -58,8 +59,9 @@ internal class HonorHarness(private val folder: File) {
         PilgrimDatabase::class.java,
     ).allowMainThreadQueries().build()
     val store = WayStore({ File(folder, "Ways") }, clock)
+    val ledgers = PilgrimageLedgerStore(store)
     val filesRoot = File(folder, "files")
-    val finalizer = HonorFinalizer(db, store, clock, Dispatchers.IO)
+    val finalizer = HonorFinalizer(db, store, clock, Dispatchers.IO, ledgers = ledgers)
     val repository = WalkRepository(
         database = db,
         walkDao = db.walkDao(),

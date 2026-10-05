@@ -193,9 +193,10 @@ open class WalkRepository @Inject constructor(
         }
 
     /**
-     * The Honor step after [finishWalkAtomic]: link, promotion, marker, and
-     * the live rows last. Never throws but for cancellation; a step that
-     * fails leaves the live rows for [HonorFinalizer.runAtLaunch] to retry.
+     * The Honor step after [finishWalkAtomic]: link, a stage's ledger
+     * record, promotion, marker, and the live rows last. Never throws but
+     * for cancellation; a step that fails leaves the live rows for
+     * [HonorFinalizer.runAtLaunch] to retry.
      * Also the guard the archive strip and the tended replace run first,
      * since both drop the live rows a pending step still needs.
      */
