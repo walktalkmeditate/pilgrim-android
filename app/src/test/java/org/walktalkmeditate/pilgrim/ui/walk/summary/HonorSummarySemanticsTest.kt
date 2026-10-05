@@ -2,9 +2,12 @@
 package org.walktalkmeditate.pilgrim.ui.walk.summary
 
 import android.app.Application
-import androidx.test.core.app.ApplicationProvider
+import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.PauseCircle
+import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -15,7 +18,7 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.hasClickAction
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -43,7 +46,7 @@ import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
 @Config(sdk = [34], application = Application::class)
 class HonorSummarySemanticsTest {
 
-    @get:Rule val composeRule = createComposeRule()
+    @get:Rule val composeRule = createAndroidComposeRule<ComponentActivity>()
 
     private fun show(data: HonorSummaryData, reply: HonorSummaryReplyPlayer? = null) {
         composeRule.setContent {
@@ -148,16 +151,28 @@ class HonorSummarySemanticsTest {
         assertEquals(1, taps.toggles)
     }
 
+    /** The face TalkBack doesn't read: the glyph's name, then the word, from the tags under the button. */
+    private fun face(): List<String> =
+        composeRule.onNode(replyLabel, useUnmergedTree = true).fetchSemanticsNode().children
+            .mapNotNull { it.config.getOrNull(SemanticsProperties.TestTag) }
+
+    @Test
+    fun `at rest the button shows the play glyph and says your reply`() {
+        show(arrivedStage, Taps().player(isPlaying = false))
+
+        assertEquals(listOf(Icons.Outlined.PlayCircle.name, "your reply"), face())
+    }
+
     /** pilgrim-ios #123 item 7, matched as shipped: the face says "pause", the label still says play. */
     @Test
-    fun `while it plays the button shows pause and keeps its play label`() {
-        val resources = ApplicationProvider.getApplicationContext<Application>().resources
-        assertEquals(
-            "your reply" to "pause",
-            resources.getString(HonorSummaryModel.replyTitle(isPlaying = false)) to
-                resources.getString(HonorSummaryModel.replyTitle(isPlaying = true)),
-        )
+    fun `while it plays the button shows the pause glyph and says pause`() {
+        show(arrivedStage, Taps().player(isPlaying = true))
 
+        assertEquals(listOf(Icons.Outlined.PauseCircle.name, "pause"), face())
+    }
+
+    @Test
+    fun `while it plays TalkBack still reads the play label and never the face`() {
         show(arrivedStage, Taps().player(isPlaying = true))
 
         composeRule.onNode(replyLabel).assertHasClickAction()
@@ -187,6 +202,17 @@ class HonorSummarySemanticsTest {
         composeRule.waitForIdle()
 
         assertEquals(1, taps.stops)
+    }
+
+    /** iOS's `.onDisappear` doesn't fire on a trait change: a dark/light flip recreates the activity, not the walk's summary. */
+    @Test
+    fun `the reply keeps playing through a configuration change`() {
+        val taps = Taps()
+        show(arrivedStage, taps.player(isPlaying = true))
+
+        composeRule.activityRule.scenario.recreate()
+
+        assertEquals(0, taps.stops)
     }
 
     @Test

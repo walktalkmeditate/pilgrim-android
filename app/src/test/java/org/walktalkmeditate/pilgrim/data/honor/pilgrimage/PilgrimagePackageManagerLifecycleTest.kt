@@ -136,22 +136,26 @@ class PilgrimagePackageManagerLifecycleTest {
 
     // ---- The lexicon's read-only lookup (owner decision 11, P3 addition 8) -------------------
 
-    /** The words `installed()` would give, and none of its writes: the launch finishes the swap. */
+    /**
+     * The words `installed()` would give, and none of its writes: the launch finishes the swap.
+     * The marker names whichever route the folder lists first, so only the skip can pass the other.
+     */
     @Test
     fun `the read-only lookup names the route installed would, leaving an interrupted Replace alone`() {
         val manager = h.makeManager()
         manager.download(h.entry, RELEASE).awaitBlocking()
         h.stubNorte()
         manager.download(h.norte, RELEASE).awaitBlocking()
-        marker.writeText(ROUTE_ID)
+        val (letGo, kept) = h.wayStore.pilgrimageRouteIds().also { assertEquals(2, it.size) }
+        marker.writeText(letGo)
 
         val looked = runBlocking { manager.installedRoute() }
 
-        assertEquals("the route installed() keeps", NORTE_ID, looked?.routeId)
-        assertEquals("the marker stays for the launch", ROUTE_ID, marker.readText())
-        assertNotNull("the route let go keeps its stages", h.wayStore.load("pilgrimage:camino-frances:0"))
-        assertTrue(h.wayStore.routeFile(ROUTE_ID)!!.exists())
-        assertEquals("and installed() then finishes the swap", NORTE_ID, manager.installedBlocking()?.routeId)
+        assertEquals("the route installed() keeps", kept, looked?.routeId)
+        assertEquals("the marker stays for the launch", letGo, marker.readText())
+        assertNotNull("the route let go keeps its stages", h.wayStore.load(WayStore.stageWayId(letGo, 0)))
+        assertTrue(h.wayStore.routeFile(letGo)!!.exists())
+        assertEquals("and installed() then finishes the swap", kept, manager.installedBlocking()?.routeId)
         assertFalse(marker.exists())
     }
 

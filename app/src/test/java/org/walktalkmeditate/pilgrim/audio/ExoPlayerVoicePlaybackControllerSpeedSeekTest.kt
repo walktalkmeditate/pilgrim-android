@@ -4,6 +4,8 @@ package org.walktalkmeditate.pilgrim.audio
 import android.app.Application
 import android.media.AudioManager
 import androidx.test.core.app.ApplicationProvider
+import java.io.File
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
@@ -20,17 +22,19 @@ import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
  *
  * No actual ExoPlayer playback is exercised — Robolectric's media stack is a
  * stub. We verify the StateFlow defaults and that pre-play seek/setSpeed calls
- * don't crash.
+ * don't crash. The rate tests build the real player and read the rate it was
+ * given; the files never exist, so nothing decodes.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
 class ExoPlayerVoicePlaybackControllerSpeedSeekTest {
 
     private lateinit var controller: ExoPlayerVoicePlaybackController
+    private lateinit var context: Application
 
     @Before
     fun setUp() {
-        val context = ApplicationProvider.getApplicationContext<Application>()
+        context = ApplicationProvider.getApplicationContext()
         val audioManager = context.getSystemService(AudioManager::class.java)
         controller = ExoPlayerVoicePlaybackController(
             context = context,
@@ -38,6 +42,12 @@ class ExoPlayerVoicePlaybackControllerSpeedSeekTest {
             fileSystem = VoiceRecordingFileSystem(context),
         )
         ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+    }
+
+    @After
+    fun tearDown() {
+        controller.release()
+        ShadowLooper.idleMainLooper()
     }
 
     @Test
@@ -89,5 +99,45 @@ class ExoPlayerVoicePlaybackControllerSpeedSeekTest {
         val item = ExoPlayerVoicePlaybackController.mediaItemFor(file)
 
         assertEquals(android.net.Uri.fromFile(file), item.localConfiguration!!.uri)
+    }
+
+    // An item with its own rate: the summary's stage reply, which iOS plays on a section-owned 1x player.
+
+    private val rowFile get() = File(context.cacheDir, "row.wav")
+    private val replyFile get() = File(context.cacheDir, "reply.m4a")
+
+    @Test
+    fun `the reply plays at its own 1x while the rows keep their 1_5x`() {
+        controller.playFile(ROW_ID, rowFile)
+        controller.setPlaybackSpeed(1.5f)
+        controller.playFile(REPLY_ID, replyFile, rate = 1f)
+        ShadowLooper.idleMainLooper()
+
+        assertEquals(1.0f to 1.5f, controller.playerSpeed() to controller.playbackSpeed.value)
+    }
+
+    @Test
+    fun `a row's speed tapped while the reply plays leaves the reply at 1x`() {
+        controller.playFile(REPLY_ID, replyFile, rate = 1f)
+        controller.setPlaybackSpeed(2.0f)
+        ShadowLooper.idleMainLooper()
+
+        assertEquals(1.0f to 2.0f, controller.playerSpeed() to controller.playbackSpeed.value)
+    }
+
+    @Test
+    fun `a row after the reply plays at the rows' speed again`() {
+        controller.playFile(ROW_ID, rowFile)
+        controller.setPlaybackSpeed(1.5f)
+        controller.playFile(REPLY_ID, replyFile, rate = 1f)
+        controller.playFile(ROW_ID, rowFile)
+        ShadowLooper.idleMainLooper()
+
+        assertEquals(1.5f, controller.playerSpeed()!!, 0.001f)
+    }
+
+    private companion object {
+        const val ROW_ID = 7L
+        const val REPLY_ID = Long.MIN_VALUE
     }
 }

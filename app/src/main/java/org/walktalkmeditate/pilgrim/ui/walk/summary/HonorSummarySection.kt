@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk.summary
 
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -113,11 +114,18 @@ fun HonorSummarySection(
     }
 }
 
+/**
+ * iOS's `.onDisappear` doesn't fire on a trait change, so the reply stops
+ * only on a real departure, never on the recreate a dark/light flip, a
+ * locale or font-scale change, or a window resize causes; the ViewModel
+ * holding the playback outlives that recreate.
+ */
 @Composable
 private fun ReplyButton(reply: HonorSummaryReplyPlayer) {
     val stop by rememberUpdatedState(reply.stop)
-    DisposableEffect(Unit) {
-        onDispose { stop() }
+    val activity = LocalActivity.current
+    DisposableEffect(activity) {
+        onDispose { if (activity?.isChangingConfigurations != true) stop() }
     }
     CaptionButton(
         icon = if (reply.isPlaying) Icons.Outlined.PauseCircle else Icons.Outlined.PlayCircle,

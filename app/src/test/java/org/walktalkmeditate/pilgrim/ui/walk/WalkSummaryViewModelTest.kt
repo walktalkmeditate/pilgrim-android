@@ -1810,6 +1810,20 @@ class WalkSummaryViewModelTest {
         awaitStageReplyPlaying(vm, playing = false)
     }
 
+    /** iOS's section-owned player has no speed control (`AudioPlayerModel.swift:9,87-88@7c200bf`). */
+    @Test
+    fun `the stage reply plays at 1x while the rows keep the speed their pills show`() = runTest(dispatcher) {
+        val store = newWayStore()
+        val (walkId, reply) = linkedStageWalk(store)
+        val vm = newViewModel(walkId = walkId, honorEnabled = true, wayStore = store)
+        awaitLoaded(vm)
+        vm.cyclePlaybackSpeed()
+
+        vm.toggleStageReply(reply)
+
+        assertEquals(listOf(1f) to 1.5f, playback.playedRates.toList() to vm.playbackSpeed.value)
+    }
+
     private suspend fun awaitStageReplyPlaying(vm: WalkSummaryViewModel, playing: Boolean) {
         withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) { vm.stageReplyPlaying.first { it == playing } }

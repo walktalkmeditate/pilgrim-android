@@ -511,13 +511,16 @@ class WalkSummaryViewModel @Inject constructor(
     /**
      * iOS `player.toggle(url:)`: a reply playing pauses, a paused one
      * resumes where it stopped, and otherwise [file] plays from its start.
+     * Always at 1x, as the section's own iOS player has no speed control
+     * (`AudioPlayerModel.swift:9,87-88@7c200bf`); the rows keep the speed
+     * their pills show.
      */
     fun toggleStageReply(file: java.io.File) {
         val current = playback.state.value
         if (current is PlaybackState.Playing && current.recordingId == STAGE_REPLY_PLAYBACK_ID) {
             playback.pause()
         } else {
-            playback.playFile(STAGE_REPLY_PLAYBACK_ID, file)
+            playback.playFile(STAGE_REPLY_PLAYBACK_ID, file, rate = STAGE_REPLY_RATE)
         }
     }
 
@@ -2398,6 +2401,8 @@ class WalkSummaryViewModel @Inject constructor(
 
         /** The stage reply's playback id: no recording row's, and no shared Way voice's (those count down from -1). */
         internal const val STAGE_REPLY_PLAYBACK_ID = Long.MIN_VALUE
+
+        private const val STAGE_REPLY_RATE = 1f
     }
 }
 

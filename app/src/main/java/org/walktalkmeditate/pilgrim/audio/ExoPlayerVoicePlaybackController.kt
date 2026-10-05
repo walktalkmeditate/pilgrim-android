@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import androidx.annotation.VisibleForTesting
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -68,6 +69,9 @@ class ExoPlayerVoicePlaybackController @Inject constructor(
     private var player: ExoPlayer? = null
     private var currentRecordingId: Long? = null
 
+    /** The loaded item's own rate from [playFile]; null while it plays at [playbackSpeed]. */
+    private var loadedItemRate: Float? = null
+
     // Re-posts itself every POSITION_TICK_MS while the player is in
     // STATE_READY + playing. Started/stopped from onPlaybackStateChanged
     // and onIsPlayingChanged. mainHandler.removeCallbacks(this) is the
@@ -122,7 +126,7 @@ class ExoPlayerVoicePlaybackController @Inject constructor(
         playFile(recording.id, fileSystem.absolutePath(recording.fileRelativePath))
     }
 
-    override fun playFile(playbackId: Long, file: File) {
+    override fun playFile(playbackId: Long, file: File, rate: Float?) {
         mainHandler.post {
             // Resume-in-place: same recording, currently Paused. Focus
             // is still held from the original play(); re-requesting it
@@ -147,6 +151,10 @@ class ExoPlayerVoicePlaybackController @Inject constructor(
             // show the old recording's tail before the first tick fires.
             _playbackPositionMillis.value = 0L
             currentRecordingId = playbackId
+            // ExoPlayer keeps the last rate across setMediaItem, so every new
+            // item sets its own: the reply's 1x must not carry into a row.
+            loadedItemRate = rate?.coerceIn(MIN_PLAYBACK_SPEED, MAX_PLAYBACK_SPEED)
+            p.setPlaybackParameters(PlaybackParameters(loadedItemRate ?: _playbackSpeed.value, 1.0f))
             p.setMediaItem(mediaItemFor(file))
             p.prepare()
             p.play()
@@ -180,6 +188,7 @@ class ExoPlayerVoicePlaybackController @Inject constructor(
             player?.removeListener(listener)
             player?.release()
             player = null
+            loadedItemRate = null
             audioFocus.abandon()
             currentRecordingId = null
             _playbackPositionMillis.value = 0L
@@ -193,7 +202,7 @@ class ExoPlayerVoicePlaybackController @Inject constructor(
             // pitch = 1.0f is intentional — without it ExoPlayer pitch-shifts
             // (chipmunk effect at >1.0). Default is 1.0 already, but passing
             // it explicitly documents intent.
-            player?.setPlaybackParameters(PlaybackParameters(coerced, 1.0f))
+            if (loadedItemRate == null) player?.setPlaybackParameters(PlaybackParameters(coerced, 1.0f))
             // Storing the COERCED value: observers should see what's actually
             // playing, not what the caller asked for. UI bindings expecting
             // their `setPlaybackSpeed(2.5f)` to round-trip will see 2.0f.
@@ -218,6 +227,10 @@ class ExoPlayerVoicePlaybackController @Inject constructor(
             _playbackPositionMillis.value = target
         }
     }
+
+    /** The rate the player plays at, which [playbackSpeed] doesn't show for an item with its own. Main thread only. */
+    @VisibleForTesting
+    internal fun playerSpeed(): Float? = player?.playbackParameters?.speed
 
     private fun startPositionTicks() {
         mainHandler.removeCallbacks(positionTick)
