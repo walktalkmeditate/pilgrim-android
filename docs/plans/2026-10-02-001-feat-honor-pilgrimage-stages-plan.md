@@ -1,7 +1,7 @@
 ---
 title: "feat: Honor — pilgrimage stages, iOS v2.0.0 parity, Stage 21-2 (Phase 21)"
 type: feat
-status: active
+status: completed
 date: 2026-10-02
 origin: docs/brainstorms/2026-09-28-ios-v200-parity-retarget-requirements.md
 ---
