@@ -203,6 +203,49 @@ internal class HonorHarness(private val folder: File) {
             ),
         )
 
+        /**
+         * iOS `PilgrimageStageWalkTests.stageWay(index:)`: a 1 km stage east
+         * along the equator, so every distance is arithmetic (0.000898° of
+         * longitude is 100 m), with one waypoint at 0.3 that carries words,
+         * names, a sitting and a pin; 24.2 km of the Camino Francés on paper.
+         */
+        fun stageWay(index: Int = 0, departedAt: Instant = Instant.ofEpochSecond(1_000_000)): Way {
+            val orisson = WayMoment(
+                id = "wp-orisson",
+                frac = 0.3,
+                at = WayCoordinate(lat = 0.0, lon = 300.0 / 111_320),
+                kind = WayMomentKind.Waypoint(label = "Vierge d'Orisson", icon = "building.columns"),
+                text = "A shepherd carried this Madonna up from Lourdes.",
+                names = mapOf("eu" to "Orissongo Ama Birjina", "fr" to "Vierge d'Orisson"),
+                sitMinutes = 5,
+                pin = WayCoordinate(lat = 0.0002, lon = 300.0 / 111_320),
+            )
+            return Way(
+                id = WayStore.stageWayId("camino-frances", index),
+                source = WaySource.Pilgrimage(routeId = "camino-frances", stageIndex = index),
+                title = "Saint-Jean-Pied-de-Port to Roncesvalles",
+                departedAt = departedAt,
+                tzIdentifier = "Europe/Madrid",
+                expires = null,
+                route = (0..10).map { WayPoint(lat = 0.0, lon = it * 0.000898, alt = null, t = it * 60.0) },
+                totalDistanceMeters = 1000.0,
+                theirActiveSeconds = 600.0,
+                moments = listOf(orisson),
+                weather = null,
+                marks = emptyList(),
+                stage = WayStage(
+                    routeId = "camino-frances", index = index, count = 33,
+                    name = "Saint-Jean-Pied-de-Port to Roncesvalles", theme = "Initiation",
+                    narrative = "The Pyrenees are the first question the way asks.",
+                    closing = "You crossed a border on foot.",
+                    warnings = listOf("The Napoleon Route closes in winter."),
+                    distanceKm = 24.2, gainMeters = 1419.0, hours = WayStageHours(min = 7.0, max = 9.0), difficulty = "hard",
+                    start = WayStagePlace(name = "Saint-Jean-Pied-de-Port", at = WayCoordinate(lat = 0.0, lon = 0.0)),
+                    end = WayStagePlace(name = "Roncesvalles", at = WayCoordinate(lat = 0.0, lon = 0.00898)),
+                ),
+            )
+        }
+
         fun fix(
             lon: Double,
             atMillis: Long,

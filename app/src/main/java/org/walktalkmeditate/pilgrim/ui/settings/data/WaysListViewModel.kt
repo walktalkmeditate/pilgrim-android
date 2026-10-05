@@ -12,6 +12,7 @@ import java.time.format.FormatStyle
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Provider
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -32,6 +33,7 @@ import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.honor.HonorDao
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager
 import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.honor.WayMediaDownloader
 import org.walktalkmeditate.pilgrim.honor.WaySweeper
@@ -56,7 +58,13 @@ sealed interface WaysListUiState {
     data object Loading : WaysListUiState
 
     @Immutable
-    data class Loaded(val rows: List<WayListRow>) : WaysListUiState
+    data class Loaded(
+        val rows: List<WayListRow>,
+        /** The installed route's `route.json` name; null with no route installed. */
+        val packageRouteName: String? = null,
+        /** Package-owned stage Ways in the store, of every route ([WayStore.stageWayIds]). */
+        val packageStageCount: Int = 0,
+    ) : WaysListUiState
 }
 
 /**
@@ -74,6 +82,19 @@ object WaysListModel {
         val res = if (totals.count == 1) R.string.settings_ways_count_one else R.string.settings_ways_count
         val count = resources.getString(res, String.format(Locale.US, "%d", totals.count))
         return resources.getString(R.string.settings_ways_detail, count, megabytes(resources, totals.bytes))
+    }
+
+    /**
+     * iOS `packageFooter(routeName:stageCount:)` (`WaysListView.swift:22-28@7c200bf`):
+     * one line under the list while package stages are on the phone, so a
+     * walker who downloaded a route doesn't look for it here. Null with no
+     * stages, and with no installed route to name them by (a Replace cut
+     * short says nothing). The word by iOS's `stageCount == 1`.
+     */
+    fun packageFooter(resources: Resources, routeName: String?, stageCount: Int): String? {
+        if (routeName == null || stageCount <= 0) return null
+        val res = if (stageCount == 1) R.string.settings_ways_package_footer_one else R.string.settings_ways_package_footer
+        return resources.getString(res, routeName, String.format(Locale.US, "%d", stageCount))
     }
 
     /** `"Sep 14, 2026 · 23.5 MB"`, or `"Sep 14, 2026 · voices returned to the trail"`. */
@@ -180,12 +201,19 @@ class WaysRowViewModel internal constructor(
  * (iOS's `reload`). A delete cancels the Way's downloads, then removes its
  * folder and every link to it; the walks' reply recordings and their honor
  * events stay. Swipe deletes one at once; "Delete all Ways" asks first.
+ *
+ * The last row names where the hidden pilgrimage stages went (P2 §11):
+ * every route's stages, walked ones a Replace or Remove kept included,
+ * under the installed route's name, as iOS counts them (pilgrim-ios #120
+ * item 6, matched as shipped).
  */
 @HiltViewModel
 class WaysListViewModel internal constructor(
     private val store: WayStore,
     private val sweeper: WaySweeper,
     private val cancelGather: (wayId: String) -> Unit,
+    /** iOS's `installed()?.route.name`, which can finish an interrupted Replace: the UI process only. */
+    private val installedRouteName: suspend () -> String?,
     availability: WaysAvailability,
     private val zone: () -> ZoneId,
     private val locale: () -> Locale,
@@ -197,11 +225,13 @@ class WaysListViewModel internal constructor(
         store: WayStore,
         sweeper: WaySweeper,
         downloader: Provider<WayMediaDownloader>,
+        packages: Provider<PilgrimagePackageManager>,
         availability: WaysAvailability,
     ) : this(
         store = store,
         sweeper = sweeper,
         cancelGather = { downloader.get().cancel(it) },
+        installedRouteName = { packages.get().installed()?.route?.name },
         availability = availability,
         zone = ZoneId::systemDefault,
         locale = Locale::getDefault,
@@ -247,11 +277,30 @@ class WaysListViewModel internal constructor(
         withContext(ioDispatcher) { wayIds.forEach(store::delete) }
     }
 
+    /** iOS's order: the store is read before `installed()`, so its count is the store as it stood. */
     private suspend fun reload() {
         sweeper.sweep()
+        val (rows, stageCount) = withContext(ioDispatcher) {
+            WaysListModel.rows(WaysListModel.listable(store.list()), store, zone(), locale()) to store.stageWayIds().size
+        }
         _state.value = WaysListUiState.Loaded(
-            withContext(ioDispatcher) { WaysListModel.rows(WaysListModel.listable(store.list()), store, zone(), locale()) },
+            rows = rows,
+            packageRouteName = routeNameOrNone(),
+            packageStageCount = stageCount,
         )
+    }
+
+    /**
+     * iOS's `installed()` can't fail. Android's can, in the live-session
+     * read its marker branch makes before retiring an abandoned route; then
+     * no route is named, and the footer says nothing.
+     */
+    private suspend fun routeNameOrNone(): String? = try {
+        installedRouteName()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
     }
 
     private companion object {

@@ -20,23 +20,28 @@ import org.walktalkmeditate.pilgrim.data.honor.WayArrival
 import org.walktalkmeditate.pilgrim.data.honor.WayFileStamp
 import org.walktalkmeditate.pilgrim.data.honor.WayLink
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageLedger
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageLedgerStore
 import org.walktalkmeditate.pilgrim.domain.honor.Way
 
 /**
- * What the after-the-walk surfaces read of one walk's Honor (iOS's three
+ * What the after-the-walk surfaces read of one walk's Honor (iOS's four
  * Way-store reads, `WalkSummaryView.swift:740-755@7c200bf`): the Way it
- * honored, the arrival numbers the link carries, and the Way's replies.
- * [way] is null when the Way is gone; [arrival] is null until the Honor
- * step has written the link, and for a walk that never arrived.
+ * honored, the arrival numbers the link carries, the Way's replies, and,
+ * for a stage, its route's ledger. [way] is null when the Way is gone;
+ * [arrival] is null until the Honor step has written the link, and for a
+ * walk that never arrived; [ledger] is null for a Way that isn't a stage
+ * and for a route with no ledger yet.
  */
 data class HonorWalkRecord(
     val way: Way?,
     val arrival: WayArrival?,
     val replies: Map<Int, String>,
+    val ledger: PilgrimageLedger?,
 ) {
     companion object {
         /** No link and no live session: iOS's only "Way missing" state (parity spec G §10). */
-        val NONE = HonorWalkRecord(way = null, arrival = null, replies = emptyMap())
+        val NONE = HonorWalkRecord(way = null, arrival = null, replies = emptyMap(), ledger = null)
     }
 }
 
@@ -51,16 +56,22 @@ data class HonorWalkRecord(
  * whose delete failed waits for the next launch's retry.
  *
  * Files raise no invalidation, so [observe] re-reads when the session
- * row or the walk's marker changes: the step writes the link, then the
- * marker, then deletes the session row. Callers check the release flag.
+ * row or the walk's marker changes: the step writes the link, then a
+ * stage's ledger record, then the marker, then deletes the session row.
+ * So a stage's "X of Y km of the stage" reads the ledger as it stood
+ * until the marker lands (an earlier walk's entry, or none), then this
+ * walk's (pilgrimage-stage spec P5 §11.5, A3). Callers check the release
+ * flag.
  */
 class HonorWalkRecords internal constructor(
     private val honorDao: HonorDao,
     private val wayStore: WayStore,
+    private val ledgers: PilgrimageLedgerStore,
     private val ioDispatcher: CoroutineDispatcher,
 ) {
     @Inject
-    constructor(honorDao: HonorDao, wayStore: WayStore) : this(honorDao, wayStore, Dispatchers.IO)
+    constructor(honorDao: HonorDao, wayStore: WayStore, ledgers: PilgrimageLedgerStore) :
+        this(honorDao, wayStore, ledgers, Dispatchers.IO)
 
     /** Listed Ways [honoredWays] decoded, each kept until its `way.json` changes. */
     private val listedWays = ConcurrentHashMap<String, StampedWay>()
@@ -121,19 +132,26 @@ class HonorWalkRecords internal constructor(
 
     private fun read(walkUuid: String, session: HonorSessionEntity?): HonorWalkRecord {
         if (session != null) {
+            val way = wayThePendingStepLinks(walkUuid, session)
             return HonorWalkRecord(
-                way = wayThePendingStepLinks(walkUuid, session),
+                way = way,
                 arrival = null,
                 replies = wayStore.replies(session.wayId),
+                ledger = ledgerOf(way),
             )
         }
         val link = wayStore.wayLink(walkUuid) ?: return HonorWalkRecord.NONE
+        val way = wayStore.load(link.wayId)
         return HonorWalkRecord(
-            way = wayStore.load(link.wayId),
+            way = way,
             arrival = link.arrival(),
             replies = wayStore.replies(link.wayId),
+            ledger = ledgerOf(way),
         )
     }
+
+    /** iOS `way?.stage.flatMap { PilgrimageLedgerStore().load(routeId: $0.routeId) }`. */
+    private fun ledgerOf(way: Way?): PilgrimageLedger? = way?.stage?.let { ledgers.load(it.routeId) }
 
     /**
      * As `HonorFinalizer` will link it: a clean finish of an own walk

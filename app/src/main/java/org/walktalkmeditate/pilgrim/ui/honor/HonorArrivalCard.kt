@@ -25,9 +25,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.unit.dp
 import java.util.Locale
 import org.walktalkmeditate.pilgrim.R
@@ -184,9 +186,13 @@ private fun StageReplyControls(row: StageReplyRow) {
     }
 }
 
-/** iOS's `Label` in caption and stone with a 44 dp hit area; [label] is all TalkBack reads. */
+/**
+ * iOS's `Label` in caption and stone with a 44 dp hit area; [label] is all TalkBack reads.
+ * The glyph's name and the word ride as test tags, which no accessibility service reads
+ * and a parent never merges, so a test can see the face TalkBack doesn't.
+ */
 @Composable
-private fun CaptionButton(icon: ImageVector, title: String, label: String, onClick: () -> Unit) {
+internal fun CaptionButton(icon: ImageVector, title: String, label: String, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .heightIn(min = TAP_TARGET)
@@ -194,12 +200,17 @@ private fun CaptionButton(icon: ImageVector, title: String, label: String, onCli
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs),
     ) {
-        Icon(imageVector = icon, contentDescription = null, tint = pilgrimColors.stone, modifier = Modifier.size(GLYPH_CAPTION))
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = pilgrimColors.stone,
+            modifier = Modifier.size(GLYPH_CAPTION).testTag(icon.name),
+        )
         Text(
             text = title,
             style = pilgrimType.caption,
             color = pilgrimColors.stone,
-            modifier = Modifier.clearAndSetSemantics {},
+            modifier = Modifier.clearAndSetSemantics { testTag = title },
         )
     }
 }

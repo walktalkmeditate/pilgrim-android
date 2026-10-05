@@ -336,6 +336,7 @@ class WalkSummaryViewModelTest {
             } else {
                 org.walktalkmeditate.pilgrim.honor.honorWalkRecordsForTests(db, context)
             },
+            honorMediaFiles = org.walktalkmeditate.pilgrim.honor.honorMediaFilesForTests(context),
             savedStateHandle = SavedStateHandle(mapOf("walkId" to walkId)),
         )
         createdViewModels += vm
@@ -417,6 +418,7 @@ class WalkSummaryViewModelTest {
             ),
             releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
             honorWalkRecords = org.walktalkmeditate.pilgrim.honor.honorWalkRecordsForTests(db, ctxApp),
+            installedRoute = { null },
         ) {
             override suspend fun buildContext(walkId: Long, zone: java.time.ZoneId) = null
             override suspend fun generateAll(walkId: Long, zone: java.time.ZoneId) =
@@ -1739,6 +1741,93 @@ class WalkSummaryViewModelTest {
         assertEquals("Morning loop", first.data.wayTitle)
         assertEquals(300.0, first.data.arrivedBeforeTheirsSeconds!!, 1e-9)
         assertNotNull("the map's ghost with the first frame too", first.ghost)
+    }
+
+    /**
+     * U40: an arrived pilgrimage stage, linked by its Honor step, with a
+     * reply to its closing line on the phone. The live flow has the walk's
+     * arrival, so the closing shows there as in the first state
+     * (pilgrimage-stage spec P5 C11).
+     */
+    private suspend fun linkedStageWalk(store: org.walktalkmeditate.pilgrim.data.honor.WayStore): Pair<Long, java.io.File> {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        repository.recordEvent(WalkEvent(walkId = walk.id, timestamp = 1_000L, eventType = WalkEventType.HONOR_MODE))
+        repository.recordEvent(WalkEvent(walkId = walk.id, timestamp = 40_000L, eventType = WalkEventType.HONOR_ARRIVAL))
+        insertRouteSample(walk.id, 1_000L, 0.0, 0.0)
+        insertRouteSample(walk.id, 40_000L, 0.0, 0.004)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val stage = org.walktalkmeditate.pilgrim.walk.honor.HonorHarness.stageWay()
+        store.save(stage)
+        val relativePath = "recordings/stage-reply-${java.util.UUID.randomUUID()}.wav"
+        val reply = java.io.File(context.filesDir, relativePath).apply {
+            parentFile!!.mkdirs()
+            writeBytes(ByteArray(64) { 1 })
+        }
+        store.setReply(stage.id, org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence.STAGE_REFLECTION_ORIGIN, relativePath)
+        store.link(walk.uuid, stage.id, arrival = null)
+        db.honorDao().insertMarker(
+            org.walktalkmeditate.pilgrim.data.honor.HonorWalkMarkerEntity(
+                walkUuid = walk.uuid,
+                finishedAt = 60_000L,
+                finishKind = org.walktalkmeditate.pilgrim.data.honor.HonorFinishKind.CLEAN,
+            ),
+        )
+        return walk.id to reply
+    }
+
+    @Test
+    fun `an arrived stage's live section carries its closing, and its reply plays, pauses and stops alone`() = runTest(dispatcher) {
+        val store = newWayStore()
+        val (walkId, reply) = linkedStageWalk(store)
+        val vm = newViewModel(walkId = walkId, honorEnabled = true, wayStore = store)
+
+        val first = awaitLoaded(vm).summary.honorSummary!!
+        val live = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
+            withTimeout(10_000L) { vm.honorSummary.first { it != null } }
+        }!!
+
+        assertEquals("You crossed a border on foot.", first.data.closing)
+        assertEquals("the live flow has the walk's arrival too", "You crossed a border on foot.", live.data.closing)
+        assertTrue(live.data.isPilgrimageStage)
+        assertNull(live.data.arrivedBeforeTheirsSeconds)
+        assertEquals(reply.canonicalFile, live.replyFile)
+
+        vm.toggleStageReply(live.replyFile!!)
+        assertEquals(listOf(WalkSummaryViewModel.STAGE_REPLY_PLAYBACK_ID), playback.playCalls)
+        assertEquals(reply.canonicalFile, playback.playedFiles.single())
+        awaitStageReplyPlaying(vm, playing = true)
+
+        vm.toggleStageReply(live.replyFile!!)
+        assertEquals(1, playback.pauseCalls.get())
+        awaitStageReplyPlaying(vm, playing = false)
+
+        vm.stopStageReply()
+        assertEquals(1, playback.stopCalls.get())
+
+        playback.playFile(42L, reply)
+        vm.stopStageReply()
+        assertEquals("a voice row's playback is not the reply's to stop", 1, playback.stopCalls.get())
+        awaitStageReplyPlaying(vm, playing = false)
+    }
+
+    /** iOS's section-owned player has no speed control (`AudioPlayerModel.swift:9,87-88@7c200bf`). */
+    @Test
+    fun `the stage reply plays at 1x while the rows keep the speed their pills show`() = runTest(dispatcher) {
+        val store = newWayStore()
+        val (walkId, reply) = linkedStageWalk(store)
+        val vm = newViewModel(walkId = walkId, honorEnabled = true, wayStore = store)
+        awaitLoaded(vm)
+        vm.cyclePlaybackSpeed()
+
+        vm.toggleStageReply(reply)
+
+        assertEquals(listOf(1f) to 1.5f, playback.playedRates.toList() to vm.playbackSpeed.value)
+    }
+
+    private suspend fun awaitStageReplyPlaying(vm: WalkSummaryViewModel, playing: Boolean) {
+        withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
+            withTimeout(10_000L) { vm.stageReplyPlaying.first { it == playing } }
+        }
     }
 
     @Test

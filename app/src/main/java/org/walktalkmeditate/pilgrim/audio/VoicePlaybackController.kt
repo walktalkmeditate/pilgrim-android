@@ -22,6 +22,7 @@ interface VoicePlaybackController {
      * Current playback speed multiplier in [0.5, 2.0]. Stage 10-D added
      * the speed-toggle scrubber on the voice card; the value here is the
      * COERCED rate (what's actually playing), not what the caller requested.
+     * An item [playFile] gave its own rate plays at that rate instead.
      */
     val playbackSpeed: StateFlow<Float>
 
@@ -41,8 +42,15 @@ interface VoicePlaybackController {
      * [playbackId]: a shared Way's voice, which has no recording row, takes
      * an id no row has (a negative one), so no other screen reads it as
      * one of theirs.
+     *
+     * A [rate] gives this item its own speed, as iOS's section-owned
+     * players have (the stage reply's 1x): it plays at [rate] while
+     * [playbackSpeed] keeps the rows' speed, and [setPlaybackSpeed] stores
+     * the rows' next speed without changing this item's. With no [rate] the
+     * item plays at [playbackSpeed]. A paused item resumes at the rate it
+     * started at.
      */
-    fun playFile(playbackId: Long, file: File)
+    fun playFile(playbackId: Long, file: File, rate: Float? = null)
 
     fun pause()
     fun stop()
@@ -64,7 +72,8 @@ interface VoicePlaybackController {
      * Set playback speed. The rate is coerced into [0.5, 2.0]; the
      * underlying player is set with `pitch = 1.0f` so audio doesn't
      * pitch-shift (chipmunk effect). The reported [playbackSpeed]
-     * StateFlow reflects the COERCED rate.
+     * StateFlow reflects the COERCED rate. An item [playFile] gave its own
+     * rate keeps playing at that rate.
      */
     fun setPlaybackSpeed(rate: Float)
 

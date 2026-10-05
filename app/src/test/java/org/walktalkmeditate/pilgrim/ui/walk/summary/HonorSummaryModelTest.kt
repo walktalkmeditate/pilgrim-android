@@ -14,10 +14,12 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -32,6 +34,10 @@ import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorWalkMarkerEntity
 import org.walktalkmeditate.pilgrim.data.honor.WayArrival
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.HonorStageOutcome
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageLedger
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageRouteStage
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
@@ -44,19 +50,25 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayMoment
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.domain.honor.WayPoint
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
+import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
+import org.walktalkmeditate.pilgrim.honor.HonorWalkRecord
 import org.walktalkmeditate.pilgrim.honor.HonorWalkRecords
 import org.walktalkmeditate.pilgrim.ui.design.seals.sealWatermark
+import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.StageFormat
 import org.walktalkmeditate.pilgrim.walk.honor.HonorFinalizeOutcome
 import org.walktalkmeditate.pilgrim.walk.honor.HonorHarness
+import org.walktalkmeditate.pilgrim.walk.honor.HonorMediaFiles
 
 /**
  * The summary's Honor section from the walk's events and its Honor record
  * (parity spec G §2–§3, §10; shared-walk spec S4 §12): what it reads
  * before the Honor step, after it, when it failed, after a re-import, for
- * an imported iOS walk, and for a shared Way stored, swept, and deleted.
- * The record is the real reader over real Room rows, files, and the real
- * finalizer, so "the delta appears when the marker lands" is the step
- * itself landing.
+ * an imported iOS walk, for a shared Way stored, swept, and deleted, and
+ * for a pilgrimage stage (pilgrimage-stage spec P5 §11: iOS's three
+ * summary cases from `PilgrimageStageWalkTests`, names kept, then §11.2
+ * case by case). The record is the real reader over real Room rows,
+ * files, the ledger, and the real finalizer, so "the delta appears when
+ * the marker lands" is the step itself landing.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -66,6 +78,7 @@ class HonorSummaryModelTest {
 
     private lateinit var h: HonorHarness
     private lateinit var records: HonorWalkRecords
+    private lateinit var media: HonorMediaFiles
     private val resources: Resources get() = ApplicationProvider.getApplicationContext<Application>().resources
 
     /** Three voices and a waypoint: "3 voices along the way". */
@@ -75,7 +88,8 @@ class HonorSummaryModelTest {
     @Before
     fun setUp() {
         h = HonorHarness(folder.root)
-        records = HonorWalkRecords(h.db.honorDao(), h.store, Dispatchers.IO)
+        records = HonorWalkRecords(h.db.honorDao(), h.store, h.ledgers, Dispatchers.IO)
+        media = HonorMediaFiles({ h.filesRoot }, h.store)
     }
 
     @After
@@ -123,7 +137,7 @@ class HonorSummaryModelTest {
 
     private suspend fun stateFor(walk: Walk, honorEnabled: Boolean = true): HonorSummaryState? {
         val events = h.db.walkEventDao().getForWalk(walk.id).map { it.eventType }
-        return HonorSummaryModel.summaryState(events, honorEnabled, records.record(walk.id, walk.uuid))
+        return HonorSummaryModel.summaryState(events, honorEnabled, records.record(walk.id, walk.uuid), media::recordingFile)
     }
 
     private fun HonorSummaryState.title(): String = HonorSummaryModel.title(resources, data)
@@ -147,7 +161,7 @@ class HonorSummaryModelTest {
 
         val state = stateFor(walk)!!
 
-        assertEquals("in their steps", HonorSummaryModel.kicker(resources))
+        assertEquals("in their steps", HonorSummaryModel.kicker(resources, state.data))
         assertEquals("Morning loop", state.title())
         assertEquals(300.0, state.data.arrivedBeforeTheirsSeconds!!, 1e-9)
         assertEquals("they arrived 5 minutes after you", state.delta())
@@ -206,7 +220,7 @@ class HonorSummaryModelTest {
         finishedSession(walk)
         h.store.stage(walk.uuid, way)
 
-        records.observe(walk.id, walk.uuid).map { HonorSummaryModel.summaryState(it) }.test(timeout = 10.seconds) {
+        records.observe(walk.id, walk.uuid).map { HonorSummaryModel.summaryState(it, arrived = true, media::recordingFile) }.test(timeout = 10.seconds) {
             var item = awaitItem()
             assertEquals("the title at once, from the staged Way", "Morning loop", item.title())
             assertEquals("3 voices along the way", item.counts())
@@ -315,7 +329,7 @@ class HonorSummaryModelTest {
         val imported = honorWalk(uuid = UUID.randomUUID().toString().uppercase())
 
         val on = stateFor(imported, honorEnabled = true)!!
-        assertEquals("in their steps", HonorSummaryModel.kicker(resources))
+        assertEquals("in their steps", HonorSummaryModel.kicker(resources, on.data))
         assertEquals("a way that has been removed", on.title())
         assertNull(on.delta())
         assertNull("voices 0, replies 0", on.counts())
@@ -433,7 +447,7 @@ class HonorSummaryModelTest {
         h.store.delete(shareId)
 
         val state = stateFor(walk)!!
-        assertEquals("in their steps", HonorSummaryModel.kicker(resources))
+        assertEquals("in their steps", HonorSummaryModel.kicker(resources, state.data))
         assertEquals("a way that has been removed", state.title())
         assertNull(state.delta())
         assertNull(state.counts())
@@ -443,6 +457,332 @@ class HonorSummaryModelTest {
         assertNotNull("the walk's own line stays", watermark)
         assertNull("the Way's line goes with the link (owner decision 3)", watermark!!.wayLine)
     }
+
+    // --- A pilgrimage stage (pilgrimage-stage spec P5 §11) ---
+
+    /** iOS `PilgrimageStageWalkTests.stageWay()`: 24.2 km of the Camino Francés, closing on a border crossed. */
+    private val stage = HonorHarness.stageWay()
+    private val stageStart = Instant.ofEpochSecond(1_000_000)
+
+    private fun HonorSummaryState.line(units: UnitSystem = UnitSystem.Metric): String? =
+        data.stageProgress?.let { HonorSummaryModel.stageProgressLine(resources, it, units) }
+
+    private fun HonorSummaryState.kicker(): String = HonorSummaryModel.kicker(resources, data)
+
+    // iOS PilgrimageStageWalkTests (names kept).
+
+    @Test
+    fun testTheSummaryForAStageReadsKilometresAndNoCompanionDelta() {
+        val led = PilgrimageLedger("camino-frances").recorded(
+            stageIndex = 0,
+            name = "Saint-Jean-Pied-de-Port to Roncesvalles",
+            distanceKm = 24.2,
+            outcome = HonorStageOutcome(progressFrac = 0.58, arrived = false),
+            at = stageStart,
+        )
+        val data = HonorSummaryModel.summaryState(
+            events = listOf(WalkEventType.HONOR_MODE),
+            honorEnabled = true,
+            record = HonorWalkRecord(
+                way = stage,
+                arrival = WayArrival(theirSeconds = 600.0, yourSeconds = 540.0),
+                replies = emptyMap(),
+                ledger = led,
+            ),
+            recordingFile = { null },
+        )!!
+
+        assertNull("a stage has no companion to arrive before", data.data.arrivedBeforeTheirsSeconds)
+        val line = data.line()!!
+        assertTrue(line, line.endsWith("of the stage"))
+        assertTrue(line, line.contains(StageFormat.distance(24.2 * 0.58 * 1000, UnitSystem.Metric)))
+        assertEquals("the formatter's two decimals (P5 C9)", "14.04 km of 24.2 km of the stage", line)
+    }
+
+    /**
+     * The block opens with a kicker that says "in their steps". A stage has
+     * no "their", and the flag is carried rather than inferred from the
+     * progress line: a walk that earned no ledger entry is still a stage walk.
+     */
+    @Test
+    fun testTheSummaryKickerDropsTheirStepsForAStage() {
+        fun data(way: Way?) = HonorSummaryModel.summaryState(
+            events = listOf(WalkEventType.HONOR_MODE),
+            honorEnabled = true,
+            record = HonorWalkRecord(way, arrival = null, replies = emptyMap(), ledger = null),
+            recordingFile = { null },
+        )!!.data
+
+        val stageData = data(stage)
+        assertTrue(stageData.isPilgrimageStage)
+        assertNull("no ledger entry, but still a stage", stageData.stageProgress)
+        assertEquals("the stage you walked", HonorSummaryModel.kicker(resources, stageData))
+
+        val shared = data(stage.copy(stage = null))
+        assertFalse(shared.isPilgrimageStage)
+        assertEquals("in their steps", HonorSummaryModel.kicker(resources, shared))
+
+        val removed = data(null)
+        assertFalse("a Way that is gone says nothing about stages", removed.isPilgrimageStage)
+    }
+
+    /** iOS `PilgrimageStageWalkTests+Replies.swift`. */
+    @Test
+    fun testTheSummaryCarriesTheClosingOnlyWhenArrivalFired() {
+        val noArrival = HonorSummaryModel.summaryState(
+            events = listOf(WalkEventType.HONOR_MODE),
+            honorEnabled = true,
+            record = HonorWalkRecord(stage, arrival = null, replies = emptyMap(), ledger = null),
+            recordingFile = { null },
+        )
+        assertNull("the way was left before its end", noArrival?.data?.closing)
+
+        val data = HonorSummaryModel.summaryState(
+            events = listOf(WalkEventType.HONOR_MODE, WalkEventType.HONOR_ARRIVAL),
+            honorEnabled = true,
+            record = HonorWalkRecord(
+                stage,
+                arrival = null,
+                replies = mapOf(HonorPersistence.STAGE_REFLECTION_ORIGIN to "Recordings/stage-reply.m4a"),
+                ledger = null,
+            ),
+            recordingFile = { null },
+        )
+        assertEquals("You crossed a border on foot.", data?.data?.closing)
+        assertEquals("Recordings/stage-reply.m4a", data?.data?.replyRelativePath)
+        assertEquals(1, data?.data?.repliesMade)
+    }
+
+    // P5 §11.2, case by case, through the real record reader, finalizer and ledger.
+
+    /** The stage walk's live row as Start and the engine leave it: the stage's identity, and the engine's last word. */
+    private suspend fun stageSession(walk: Walk, outcome: HonorStageOutcome?, arrival: WayArrival? = null) {
+        h.db.honorDao().insertSession(
+            HonorSessionEntity(
+                walkId = walk.id,
+                wayId = stage.id,
+                sourceKind = HonorSourceKind.PILGRIMAGE,
+                voicesEnabled = false,
+                softTapEnabled = false,
+                phase = if (outcome?.arrived == true) HonorPhase.ARRIVED else HonorPhase.WALKING,
+                startFrac = outcome?.let { 0.0 },
+                progressFrac = outcome?.progressFrac ?: 0.0,
+                gateGeneration = 1,
+                arrivalTheirSeconds = arrival?.theirSeconds,
+                arrivalYourSeconds = arrival?.yourSeconds,
+                finishKind = HonorFinishKind.CLEAN,
+                stageRouteId = stage.stage!!.routeId,
+                stageIndex = stage.stage!!.index,
+                stageName = stage.stage!!.name,
+                stageDistanceKm = stage.stage!!.distanceKm,
+            ),
+        )
+        h.store.stage(walk.uuid, stage)
+    }
+
+    /** One stage walk through its Honor step: its events, its row ([outcome] null when it never anchored), the step. */
+    private suspend fun walkedStage(outcome: HonorStageOutcome?, arrival: WayArrival? = null): Walk {
+        val walk = honorWalk(arrived = outcome?.arrived == true)
+        stageSession(walk, outcome, arrival)
+        assertEquals(HonorFinalizeOutcome.DONE, h.finalizer.finalize(walk.id))
+        return walk
+    }
+
+    private fun fileReflectionReply(): File {
+        val relativePath = "recordings/stage-reply-${UUID.randomUUID()}.wav"
+        h.store.setReply(stage.id, originN = HonorPersistence.STAGE_REFLECTION_ORIGIN, relativePath = relativePath)
+        return h.writeRecording(relativePath)
+    }
+
+    @Test
+    fun `an arrived first walk reads the whole stage, its closing line and its reply`() = runBlocking {
+        h.store.save(stage)
+        val reply = fileReflectionReply()
+        val walk = walkedStage(HonorStageOutcome(progressFrac = 1.0, arrived = true))
+
+        val state = stateFor(walk)!!
+
+        assertEquals("the stage you walked", state.kicker())
+        assertEquals("Saint-Jean-Pied-de-Port to Roncesvalles", state.title())
+        assertEquals("24.2 km of 24.2 km of the stage", state.line())
+        assertNull(state.delta())
+        assertEquals("the reflection counts as a reply (pilgrim-ios #99)", "1 reply", state.counts())
+        assertEquals("You crossed a border on foot.", state.data.closing)
+        assertEquals(reply.canonicalFile, state.replyFile)
+    }
+
+    @Test
+    fun `a first walk left at 58 percent reads its kilometres in the walker's unit, with no closing`() = runBlocking {
+        h.store.save(stage)
+        val walk = walkedStage(HonorStageOutcome(progressFrac = 0.58, arrived = false))
+
+        val state = stateFor(walk)!!
+
+        assertEquals("14.04 km of 24.2 km of the stage", state.line())
+        assertEquals("8.72 mi of 15.04 mi of the stage", state.line(UnitSystem.Imperial))
+        assertNull(state.data.closing)
+        assertNull("no reply filed", state.replyFile)
+    }
+
+    /** Flow gap 7: no entry, no line, and still "the stage you walked". */
+    @Test
+    fun `a never-anchored walk with no earlier one has no progress line, and is still a stage`() = runBlocking {
+        h.store.save(stage)
+        val walk = walkedStage(outcome = null)
+
+        val state = stateFor(walk)!!
+
+        assertNull("the walk earned no entry", h.ledgers.load("camino-frances"))
+        assertNull(state.line())
+        assertEquals("the stage you walked", state.kicker())
+        assertEquals("Saint-Jean-Pied-de-Port to Roncesvalles", state.title())
+        assertNull(state.counts())
+        assertNull(state.data.closing)
+    }
+
+    // Matched as shipped (pilgrim-ios #120 item 2): the line is the ledger's best, as of the reading.
+
+    @Test
+    fun `a never-anchored walk after an earlier one reads the earlier walk's figure`() = runBlocking {
+        h.store.save(stage)
+        walkedStage(HonorStageOutcome(progressFrac = 0.58, arrived = false))
+        val unanchored = walkedStage(outcome = null)
+
+        assertEquals("14.04 km of 24.2 km of the stage", stateFor(unanchored)!!.line())
+    }
+
+    @Test
+    fun `a shorter re-walk reads the longer figure, and a past summary moves with a later, longer walk`() = runBlocking {
+        h.store.save(stage)
+        val longer = walkedStage(HonorStageOutcome(progressFrac = 0.58, arrived = false))
+        val shorter = walkedStage(HonorStageOutcome(progressFrac = 0.2, arrived = false))
+
+        assertEquals("the longer figure, on the shorter walk's summary", "14.04 km of 24.2 km of the stage", stateFor(shorter)!!.line())
+
+        val arrived = walkedStage(HonorStageOutcome(progressFrac = 1.0, arrived = true))
+
+        assertEquals("the past summary now reads the later best", "24.2 km of 24.2 km of the stage", stateFor(longer)!!.line())
+        assertNull("its closing still follows its own events", stateFor(longer)!!.data.closing)
+        assertEquals("You crossed a border on foot.", stateFor(arrived)!!.data.closing)
+    }
+
+    @Test
+    fun `after an Update that kept the entry, the old kilometres read against the stage's new length`() = runBlocking {
+        h.store.save(stage)
+        val walk = walkedStage(HonorStageOutcome(progressFrac = 1.0, arrived = true))
+        val redrawn = stage.copy(stage = stage.stage!!.copy(distanceKm = 25.0))
+        h.ledgers.reconcile("camino-frances", listOf(routeStage(name = stage.stage!!.name, distanceKm = 25.0)))
+        h.store.save(redrawn)
+
+        assertEquals("kept: 25 km is within 5 % of 24.2", 24.2, h.ledgers.load("camino-frances")!!.stages["0"]!!.kmWalked, 1e-9)
+        assertEquals("24.2 km of 25 km of the stage", stateFor(walk)!!.line())
+    }
+
+    @Test
+    fun `after an Update that dropped the entry, the line goes`() = runBlocking {
+        h.store.save(stage)
+        val walk = walkedStage(HonorStageOutcome(progressFrac = 1.0, arrived = true))
+        h.ledgers.reconcile("camino-frances", listOf(routeStage(name = "Saint-Jean to Roncesvalles by Valcarlos", distanceKm = 24.2)))
+
+        val state = stateFor(walk)!!
+
+        assertNull(state.line())
+        assertEquals("the stage you walked", state.kicker())
+    }
+
+    /**
+     * Flow gap 2: the stage's folder retired whole while its link stays (an
+     * unwalked stage retired before its link landed). iOS's model then
+     * builds the shared block, the delta read from the stage's synthesized
+     * seconds in the link (P5 §11.2's last row); the guard keeps it out of
+     * reach on Android, and this pins iOS's rule.
+     */
+    @Test
+    fun `a stage whose Way is gone reads as a shared walk's block, delta and all`() = runBlocking {
+        h.store.save(stage)
+        val walk = walkedStage(
+            HonorStageOutcome(progressFrac = 1.0, arrived = true),
+            arrival = WayArrival(theirSeconds = 600.0, yourSeconds = 540.0),
+        )
+        File(h.store.baseDirectory, stage.id).deleteRecursively()
+
+        val state = stateFor(walk)!!
+
+        assertFalse(state.data.isPilgrimageStage)
+        assertEquals("in their steps", state.kicker())
+        assertEquals("a way that has been removed", state.title())
+        assertEquals("they arrived 1 minute after you", state.delta())
+        assertNull(state.line())
+        assertNull(state.data.closing)
+        assertNull(state.replyFile)
+    }
+
+    /** P5 C10: only the closing waits for arrival (pilgrim-ios #123 item 2, matched as shipped). */
+    @Test
+    fun `a non-arrived walk with an earlier reflection reply shows your reply and no closing`() = runBlocking {
+        h.store.save(stage)
+        walkedStage(HonorStageOutcome(progressFrac = 1.0, arrived = true))
+        val reply = fileReflectionReply()
+        val later = walkedStage(HonorStageOutcome(progressFrac = 0.3, arrived = false))
+
+        val state = stateFor(later)!!
+
+        assertNull(state.data.closing)
+        assertNotNull(state.data.replyRelativePath)
+        assertEquals("another walk's reflection, under no closing line", reply.canonicalFile, state.replyFile)
+    }
+
+    @Test
+    fun `your reply shows only while its recording is on the phone`() = runBlocking {
+        h.store.save(stage)
+        val reply = fileReflectionReply()
+        val walk = walkedStage(HonorStageOutcome(progressFrac = 1.0, arrived = true))
+        assertNotNull(stateFor(walk)!!.replyFile)
+
+        assertTrue(reply.delete())
+        val state = stateFor(walk)!!
+
+        assertNotNull("still filed", state.data.replyRelativePath)
+        assertNull("but nothing to play", state.replyFile)
+    }
+
+    /**
+     * P5 A3: Android's summary can open before the Honor step. Until the
+     * marker lands the line reads the ledger as it stood, an earlier
+     * walk's entry here, then this walk's, with no placeholder between.
+     */
+    @Test
+    fun `before the marker the line reads the ledger as it stood, then this walk's`() = runBlocking {
+        h.store.save(stage)
+        walkedStage(HonorStageOutcome(progressFrac = 0.2, arrived = false))
+        val walk = honorWalk(arrived = false)
+        stageSession(walk, HonorStageOutcome(progressFrac = 0.58, arrived = false))
+
+        records.observe(walk.id, walk.uuid)
+            .map { HonorSummaryModel.summaryState(it, arrived = false, media::recordingFile) }
+            .test(timeout = 10.seconds) {
+                var item = awaitItem()
+                assertEquals("the stage you walked", item.kicker())
+                assertEquals("the earlier walk's entry", "4.84 km of 24.2 km of the stage", item.line())
+
+                assertEquals(HonorFinalizeOutcome.DONE, h.finalizer.finalize(walk.id))
+                while (item.line() == "4.84 km of 24.2 km of the stage") {
+                    item = awaitItem()
+                    assertEquals("never placeholder copy on the way", "Saint-Jean-Pied-de-Port to Roncesvalles", item.title())
+                }
+                assertEquals("14.04 km of 24.2 km of the stage", item.line())
+                cancelAndIgnoreRemainingEvents()
+            }
+    }
+
+    private fun routeStage(name: String, distanceKm: Double) = PilgrimageRouteStage(
+        index = 0,
+        name = name,
+        distanceKm = distanceKm,
+        gainMeters = 1419.0,
+        hours = WayStageHours(min = 7.0, max = 9.0),
+        difficulty = "hard",
+    )
 
     // --- The strings (HonorSummarySection.swift:98-118@7c200bf) ---
 

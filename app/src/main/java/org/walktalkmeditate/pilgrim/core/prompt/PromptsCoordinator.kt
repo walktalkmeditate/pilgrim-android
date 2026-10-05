@@ -9,6 +9,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.time.Instant
 import java.time.ZoneId
 import javax.inject.Inject
+import javax.inject.Provider
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -33,6 +34,7 @@ import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager
 import org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.practice.ZodiacSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
@@ -43,6 +45,7 @@ import org.walktalkmeditate.pilgrim.data.walk.deriveActivityIntervals
 import org.walktalkmeditate.pilgrim.data.weather.WeatherCondition
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.haversineMeters
+import org.walktalkmeditate.pilgrim.domain.honor.WayStage
 import org.walktalkmeditate.pilgrim.honor.HonorWalkRecords
 
 /**
@@ -118,6 +121,13 @@ open class PromptsCoordinator internal constructor(
     /** Fills an honor walk's story with its Way's title, as iOS's prompt screen does from the Ways store. */
     private val honorWalkRecords: HonorWalkRecords,
     /**
+     * The route on the phone, for a stage's route name: the package
+     * manager's read-only lookup, which gives `installed()`'s answer
+     * without finishing an interrupted Replace (owner decision 11; that
+     * cleanup is the launch's and the route page's). Asked only for a stage.
+     */
+    private val installedRoute: suspend () -> PilgrimagePackageManager.Installed?,
+    /**
      * CPU-bound dispatcher for the [buildContext] orchestration. The body
      * does CPU work (per-sample haversine for `routeSpeeds`, celestial /
      * lunar math, recent-walk snippet truncation) that would otherwise
@@ -163,6 +173,7 @@ open class PromptsCoordinator internal constructor(
         threadsAnalysisEnvironment: ThreadsAnalysisEnvironment,
         releaseFlags: ReleaseFlags,
         honorWalkRecords: HonorWalkRecords,
+        packages: Provider<PilgrimagePackageManager>,
     ) : this(
         repository = repository,
         customStyleStore = customStyleStore,
@@ -177,6 +188,7 @@ open class PromptsCoordinator internal constructor(
         threadsAnalysisEnvironment = threadsAnalysisEnvironment,
         releaseFlags = releaseFlags,
         honorWalkRecords = honorWalkRecords,
+        installedRoute = { packages.get().installedRoute() },
         defaultDispatcher = Dispatchers.Default,
     )
 
@@ -278,10 +290,16 @@ open class PromptsCoordinator internal constructor(
         val routeSpeeds = computeRouteSpeeds(locationSamples)
         val practice = WalkPracticeModel.practice(fetches.events, releaseFlags.honor)
         // iOS `PromptListView.practice` (`PromptListView.swift:226-236@7c200bf`):
-        // the title costs a store read, and only for an honor walk.
-        val honorStory = practice.honorStory?.copy(
-            wayTitle = honorWalkRecords.record(walkId, walk.uuid).way?.title,
-        )
+        // the Way costs a store read, and only for an honor walk.
+        val honorStory = practice.honorStory?.let { story ->
+            val way = honorWalkRecords.record(walkId, walk.uuid).way
+            val stage = way?.stage
+            story.copy(
+                wayTitle = way?.title,
+                routeName = stage?.let { routeName(it) },
+                stageLabel = stage?.let { "stage ${it.index + 1} of ${it.count}" },
+            )
+        }
         val pauses = pauseContexts(walk, fetches.events)
         val (ascent, descent) = AltitudeCalculator.computeAscentDescent(fetches.altitudeSamples)
         val threadsDossier = buildThreadsDossierSafely(walkId)
@@ -317,6 +335,16 @@ open class PromptsCoordinator internal constructor(
             honorStory = honorStory,
         )
     }
+
+    /**
+     * iOS `routeName(for:)` (`PromptListView.swift:239-246@7c200bf`): the
+     * route's own name while its package is the one on the phone, else the
+     * slug the stage carries, so the journal still names the route after
+     * the package is removed. With two routes mid-Replace, the lookup's
+     * first may be the other one, and the slug is said (P3 §15).
+     */
+    private suspend fun routeName(stage: WayStage): String =
+        installedRoute()?.takeIf { it.routeId == stage.routeId }?.route?.name ?: stage.routeId
 
     /**
      * Silent-failure by design (matching [ThreadsDossierBuilder.build]'s

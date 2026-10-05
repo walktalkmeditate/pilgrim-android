@@ -13,6 +13,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -21,7 +22,10 @@ import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.ui.settings.SettingsAction
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
 
-/** Settings → Ways and the Data card row on screen (shared-walk spec S4 §2–§5, §13.1–§13.2). */
+/**
+ * Settings → Ways and the Data card row on screen (shared-walk spec S4 §2–§5,
+ * §13.1–§13.2), and the list's package footer (pilgrimage-stage spec P2 §11).
+ */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
 class WaysListScreenTest {
@@ -90,6 +94,35 @@ class WaysListScreenTest {
         composeRule.onNodeWithText("Delete all Ways").performClick()
         composeRule.onNodeWithText("Delete").performClick()
         assertEquals(1, deletedAll)
+    }
+
+    // The package footer (pilgrimage-stage spec P2 §11): the list's last row.
+
+    private val footer = "the Camino de Santiago (Francés) keeps its 2 stages on its route page"
+
+    @Test
+    fun `the package footer is the last row, after Delete all`() {
+        show(WaysListUiState.Loaded(rows, packageRouteName = "Camino de Santiago (Francés)", packageStageCount = 2))
+
+        val deleteAll = composeRule.onNodeWithText("Delete all Ways").fetchSemanticsNode().boundsInRoot.top
+        val line = composeRule.onNodeWithText(footer).assertIsDisplayed().fetchSemanticsNode().boundsInRoot.top
+        assertTrue("the footer comes last", line > deleteAll)
+    }
+
+    @Test
+    fun `with no Ways the package footer follows no ways yet`() {
+        show(WaysListUiState.Loaded(emptyList(), packageRouteName = "Camino de Santiago (Francés)", packageStageCount = 2))
+
+        val empty = composeRule.onNodeWithText("no ways yet").fetchSemanticsNode().boundsInRoot.top
+        val line = composeRule.onNodeWithText(footer).assertIsDisplayed().fetchSemanticsNode().boundsInRoot.top
+        assertTrue(line > empty)
+    }
+
+    @Test
+    fun `no route to name the stages by, no footer`() {
+        show(WaysListUiState.Loaded(rows, packageRouteName = null, packageStageCount = 2))
+
+        composeRule.onAllNodesWithText("keeps its", substring = true).assertCountEquals(0)
     }
 
     @Test

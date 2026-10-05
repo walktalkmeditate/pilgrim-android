@@ -30,14 +30,18 @@ class FakeVoicePlaybackController : VoicePlaybackController {
     /** The file each [playFile] asked for, in order. */
     val playedFiles: MutableList<File> = Collections.synchronizedList(mutableListOf())
 
+    /** The rate each [playFile] gave its item, null for one at the shared speed, in order. */
+    val playedRates: MutableList<Float?> = Collections.synchronizedList(mutableListOf())
+
     override fun play(recording: VoiceRecording) {
         playCalls.add(recording.id)
         _state.value = PlaybackState.Playing(recording.id)
     }
 
-    override fun playFile(playbackId: Long, file: File) {
+    override fun playFile(playbackId: Long, file: File, rate: Float?) {
         playCalls.add(playbackId)
         playedFiles.add(file)
+        playedRates.add(rate)
         _state.value = PlaybackState.Playing(playbackId)
     }
 

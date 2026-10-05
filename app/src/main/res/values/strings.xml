@@ -1310,6 +1310,11 @@
     <string name="settings_ways_delete_all_message">Their voices and photos leave this phone. Your own walks are untouched.</string>
     <string name="settings_ways_delete_all_confirm">Delete</string>
     <string name="settings_ways_delete_all_cancel">Cancel</string>
+    <!-- Phase 21 U40: the list's last row while package stages are on the phone
+         (pilgrimage-stage spec P2 §11, WaysListView.swift:25-28@7c200bf), the
+         word picked by `stageCount == 1`. The name is the installed route.json's. -->
+    <string name="settings_ways_package_footer_one">the %1$s keeps its %2$s stage on its route page</string>
+    <string name="settings_ways_package_footer" tools:ignore="PluralsCandidate">the %1$s keeps its %2$s stages on its route page</string>
     <string name="honor_moment_spoken_kicker">spoken here</string>
     <string name="honor_moment_ambient_kicker">the sound of this place</string>
     <string name="honor_moment_photo_kicker">what they saw here</string>
@@ -1402,6 +1407,16 @@
     <string name="honor_summary_voices" tools:ignore="PluralsCandidate">%1$s voices along the way</string>
     <string name="honor_summary_reply_one">%1$s reply</string>
     <string name="honor_summary_replies" tools:ignore="PluralsCandidate">%1$s replies</string>
+
+    <!-- Phase 21 U40: the summary's stage block (pilgrimage-stage spec P5 §11, iOS
+         HonorSummarySection.swift:48-53,77-87,98-100@7c200bf), English Swift literals
+         on iOS. The progress line's figures are StageFormat's ("14.04 km of 24.2 km").
+         The reply button's face is honor_card_your_reply or "pause"; TalkBack reads
+         its one label in both states (pilgrim-ios #123 item 7, matched). -->
+    <string name="honor_summary_stage_kicker">the stage you walked</string>
+    <string name="honor_summary_stage_progress">%1$s of %2$s of the stage</string>
+    <string name="honor_summary_reply_pause">pause</string>
+    <string name="honor_summary_reply_a11y">Play your reply to this stage</string>
 
     <!-- Phase 21 U31: PilgrimageCopy's lines (pilgrimage-stage spec P1 §1), English
          Swift literals on iOS, lowercase with no full stop. Disk full is not here:
