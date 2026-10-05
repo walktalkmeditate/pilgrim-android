@@ -133,11 +133,7 @@ data class WayMoment(
          * counts them, by grapheme cluster (`String.prefix`,
          * `Way.swift:71-74@7c200bf`; shared-walk spec S1 §9 trap 2).
          */
-        fun trimmedTranscript(raw: String?): String? {
-            val trimmed = raw?.trimmingWhitespacesAndNewlines()
-            if (trimmed.isNullOrEmpty()) return null
-            return trimmed.prefixCharacters(MAX_TRANSCRIPT_CHARACTERS)
-        }
+        fun trimmedTranscript(raw: String?): String? = raw.trimmedOrNull(MAX_TRANSCRIPT_CHARACTERS)
 
         /**
          * The text up to and including the first `.`, `!`, or `?`; past

@@ -122,9 +122,18 @@ class WayStore(
     val deletions: StateFlow<Long> = deletionCount.asStateFlow()
 
     fun save(way: Way) {
-        val dir = directory(way.id)
+        saveEncoded(way.id, WayJson.encode(way))
+    }
+
+    /**
+     * [save] for a Way already in the store's encoding: [wayJson] is
+     * [WayJson.encode] of the Way [id] names, written as it stands. The
+     * package commit's write, whose temp set holds every stage that way.
+     */
+    fun saveEncoded(id: String, wayJson: String) {
+        val dir = directory(id)
         ensureDirectory(dir)
-        writeAtomically(File(dir, WAY_FILE), WayJson.encode(way))
+        writeAtomically(File(dir, WAY_FILE), wayJson)
         val accepted = File(dir, ACCEPTED_FILE)
         if (!accepted.exists()) {
             val now = Instant.ofEpochMilli(clock.now())
@@ -383,6 +392,19 @@ class WayStore(
     fun staged(walkUuid: String): Way? {
         if (!isValidWalkUuid(walkUuid)) return null
         return readWay(File(stagingDirectory(walkUuid), WAY_FILE))
+    }
+
+    /**
+     * The copy of [wayId] a session of [kind] walks, which `:tracker`'s
+     * session and the walk screen both read: the one staged under
+     * [walkUuid] when [kind] is staged per walk and that copy is [wayId]'s,
+     * else the listed or installed one. A stage whose staged copy is
+     * missing reads its package, which the package guard holds still while
+     * the session's live row exists (pilgrimage-stage spec P2 §2, A-1).
+     */
+    fun sessionWay(kind: HonorSourceKind, walkUuid: String, wayId: String): Way? {
+        val staged = if (kind.isStagedPerWalk) staged(walkUuid) else null
+        return staged?.takeIf { it.id == wayId } ?: load(wayId)
     }
 
     /**

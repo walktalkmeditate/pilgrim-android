@@ -25,6 +25,18 @@ val WalkState.isInProgress: Boolean
         this is WalkState.Meditating
 
 /**
+ * The id of the walk being tracked right now (Active, Paused, or
+ * Meditating): the walk on screen. Null on Idle, and on Finished, whose
+ * walk is the pre-walk screen's past.
+ */
+fun WalkState.inProgressWalkId(): Long? = when (this) {
+    is WalkState.Active -> walk.walkId
+    is WalkState.Paused -> walk.walkId
+    is WalkState.Meditating -> walk.walkId
+    WalkState.Idle, is WalkState.Finished -> null
+}
+
+/**
  * The walk's [WalkMode] for any state that carries an accumulator
  * (in-progress + Finished); null on Idle. Consumed by the seek weather
  * greeting (U8), the orchestrator (U9), and the notification glance (U10).

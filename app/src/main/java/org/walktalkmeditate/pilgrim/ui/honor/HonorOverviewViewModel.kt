@@ -74,15 +74,16 @@ data class HonorOverview(
     val playableVoices: Map<String, PreviewVoice>,
     /** Each photo moment's image on the phone, by moment id; a shared photo not here has none. */
     val photoUris: Map<String, String>,
-    /** "Today is …": a `WeatherCondition` raw value, once the one fetch lands. */
-    val todayCondition: String? = null,
-    /** The same fetch's whole snapshot, which a stage's morning card reads (pilgrimage-stage spec P4 §6.5). */
+    /** Today's weather, once the one fetch lands; a stage's morning card reads it whole (P4 §6.5). */
     val todayWeather: WeatherSnapshot? = null,
     /** From the phone's last fix to the Way's start, measured once; null until a fix is there. */
     val distanceToStartMeters: Double? = null,
     /** The once-ever offline note a stage says under the status line (P4 §6.4); null otherwise. */
     @StringRes val offlineNote: Int? = null,
-)
+) {
+    /** "Today is …": [todayWeather]'s `WeatherCondition` raw value. */
+    val todayCondition: String? get() = todayWeather?.condition?.rawValue
+}
 
 /** A voice the preview can play, by file, through the app's one voice player. */
 @Immutable
@@ -243,7 +244,7 @@ class HonorOverviewViewModel internal constructor(
         // current fix; silent offline or without a fix (F §10.5). A
         // stage's morning card reads the whole snapshot.
         val today = weatherFetching.fetchCurrent(here.latitude, here.longitude) ?: return
-        updateOverview { it.copy(todayCondition = today.condition.rawValue, todayWeather = today) }
+        updateOverview { it.copy(todayWeather = today) }
     }
 
     /**

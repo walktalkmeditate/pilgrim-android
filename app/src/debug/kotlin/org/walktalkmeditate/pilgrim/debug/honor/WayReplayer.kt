@@ -17,6 +17,7 @@ import dagger.hilt.components.SingletonComponent
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.ceil
 import kotlin.math.roundToLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -36,7 +37,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayGeometry
 import org.walktalkmeditate.pilgrim.domain.honor.WayPoint
 import org.walktalkmeditate.pilgrim.location.MockLocationReplay
 
-/** One route point as a replay plays it, [offsetMillis] after the first: the recorded gaps. */
+/** One fix as a replay plays it, [offsetMillis] after the first. */
 data class ReplayStep(
     val offsetMillis: Long,
     val latitude: Double,
@@ -71,26 +72,84 @@ data class MockFix(
     }
 }
 
-/** A Way's route as mock fixes, at the recorded pace. */
+/**
+ * A Way's route as mock fixes: the part of the line a [Timing] names, at
+ * the recorded pace or at its own.
+ */
 object WayReplayTimeline {
 
     /** Well inside the walk pipeline's 20 m gate, so every fix counts. */
     const val ACCURACY_METERS = 5f
 
     /**
-     * Each fix carries the speed and bearing of the leg it ends (the first,
-     * of the leg it starts). A leg of no length keeps the heading before
-     * it, and a leg of no time keeps the speed.
+     * The longest gap between two paced fixes. The walk asks the fused
+     * provider for a fix every 2 s and takes none closer than 1 s, so a
+     * paced replay spaces its fixes evenly, at most this far apart, and
+     * every one reaches the walk.
      */
-    fun steps(route: List<WayPoint>): List<ReplayStep> {
+    const val PACED_FIX_SECONDS = 2.0
+
+    /** A pace so slow it would need more fixes than this is refused, rather than filling `:tracker`'s memory. */
+    const val MAX_PACED_FIXES = 100_000
+
+    /**
+     * Which part of the route plays, as fracs of its length, and at what
+     * pace: null for the recorded one. [WayReplayTimeline.refusal] says
+     * whether it can play.
+     */
+    data class Timing(
+        val paceMetersPerSecond: Double? = null,
+        val fromFrac: Double = 0.0,
+        val toFrac: Double = 1.0,
+    )
+
+    /** Why [timing] can't replay [route], or null when it can. */
+    fun refusal(route: List<WayPoint>, timing: Timing): String? {
+        val pace = timing.paceMetersPerSecond
+        if (pace != null && !(pace.isFinite() && pace > 0)) {
+            return "the pace must be a number of metres per second above 0 (--ef pace <m/s>)"
+        }
+        if (!(timing.fromFrac in 0.0..1.0 && timing.toFrac in 0.0..1.0)) {
+            return "from and to must be fracs of the route, 0 to 1 (--ef from <frac> --ef to <frac>)"
+        }
+        if (!(timing.fromFrac < timing.toFrac)) return "from must come before to"
+        if (pace != null && pacedLegs(spanMeters(WayGeometry(route), timing), pace) >= MAX_PACED_FIXES) {
+            return "that pace would take more than $MAX_PACED_FIXES fixes"
+        }
+        return null
+    }
+
+    /**
+     * At the recorded pace the fixes are the route's points inside the
+     * window, plus a point interpolated at an end no route point sits on.
+     * Each carries the speed and bearing of the leg it ends (the first, of
+     * the leg it starts); a leg of no length keeps the heading before it,
+     * and a leg of no time keeps the speed. At a [Timing.paceMetersPerSecond]
+     * the fixes are evenly spaced along the line, each carrying the pace
+     * and the heading of the route leg it lies on (on a leg of no length,
+     * the heading before it).
+     *
+     * @throws IllegalArgumentException when [refusal] refuses [timing].
+     */
+    fun steps(route: List<WayPoint>, timing: Timing = Timing()): List<ReplayStep> {
+        refusal(route, timing)?.let { throw IllegalArgumentException(it) }
         if (route.isEmpty()) return emptyList()
         val geometry = WayGeometry(route)
-        val t0 = route.first().t
+        val pace = timing.paceMetersPerSecond
+        return if (pace == null) recorded(windowed(geometry, timing)) else paced(geometry, timing, pace)
+    }
+
+    private fun recorded(placed: List<Placed>): List<ReplayStep> {
+        val t0 = placed.first().point.t
         var offset = 0L
         var speed = 0f
         var bearing = 0f
-        return route.mapIndexed { index, point ->
-            val (from, to) = if (index == 0) point to route.getOrElse(1) { point } else route[index - 1] to point
+        return placed.mapIndexed { index, (point, frac) ->
+            val (from, to) = if (index == 0) {
+                point to placed.getOrElse(1) { placed[index] }.point
+            } else {
+                placed[index - 1].point to point
+            }
             val meters = WayGeometry.distanceMeters(from, to)
             val seconds = to.t - from.t
             if (seconds > 0) speed = (meters / seconds).toFloat()
@@ -104,12 +163,100 @@ object WayReplayTimeline {
                 accuracyMeters = ACCURACY_METERS,
                 speedMetersPerSecond = speed,
                 bearingDegrees = bearing,
-                frac = if (geometry.totalMeters > 0) geometry.cumulative[index] / geometry.totalMeters else 0.0,
+                frac = frac,
             )
         }
     }
 
+    /** Every route point inside the window, its ends included, and an interpolated point at an end none sits on. */
+    private fun windowed(geometry: WayGeometry, timing: Timing): List<Placed> {
+        val start = timing.fromFrac * geometry.totalMeters
+        val end = timing.toFrac * geometry.totalMeters
+        val cumulative = geometry.cumulative
+        val inside = geometry.points.indices.filter { cumulative[it] in start..end }
+        val cursor = LineCursor(geometry)
+        val placed = mutableListOf<Placed>()
+        if (inside.isEmpty() || cumulative[inside.first()] > start) {
+            placed += Placed(cursor.at(start).point, geometry.fracAt(start))
+        }
+        inside.mapTo(placed) { Placed(geometry.points[it], geometry.fracAt(cumulative[it])) }
+        if (inside.isEmpty() || cumulative[inside.last()] < end) {
+            placed += Placed(cursor.at(end).point, geometry.fracAt(end))
+        }
+        return placed
+    }
+
+    private fun paced(geometry: WayGeometry, timing: Timing, pace: Double): List<ReplayStep> {
+        val start = timing.fromFrac * geometry.totalMeters
+        val end = timing.toFrac * geometry.totalMeters
+        val legs = pacedLegs(spanMeters(geometry, timing), pace).toInt()
+        val cursor = LineCursor(geometry)
+        var bearing = 0f
+        return (0..legs).map { fix ->
+            val meters = if (fix == legs) end else start + (end - start) * fix / legs
+            val onLine = cursor.at(meters)
+            onLine.bearing?.let { bearing = it }
+            ReplayStep(
+                offsetMillis = ((meters - start) / pace * MILLIS_PER_SECOND).roundToLong(),
+                latitude = onLine.point.lat,
+                longitude = onLine.point.lon,
+                altitudeMeters = onLine.point.alt,
+                accuracyMeters = ACCURACY_METERS,
+                speedMetersPerSecond = pace.toFloat(),
+                bearingDegrees = bearing,
+                frac = geometry.fracAt(meters),
+            )
+        }
+    }
+
+    /** How many even legs, each at most [PACED_FIX_SECONDS] at [pace], cover [meters]; a Double so no pace overflows it. */
+    private fun pacedLegs(meters: Double, pace: Double): Double =
+        if (meters > 0) ceil(meters / (pace * PACED_FIX_SECONDS)) else 0.0
+
+    private fun spanMeters(geometry: WayGeometry, timing: Timing): Double =
+        timing.toFrac * geometry.totalMeters - timing.fromFrac * geometry.totalMeters
+
+    private fun WayGeometry.fracAt(meters: Double): Double = if (totalMeters > 0) meters / totalMeters else 0.0
+
     private fun WayPoint.coordinate() = WayCoordinate(lat = lat, lon = lon)
+
+    /** A route point, or one between two, with its frac of the whole line. */
+    private data class Placed(val point: WayPoint, val frac: Double)
+
+    /** A point on the line, and the bearing of the route leg it lies on: null on a leg of no length. */
+    private class OnLine(val point: WayPoint, val bearing: Float?)
+
+    /**
+     * Points along the line by their distance from its start, asked for in
+     * increasing order. A distance on several points at once (a standstill)
+     * lies on the leg after the last of them, as [WayGeometry]'s own
+     * lookup puts it, so a point and its fix agree with the engine's
+     * [WayGeometry.coordinate]. Latitude, longitude, altitude, and time are
+     * linear along the leg; an altitude one end lacks is left out.
+     */
+    private class LineCursor(private val geometry: WayGeometry) {
+        private var leg = 0
+
+        fun at(meters: Double): OnLine {
+            val points = geometry.points
+            val cumulative = geometry.cumulative
+            if (points.size == 1) return OnLine(points[0], bearing = null)
+            while (leg < points.size - 2 && cumulative[leg + 1] <= meters) leg++
+            val a = points[leg]
+            val b = points[leg + 1]
+            val length = cumulative[leg + 1] - cumulative[leg]
+            val u = if (length > 0) ((meters - cumulative[leg]) / length).coerceIn(0.0, 1.0) else 0.0
+            val altitude = if (a.alt != null && b.alt != null) a.alt + (b.alt - a.alt) * u else null
+            val point = WayPoint(
+                lat = a.lat + (b.lat - a.lat) * u,
+                lon = a.lon + (b.lon - a.lon) * u,
+                alt = altitude,
+                t = a.t + (b.t - a.t) * u,
+            )
+            val bearing = if (length > 0) WayGeometry.bearing(a.coordinate(), b.coordinate()).toFloat() else null
+            return OnLine(point, bearing)
+        }
+    }
 
     private const val MILLIS_PER_SECOND = 1_000.0
 }
@@ -173,17 +320,18 @@ class PreferencesMockModeMarker @Inject constructor(
 
 /**
  * Walks a Way's route from a desk (plan U19): mock fixes through the fused
- * provider at the recorded pace, in `:tracker`, where the walk reads its
- * fixes. Each fix waits out its recorded gap from the one before, so a
- * frozen or busy process delays the rest rather than bursting them.
+ * provider at the recorded pace or a chosen one ([WayReplayTimeline]), in
+ * `:tracker`, where the walk reads its fixes. Each fix waits out its gap
+ * from the one before, so a frozen or busy process delays the rest rather
+ * than bursting them.
  *
  * Mock mode goes off on every way a replay ends (played out, stopped,
  * replaced, refused, or failed) and, defensively, at the next `:tracker`
  * service start when this process runs no replay and the [MockModeMarker]
  * says one may have left it on (a process killed mid-replay never reaches
  * its own cleanup). Only then: taking and releasing mock mode empties the
- * device's cached fix, which the Honor overview reads. The log prints walk
- * ids, counts, and fracs only.
+ * device's cached fix, which the Honor overview reads. The log prints the
+ * source's name as the caller gives it, counts, and fracs only.
  */
 @Singleton
 class WayReplayer internal constructor(
@@ -206,12 +354,17 @@ class WayReplayer internal constructor(
     private val lock = Mutex()
     private var replay: Job? = null
 
-    /** Replaces any replay in progress. [walkId] names the source walk in the log. */
-    suspend fun start(walkId: Long, route: List<WayPoint>) {
-        val steps = WayReplayTimeline.steps(route)
+    /**
+     * Replaces any replay in progress. [name] is the source as the log
+     * prints it ("walk 12"): never a title or a share id.
+     *
+     * @throws IllegalArgumentException when [WayReplayTimeline.refusal] refuses [timing].
+     */
+    suspend fun start(name: String, route: List<WayPoint>, timing: WayReplayTimeline.Timing = WayReplayTimeline.Timing()) {
+        val steps = WayReplayTimeline.steps(route, timing)
         lock.withLock {
             replay?.cancelAndJoin()
-            replay = scope.launch { play(walkId, steps) }
+            replay = scope.launch { play(name, steps) }
         }
     }
 
@@ -229,9 +382,10 @@ class WayReplayer internal constructor(
         }
     }
 
-    private suspend fun play(walkId: Long, steps: List<ReplayStep>) {
+    private suspend fun play(name: String, steps: List<ReplayStep>) {
         val seconds = (steps.lastOrNull()?.offsetMillis ?: 0) / MILLIS_PER_SECOND
-        Log.i(TAG, "replay of walk $walkId: ${steps.size} fixes over ${seconds}s")
+        val fracs = String.format(Locale.US, "frac %.3f to %.3f", steps.firstOrNull()?.frac ?: 0.0, steps.lastOrNull()?.frac ?: 0.0)
+        Log.i(TAG, "replay of $name: ${steps.size} fixes over ${seconds}s, $fracs")
         var played = 0
         var previousOffset = 0L
         try {
@@ -243,14 +397,14 @@ class WayReplayer internal constructor(
                 client.setMockLocation(MockFix(step, wallClockMillis(), elapsedRealtimeNanos()))
                 played++
             }
-            Log.i(TAG, "replay of walk $walkId played out ($played fixes)")
+            Log.i(TAG, "replay of $name played out ($played fixes)")
         } catch (e: CancellationException) {
-            Log.i(TAG, "replay of walk $walkId stopped at ${progress(steps, played)}")
+            Log.i(TAG, "replay of $name stopped at ${progress(steps, played)}")
             throw e
         } catch (e: Exception) {
             Log.w(
                 TAG,
-                "replay of walk $walkId failed at ${progress(steps, played)} (${e::class.simpleName}); " +
+                "replay of $name failed at ${progress(steps, played)} (${e::class.simpleName}); " +
                     "is the debug app the mock location app?",
             )
         } finally {

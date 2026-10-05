@@ -17,6 +17,7 @@ import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.honor.HonorDao
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.data.honor.isStagedPerWalk
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.honor.Way
@@ -24,6 +25,7 @@ import org.walktalkmeditate.pilgrim.walk.HonorSettings
 import org.walktalkmeditate.pilgrim.walk.HonorStart
 import org.walktalkmeditate.pilgrim.walk.WalkController
 import org.walktalkmeditate.pilgrim.walk.WalkStartRequest
+import org.walktalkmeditate.pilgrim.walk.honor.honorSourceKind
 
 /**
  * The walk screen's Start on an honor walk (plan U17, parity spec
@@ -155,12 +157,12 @@ class BeginHonorWalk internal constructor(
                 OwnWalkWays.Built.NotWalkable -> return Result.Refused(Refusal.NOT_WALKABLE)
             }
             // A share is listed since its acceptance, a stage installed with its package.
-            is HonorWayChoice.Stored -> stageHandoff.stage(choice.wayId)
-                ?: withContext(ioDispatcher) { wayStore.load(choice.wayId) }
+            is HonorWayChoice.Stored -> stageHandoff.storedWay(choice.wayId, wayStore, ioDispatcher)
                 ?: return Result.Refused(Refusal.SOURCE_MISSING)
         }
         val walkUuid = mintWalkUuid()
-        val stagesPerWalk = request.way is HonorWayChoice.OwnWalk || way.isPilgrimageStage
+        // The session row's source kind, which every reader of the Way branches on (WayStore.sessionWay).
+        val stagesPerWalk = honorSourceKind(way.id)?.isStagedPerWalk == true
         if (stagesPerWalk && !stage(walkUuid, way)) {
             return Result.Refused(Refusal.STAGING_FAILED)
         }

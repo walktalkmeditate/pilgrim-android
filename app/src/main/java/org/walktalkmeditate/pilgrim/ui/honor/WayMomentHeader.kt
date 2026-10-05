@@ -41,9 +41,9 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayMoment
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.domain.honor.WayStage
+import org.walktalkmeditate.pilgrim.domain.honor.digits
 import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.STAGE_SEPARATOR
 import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.StageFormat
-import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.digits
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType

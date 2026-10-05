@@ -28,6 +28,8 @@ import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 import org.walktalkmeditate.pilgrim.domain.honor.OwnWalkWayBuilder
 import org.walktalkmeditate.pilgrim.domain.honor.Way
+import org.walktalkmeditate.pilgrim.domain.honor.WayPoint
+import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.honor.BeginHonorWalk
 import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
@@ -39,8 +41,9 @@ import org.walktalkmeditate.pilgrim.walk.honor.HonorCommand
  * adb commands for walking an Honor walk from a desk (plan U19; U20's device
  * proof runs on them). Debug-only and DUMP-protected, so only adb can send
  * them and release has none of it. Everything logs under `HonorDebug`, and
- * the replay under `WayReplayer`, as local row ids, counts, fracs, and
- * phases only: never titles, coordinates, transcripts, or share ids.
+ * the replay under `WayReplayer`, as local row ids, stage and own-walk Way
+ * ids, counts, fracs, and phases only: never titles, coordinates,
+ * transcripts, or share ids.
  *
  * `<walk>` is a walk's Room id or its uuid. `-p` addresses the app, so a
  * command reaches it even while it is in the background.
@@ -70,6 +73,35 @@ import org.walktalkmeditate.pilgrim.walk.honor.HonorCommand
  * ```
  * Mock mode goes off when the replay stops or plays out, so the next real
  * fix places the walker back at the desk: finish the walk first.
+ *
+ * Replay a stored Way in place of a walk's route with `--es way <way id>`:
+ * a downloaded stage (`pilgrimage:<route>:<n>`) or any other Way the store
+ * holds. Name exactly one of `walk` and `way`. HONOR_BEGIN begins an own
+ * walk only, so begin a stage from its page in the app. Any replay takes
+ * two more extras:
+ * - `--ef pace <m/s>` re-times the route at that constant pace, one fix
+ *   every 1–2 s, evenly spaced along the line. Without it the route plays
+ *   at its recorded pace. A stage's is the dataset's synthesized clock
+ *   (hours a stage), with points up to kilometres apart, so give a stage a
+ *   pace.
+ * - `--ef from <frac> --ef to <frac>` (each 0 to 1, from before to,
+ *   defaulting to 0 and 1) play only that part of the line, from a fix
+ *   exactly at `from` to one exactly at `to`: join a stage partway
+ *   ("continue from where you stopped") or finish near its end (arrival).
+ *   A replay dies with a killed `:tracker`; start it again from the
+ *   progress frac HONOR_DUMP reports.
+ * ```
+ * adb shell am broadcast -p org.walktalkmeditate.pilgrim.debug -a org.walktalkmeditate.pilgrim.debug.HONOR_REPLAY_START --es way pilgrimage:camino-frances:0 --ef pace 6 --ef from 0.4 --ef to 1
+ * ```
+ * How fast: the walk takes every replayed fix at any pace. It has no speed
+ * or jump filter, only the 20 m accuracy gate (a replayed fix claims 5 m),
+ * and paced fixes come 1–2 s apart, never closer than the 1 s its location
+ * request allows. Honor is what a fast pace outruns: a fix more than 300 m
+ * past its progress reads as off the Way, a moment needs a fix within 42 m
+ * (a voice) or 60 m, and arrival needs 3 fixes in a row within 30 m of the
+ * end. With a fix every 2 s, arrival binds first: 7 m/s is the fastest
+ * pace with every fix accepted and the arrival still counted
+ * (`WayReplayPaceLimitTest`; real stages arrive at 7.4 and miss at 7.6).
  *
  * Dump the Honor state of the walk in progress, or of any walk:
  * ```
@@ -268,6 +300,10 @@ class HonorDebugReceiver : BroadcastReceiver() {
         const val ACTION_REPLAY_START = "org.walktalkmeditate.pilgrim.debug.HONOR_REPLAY_START"
         const val ACTION_REPLAY_STOP = "org.walktalkmeditate.pilgrim.debug.HONOR_REPLAY_STOP"
         const val EXTRA_WALK = "walk"
+        const val EXTRA_WAY = "way"
+        const val EXTRA_PACE = "pace"
+        const val EXTRA_FROM = "from"
+        const val EXTRA_TO = "to"
         const val EXTRA_COMMAND = "cmd"
         const val EXTRA_MOMENT = "moment"
         internal const val TAG = "HonorDebug"
@@ -291,24 +327,87 @@ class HonorReplayReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
             HonorDebugReceiver.ACTION_REPLAY_START -> runCommand {
-                val walk = ways.walk(intent.getStringExtra(HonorDebugReceiver.EXTRA_WALK)) ?: return@runCommand
-                val way = ways.ownWalkWay(walk)
-                if (way == null) {
-                    Log.w(HonorDebugReceiver.TAG, "replay: walk ${walk.id} has too little route to honor")
-                } else {
-                    replayer.start(walk.id, way.route)
-                }
+                val replay = ways.replay(intent) ?: return@runCommand
+                replayer.start(replay.name, replay.route, replay.timing)
             }
             HonorDebugReceiver.ACTION_REPLAY_STOP -> runCommand { replayer.stop() }
         }
     }
 }
 
-/** Finds a walk by Room id or uuid, and builds its own-walk Way as [BeginHonorWalk] does. */
+/**
+ * Finds a walk by Room id or uuid, and builds its own-walk Way as
+ * [BeginHonorWalk] does; and finds the route a replay names.
+ */
 class HonorDebugWays @Inject constructor(
     private val repository: WalkRepository,
     private val recordingFiles: VoiceRecordingFileSystem,
+    private val wayStore: WayStore,
 ) {
+
+    /** What HONOR_REPLAY_START plays. [name] is the source as the log may print it. */
+    data class Replay(val name: String, val route: List<WayPoint>, val timing: WayReplayTimeline.Timing)
+
+    /**
+     * The route [intent]'s extras name, a walk's own or a stored Way's,
+     * with the pace and window they ask for. Null, with the reason logged,
+     * when they name both or neither, nothing that loads, or a timing
+     * [WayReplayTimeline.refusal] refuses.
+     */
+    suspend fun replay(intent: Intent): Replay? {
+        val walkReference = intent.getStringExtra(HonorDebugReceiver.EXTRA_WALK)
+        val wayId = intent.getStringExtra(HonorDebugReceiver.EXTRA_WAY)
+        if ((walkReference == null) == (wayId == null)) {
+            Log.w(
+                HonorDebugReceiver.TAG,
+                "replay refused: name one walk (--es ${HonorDebugReceiver.EXTRA_WALK} <id or uuid>) " +
+                    "or one stored Way (--es ${HonorDebugReceiver.EXTRA_WAY} <way id>)",
+            )
+            return null
+        }
+        val timing = WayReplayTimeline.Timing(
+            paceMetersPerSecond = intent.floatExtra(HonorDebugReceiver.EXTRA_PACE),
+            fromFrac = intent.floatExtra(HonorDebugReceiver.EXTRA_FROM) ?: 0.0,
+            toFrac = intent.floatExtra(HonorDebugReceiver.EXTRA_TO) ?: 1.0,
+        )
+        val replay = (if (wayId != null) storedWayReplay(wayId, timing) else ownWalkReplay(walkReference, timing))
+            ?: return null
+        val refusal = WayReplayTimeline.refusal(replay.route, timing)
+        if (refusal != null) {
+            Log.w(HonorDebugReceiver.TAG, "replay refused: $refusal")
+            return null
+        }
+        return replay
+    }
+
+    private suspend fun ownWalkReplay(reference: String?, timing: WayReplayTimeline.Timing): Replay? {
+        val walk = walk(reference) ?: return null
+        val way = ownWalkWay(walk)
+        if (way == null) {
+            Log.w(HonorDebugReceiver.TAG, "replay: walk ${walk.id} has too little route to honor")
+            return null
+        }
+        return Replay(name = "walk ${walk.id}", route = way.route, timing = timing)
+    }
+
+    /** The id is logged only once it has loaded as a Way that isn't a share's. */
+    private suspend fun storedWayReplay(wayId: String, timing: WayReplayTimeline.Timing): Replay? {
+        if (!WayStore.isValidId(wayId)) {
+            Log.w(HonorDebugReceiver.TAG, "replay: --es ${HonorDebugReceiver.EXTRA_WAY} is not a Way id")
+            return null
+        }
+        val way = withContext(Dispatchers.IO) { wayStore.load(wayId) }
+        if (way == null) {
+            Log.w(HonorDebugReceiver.TAG, "replay: the store holds no readable Way with that id")
+            return null
+        }
+        val name = if (way.source is WaySource.Share) "a shared way" else "way ${way.id}"
+        return Replay(name = name, route = way.route, timing = timing)
+    }
+
+    /** A `--ef` extra; one of another type reads as NaN, which the timing refuses. */
+    private fun Intent.floatExtra(name: String): Double? =
+        if (hasExtra(name)) getFloatExtra(name, Float.NaN).toDouble() else null
 
     /** Logs why when there is no such walk. */
     suspend fun walk(reference: String?): Walk? {

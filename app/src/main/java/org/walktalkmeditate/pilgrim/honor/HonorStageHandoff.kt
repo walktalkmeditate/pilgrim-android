@@ -4,6 +4,9 @@ package org.walktalkmeditate.pilgrim.honor
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.withContext
+import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.domain.honor.Way
 
 /**
@@ -33,6 +36,15 @@ class HonorStageHandoff @Inject constructor() {
 
     /** The copy handed over for [wayId]; null when the last Begin was another Way's, or none came since launch. */
     fun stage(wayId: String): Way? = handed.get()?.takeIf { it.id == wayId }
+
+    /**
+     * The Way a stored choice names before Start: the stage handed over
+     * for [wayId], else [store]'s (a listed share, or a stage's package
+     * after a UI process death), read on [io]. The pre-Start map and Start
+     * both read it here, so the map shows the copy Start stages.
+     */
+    suspend fun storedWay(wayId: String, store: WayStore, io: CoroutineDispatcher): Way? =
+        stage(wayId) ?: withContext(io) { store.load(wayId) }
 
     /** [wayId]'s walk has started on its staged copy: a next walk of it begins at its overview again. */
     fun release(wayId: String) {

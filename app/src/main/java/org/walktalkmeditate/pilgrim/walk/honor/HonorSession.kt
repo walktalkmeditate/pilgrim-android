@@ -35,7 +35,6 @@ import org.walktalkmeditate.pilgrim.data.honor.HonorNoticeKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorVoiceEnd
 import org.walktalkmeditate.pilgrim.data.honor.WayArrival
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
-import org.walktalkmeditate.pilgrim.data.honor.isStagedPerWalk
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
@@ -255,8 +254,7 @@ class HonorSession internal constructor(
         val walk = database.walkDao().getById(walkId)
         if (walk == null || walk.endTimestamp != null) return refuse(walkId, "the walk is not in progress")
         if (!WayStore.isValidId(session.wayId)) return refuse(walkId, "its Way id fails the store's allow-list")
-        val staged = if (session.sourceKind.isStagedPerWalk) wayStore.staged(walk.uuid) else null
-        val way = staged?.takeIf { it.id == session.wayId } ?: wayStore.load(session.wayId)
+        val way = wayStore.sessionWay(session.sourceKind, walk.uuid, session.wayId)
             ?: return refuse(walkId, "no staged or listed Way loads")
 
         val revived = session.gateGeneration > 0

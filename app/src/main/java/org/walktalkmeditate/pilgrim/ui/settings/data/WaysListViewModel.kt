@@ -35,6 +35,7 @@ import org.walktalkmeditate.pilgrim.data.honor.HonorDao
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager
 import org.walktalkmeditate.pilgrim.domain.honor.Way
+import org.walktalkmeditate.pilgrim.domain.honor.countString
 import org.walktalkmeditate.pilgrim.honor.WayMediaDownloader
 import org.walktalkmeditate.pilgrim.honor.WaySweeper
 
@@ -79,8 +80,7 @@ object WaysListModel {
 
     /** `"1 way · 2.3 MB"`, `"3 ways · 12.0 MB"`, `"0 ways · 0.0 MB"`: the word by iOS's `count == 1`, in every locale. */
     fun rowDetail(resources: Resources, totals: WaysTotals): String {
-        val res = if (totals.count == 1) R.string.settings_ways_count_one else R.string.settings_ways_count
-        val count = resources.getString(res, String.format(Locale.US, "%d", totals.count))
+        val count = resources.countString(totals.count, R.string.settings_ways_count_one, R.string.settings_ways_count)
         return resources.getString(R.string.settings_ways_detail, count, megabytes(resources, totals.bytes))
     }
 
@@ -93,8 +93,12 @@ object WaysListModel {
      */
     fun packageFooter(resources: Resources, routeName: String?, stageCount: Int): String? {
         if (routeName == null || stageCount <= 0) return null
-        val res = if (stageCount == 1) R.string.settings_ways_package_footer_one else R.string.settings_ways_package_footer
-        return resources.getString(res, routeName, String.format(Locale.US, "%d", stageCount))
+        return resources.countString(
+            stageCount,
+            R.string.settings_ways_package_footer_one,
+            R.string.settings_ways_package_footer,
+            routeName,
+        )
     }
 
     /** `"Sep 14, 2026 · 23.5 MB"`, or `"Sep 14, 2026 · voices returned to the trail"`. */

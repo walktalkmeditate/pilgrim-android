@@ -10,7 +10,6 @@ import java.io.IOException
 import java.nio.file.Files
 import java.util.Locale
 import java.util.UUID
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
@@ -24,24 +23,22 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import okhttp3.Call
-import okhttp3.Callback
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import okio.Buffer
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.honor.WayMediaDownloadWorker
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
-import org.walktalkmeditate.pilgrim.data.honor.stayingOnTheHost
+import org.walktalkmeditate.pilgrim.data.honor.cappedBody
+import org.walktalkmeditate.pilgrim.data.honor.ephemeralClient
+import org.walktalkmeditate.pilgrim.data.honor.fetchCapped
+import org.walktalkmeditate.pilgrim.data.honor.plainGet
 import org.walktalkmeditate.pilgrim.di.PilgrimagePackageHttpClient
-import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.domain.honor.WayJson
 import org.walktalkmeditate.pilgrim.domain.honor.swiftCompareTo
 
@@ -59,7 +56,7 @@ interface PilgrimageTiles {
     /** The regions at stage indices an Update's route no longer has. */
     fun removeRegions(routeId: String, atOrAbove: Int)
 
-    /** A map save in flight, which the route page's busy state counts. */
+    /** A map save in flight, which joins the route page's busy state in Stage 21-3. */
     val isSaving: Boolean
 }
 
@@ -147,18 +144,11 @@ class PilgrimagePackageManager internal constructor(
     val phase: StateFlow<Phase> = _phase.asStateFlow()
 
     /**
-     * True from a download's entry to its end. A second download, and a
-     * Remove, are refused while it is ("the download didn't finish"), and
-     * [installed] leaves a Replace's marker to the swap that wrote it.
+     * The commit's one write to the store: a stage's id and its `way.json`
+     * text, already in the store's encoding. A seam so a test can fail it
+     * mid-loop and prove the rollback.
      */
-    @Volatile var isDownloading = false
-        private set
-
-    /** The route page's busy state (`PilgrimageRouteView.swift:308-312@7c200bf`): a download, or a map save. */
-    val isBusy: Boolean get() = phase.value is Phase.Downloading || tiles?.isSaving == true
-
-    /** The commit's one write to the store, a seam so a test can fail it mid-loop and prove the rollback. */
-    @Volatile internal var saveStage: (Way) -> Unit = store::save
+    @Volatile internal var saveStage: (id: String, wayJson: String) -> Unit = store::saveEncoded
 
     /** The whole package's ceiling on the bytes that land; injectable so a test need not serve 50 MiB. */
     @Volatile internal var maxPackageBytes: Long = PilgrimageCatalogService.MAX_PACKAGE_BYTES.toLong()
@@ -167,6 +157,14 @@ class PilgrimagePackageManager internal constructor(
 
     /** The download in flight's temp set, which the launch sweep spares. */
     @Volatile private var inFlightTemp: File? = null
+
+    /**
+     * True from a download's entry to its end, while its temp set is in
+     * flight. A second download, and a Remove, are refused while it is
+     * ("the download didn't finish"), and [installed] leaves a Replace's
+     * marker to the swap that wrote it.
+     */
+    private val isDownloading: Boolean get() = inFlightTemp != null
 
     private val actor = Mutex()
 
@@ -210,11 +208,7 @@ class PilgrimagePackageManager internal constructor(
      * would have deleted it. iOS's prompt screen calls `installed()` itself
      * (pilgrim-ios #123, matched in the words, not the write).
      */
-    suspend fun installedRoute(): Installed? = onActor {
-        val found = store.pilgrimageRouteIds().mapNotNull(::readInstalled)
-        val abandonedId = if (isDownloading || found.size < 2) null else replacingMarker()
-        found.firstOrNull { it.routeId != abandonedId }
-    }
+    suspend fun installedRoute(): Installed? = onActor { selection().chosen }
 
     /**
      * The UI process's launch work, after the pending Honor steps (P2 §12,
@@ -255,21 +249,16 @@ class PilgrimagePackageManager internal constructor(
     private suspend fun downloadOnActor(entry: PilgrimageCatalogEntry, release: String) {
         if (signals.refusesForAWalk()) throw refusal(PilgrimageError.WALK_IN_PROGRESS)
         if (isDownloading) throw refusal(PilgrimageError.INCOMPLETE)
-        isDownloading = true
+        // route.json is a whole round trip before the first stage lands;
+        // without an early phase the route page isn't busy meanwhile.
+        _phase.value = Phase.Downloading(done = 0, total = entry.stageCount + 1)
+        val temp = File(tempRoot, "$TEMP_SET_PREFIX${UUID.randomUUID()}")
+        inFlightTemp = temp
         try {
-            // route.json is a whole round trip before the first stage lands;
-            // without an early phase the route page isn't busy meanwhile.
-            _phase.value = Phase.Downloading(done = 0, total = entry.stageCount + 1)
-            val temp = File(tempRoot, "$TEMP_SET_PREFIX${UUID.randomUUID()}")
-            inFlightTemp = temp
-            try {
-                transfer(entry, release, temp)
-            } finally {
-                temp.deleteRecursively()
-                inFlightTemp = null
-            }
+            transfer(entry, release, temp)
         } finally {
-            isDownloading = false
+            temp.deleteRecursively()
+            inFlightTemp = null
         }
     }
 
@@ -306,9 +295,9 @@ class PilgrimagePackageManager internal constructor(
             _phase.value = Phase.Idle
             throw e
         } catch (e: Exception) {
-            val failure = (e as? PilgrimageException)?.error ?: PilgrimageError.INCOMPLETE
-            _phase.value = Phase.Failed(failure)
-            throw refusal(failure)
+            val failure = e as? PilgrimageException ?: refusal(PilgrimageError.INCOMPLETE)
+            _phase.value = Phase.Failed(failure.error)
+            throw failure
         }
     }
 
@@ -320,9 +309,7 @@ class PilgrimagePackageManager internal constructor(
     private suspend fun stageRouteFile(entry: PilgrimageCatalogEntry, routeUrl: HttpUrl, temp: File): FetchedRoute {
         val data = fetch(routeUrl, PilgrimageWayImporter.MAX_ROUTE_BYTES.toLong())
         val route = PilgrimageWayImporter.route(from = data)
-        if (route.id != entry.id || route.stageCount != entry.stageCount || route.stages.size != entry.stageCount) {
-            throw refusal(PilgrimageError.NOT_WALKABLE)
-        }
+        if (!route.describes(entry)) throw refusal(PilgrimageError.NOT_WALKABLE)
         writeTemp(File(temp, ROUTE_FILE), data)
         return FetchedRoute(route, data.size)
     }
@@ -332,8 +319,9 @@ class PilgrimagePackageManager internal constructor(
      * the importer's checks, then the stage against its row in `route.json`
      * by count and name, so the morning card and the ledger read one
      * package. The name is compared as Swift's `==` compares it, in NFC
-     * (P1 A10). Written in the store's own encoding, so the commit decodes
-     * and saves rather than parsing untrusted bytes again.
+     * (P1 A10). Written in the store's own encoding, so the commit lands
+     * the text as it stands, with no untrusted bytes parsed again and no
+     * Way decoded only to be encoded back.
      *
      * @return the bytes the stage cost.
      */
@@ -356,31 +344,8 @@ class PilgrimagePackageManager internal constructor(
      * A status, a cap or a transport failure is `INCOMPLETE`, a full disk
      * `DISK_FULL`; the call is cancelled with the caller.
      */
-    private suspend fun fetch(url: HttpUrl, cap: Long): ByteArray = suspendCancellableCoroutine { continuation ->
-        val call = client.newCall(request(onCdn(url)))
-        continuation.invokeOnCancellation { call.cancel() }
-        call.enqueue(
-            object : Callback {
-                override fun onFailure(call: Call, e: IOException) {
-                    continuation.resumeWith(Result.failure(failureOf(e)))
-                }
-
-                override fun onResponse(call: Call, response: Response) {
-                    val result = try {
-                        Result.success(response.use { readCapped(it, cap) })
-                    } catch (e: PilgrimageException) {
-                        Result.failure(e)
-                    } catch (e: Exception) {
-                        Result.failure(failureOf(e))
-                    }
-                    continuation.resumeWith(result)
-                }
-            },
-        )
-    }
-
-    /** The same path on this manager's CDN: the production CDN itself, or a test's server. */
-    private fun onCdn(url: HttpUrl): HttpUrl = url.newBuilder().scheme(cdn.scheme).host(cdn.host).port(cdn.port).build()
+    private suspend fun fetch(url: HttpUrl, cap: Long): ByteArray =
+        client.fetchCapped(url, cdn, cap, refused = { refusal(PilgrimageError.INCOMPLETE) }, failed = { failureOf(it) })
 
     // ---- Commit ----------------------------------------------------------------
 
@@ -393,26 +358,26 @@ class PilgrimagePackageManager internal constructor(
      * wrote, so a shrinking or same-size Update leaves nothing behind (P2 C-2).
      * The rollback runs to its end even if the operation is cancelled.
      */
-    private suspend fun commit(plan: CommitPlan, temp: File, saveStage: (Way) -> Unit) {
+    private suspend fun commit(plan: CommitPlan, temp: File, saveStage: (id: String, wayJson: String) -> Unit) {
         val routeFile = store.routeFile(plan.routeId) ?: throw refusal(PilgrimageError.NOT_WALKABLE)
         val releaseFile = store.releaseFile(plan.routeId) ?: throw refusal(PilgrimageError.NOT_WALKABLE)
         try {
             for (index in 0 until plan.stageCount) {
-                saveStage(WayJson.decode(File(temp, wayFileName(index)).readText()))
+                saveStage(WayStore.stageWayId(plan.routeId, index), File(temp, wayFileName(index)).readText())
             }
             store.writePilgrimageFile(routeFile, File(temp, ROUTE_FILE).readBytes())
             store.writePilgrimageFile(releaseFile, plan.release.toByteArray(Charsets.UTF_8))
         } catch (e: Exception) {
+            val failure = e as? PilgrimageException ?: failureOf(e)
             withContext(NonCancellable) {
-                // The commit's error is the one the walker hears; a rollback that also fails rides along.
+                // The commit's error is the one the walker hears; a rollback that also fails is suppressed on it.
                 try {
                     retireStagesAndPackage(plan.routeId, maxOf(plan.previousStageCount, plan.stageCount))
                 } catch (rollback: Exception) {
-                    e.addSuppressed(rollback)
+                    failure.addSuppressed(rollback)
                 }
             }
-            if (e is PilgrimageException) throw e
-            throw failureOf(e)
+            throw failure
         }
     }
 
@@ -489,20 +454,31 @@ class PilgrimagePackageManager internal constructor(
 
     // ---- What is on the phone ---------------------------------------------------
 
+    /** [selection]'s route, after its writes: the abandoned route retired, then the marker cleared. */
     private suspend fun installedOnActor(): Installed? {
-        val found = store.pilgrimageRouteIds().mapNotNullTo(ArrayList(), ::readInstalled)
-        // A download in flight is the one time both packages are meant to be there.
-        if (isDownloading) return found.firstOrNull()
-        val abandonedId = replacingMarker() ?: return found.firstOrNull()
-        if (found.size > 1) {
-            val abandoned = found.firstOrNull { it.routeId == abandonedId }
-            if (abandoned != null) {
-                retireStagesAndPackage(abandoned.routeId, abandoned.route.stageCount)
-                found.removeAll { it.routeId == abandonedId }
-            }
-        }
-        clearReplacingMarker()
-        return found.firstOrNull()
+        val selection = selection()
+        selection.abandoned?.let { retireStagesAndPackage(it.routeId, it.route.stageCount) }
+        if (selection.markerSeen) clearReplacingMarker()
+        return selection.chosen
+    }
+
+    /**
+     * Which route counts as installed, read with no write, for [installed]
+     * and [installedRoute] alike. With no download in flight, a valid
+     * Replace marker is [Selection.markerSeen], and, when two or more
+     * packages read, the route it names is [Selection.abandoned] and passed
+     * over. A download in flight is the one time both packages are meant to
+     * be there, so the marker is left to the swap that wrote it.
+     */
+    private fun selection(): Selection {
+        val found = store.pilgrimageRouteIds().mapNotNull(::readInstalled)
+        val abandonedId = if (isDownloading) null else replacingMarker()
+        val abandoned = if (found.size > 1) found.firstOrNull { it.routeId == abandonedId } else null
+        return Selection(
+            chosen = found.firstOrNull { it.routeId != abandoned?.routeId },
+            abandoned = abandoned,
+            markerSeen = abandonedId != null,
+        )
     }
 
     /** A folder counts only when `route.json` passes the importer and `release.txt` the tag rule, untrimmed. */
@@ -547,10 +523,12 @@ class PilgrimagePackageManager internal constructor(
     }
 
     /** Every temp set but the one in flight, which can be younger than the launch that sweeps. */
-    private fun sweepTempSets(): Int {
+    private fun sweepTempSets() {
         val inFlight = inFlightTemp
-        return tempRoot.listFiles().orEmpty().count { it != inFlight && it.deleteRecursively() }
+        tempRoot.listFiles().orEmpty().forEach { if (it != inFlight) it.deleteRecursively() }
     }
+
+    private class Selection(val chosen: Installed?, val abandoned: Installed?, val markerSeen: Boolean)
 
     private class FetchedRoute(val route: PilgrimageRoute, val bytes: Int)
 
@@ -570,8 +548,6 @@ class PilgrimagePackageManager internal constructor(
         internal const val TEMP_SET_PREFIX = "pilgrimage-"
 
         private const val ROUTE_FILE = "route.json"
-        private const val READ_CHUNK_BYTES = 8_192L
-        private const val HTTP_OK = 200
 
         /** iOS `stageFileName`: zero-padded from 00, widening to three digits from 100. */
         fun stageFileName(index: Int): String =
@@ -592,17 +568,11 @@ class PilgrimagePackageManager internal constructor(
          * OkHttp keeps no cache unless one is set. A redirect is followed
          * only on [cdn]'s scheme, host and port.
          */
-        fun httpClient(cdn: HttpUrl): OkHttpClient = OkHttpClient.Builder()
-            .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .writeTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .callTimeout(CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .retryOnConnectionFailure(false)
-            .stayingOnTheHost(cdn)
-            .build()
+        fun httpClient(cdn: HttpUrl): OkHttpClient =
+            ephemeralClient(cdn, CONNECT_TIMEOUT_SECONDS, READ_TIMEOUT_SECONDS, CALL_TIMEOUT_SECONDS)
 
-        /** A plain GET, as iOS's `session.bytes(from:)` sends. */
-        internal fun request(url: HttpUrl): Request = Request.Builder().url(url).build()
+        /** The GET [fetch] sends. */
+        internal fun request(url: HttpUrl): Request = plainGet(url)
 
         private fun wayFileName(index: Int): String = "$index.way.json"
 
@@ -613,19 +583,10 @@ class PilgrimagePackageManager internal constructor(
             if (bytes > cap) throw refusal(PilgrimageError.INCOMPLETE)
         }
 
+        /** [fetch]'s reading of a response, its refusal named as [fetch] names it. */
         @VisibleForTesting
-        internal fun readCapped(response: Response, cap: Long): ByteArray {
-            if (response.code != HTTP_OK) throw refusal(PilgrimageError.INCOMPLETE)
-            val body = response.body
-            // Before draining: an oversized declared length mustn't cost a whole download first.
-            if (body.contentLength() > cap) throw refusal(PilgrimageError.INCOMPLETE)
-            val source = body.source()
-            val buffer = Buffer()
-            while (source.read(buffer, READ_CHUNK_BYTES) != -1L) {
-                if (buffer.size > cap) throw refusal(PilgrimageError.INCOMPLETE)
-            }
-            return buffer.readByteArray()
-        }
+        internal fun readCapped(response: Response, cap: Long): ByteArray =
+            cappedBody(response, cap) ?: throw refusal(PilgrimageError.INCOMPLETE)
 
         private fun writeTemp(file: File, bytes: ByteArray) {
             try {

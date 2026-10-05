@@ -62,7 +62,15 @@ data class PilgrimageRoute(
     val tradition: String?,
     val summary: String?,
     val stages: List<PilgrimageRouteStage>,
-)
+) {
+    /**
+     * The route the catalog offered as [entry] (P1 §11): its id, and its
+     * stage count both declared and listed. The route preview and the
+     * download check the same (P1 C3).
+     */
+    fun describes(entry: PilgrimageCatalogEntry): Boolean =
+        id == entry.id && stageCount == entry.stageCount && stages.size == entry.stageCount
+}
 
 /**
  * iOS `PilgrimageCatalogEntry` (`PilgrimageCatalogService.swift:6-42@7c200bf`):
