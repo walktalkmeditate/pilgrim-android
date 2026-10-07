@@ -132,11 +132,9 @@ internal class TileStoreCache(private val startRead: (token: Int) -> Unit) {
         if (regionsRead == null) regionsRead = regions != null
         if (regions != null) {
             val sorted = regions.sortedBy { it.id }
-            if (cached != sorted) {
-                val settledChanged = MapboxTileRegionLoader.settled(cached) != MapboxTileRegionLoader.settled(sorted)
-                cached = sorted
-                if (settledChanged) onChange?.invoke(TileStoreChange.REGIONS)
-            }
+            val settledChanged = MapboxTileRegionLoader.settled(cached) != MapboxTileRegionLoader.settled(sorted)
+            cached = sorted
+            if (settledChanged) onChange?.invoke(TileStoreChange.REGIONS)
         }
         // After the write, never before: a waiter reads the regions and must see the answer it waited for.
         waiting.forEach { it() }

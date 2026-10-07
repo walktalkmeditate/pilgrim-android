@@ -289,6 +289,6 @@ fun PilgrimageCatalogSheet(
 private val PLATE_SIZE = 44.dp
 
 /** iOS's `.font(.system(size: 13))`: a fixed size, as a glyph doesn't follow the font scale. */
-private val BADGE_SIZE = 13.dp
+internal val BADGE_SIZE = 13.dp
 
 private const val SPARSE_ALPHA = 0.7f

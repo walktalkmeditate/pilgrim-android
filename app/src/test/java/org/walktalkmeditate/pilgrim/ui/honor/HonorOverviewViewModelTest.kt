@@ -241,7 +241,6 @@ class HonorOverviewViewModelTest {
         waveformCache = WaveformCache(),
         ioDispatcher = dispatcher,
         tiles = Provider { tiles.also { tilesResolutions++ } },
-        tilesDispatcher = dispatcher,
         stageHandoff = stageHandoff,
         connectivity = connectivity,
         loadSharedWaveform = { sharedWaveform },

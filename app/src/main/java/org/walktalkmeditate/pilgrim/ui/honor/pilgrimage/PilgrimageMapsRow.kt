@@ -10,8 +10,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -141,10 +139,10 @@ private fun SavedFace(bytes: Long, enabled: Boolean, onSave: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
-            imageVector = Icons.Filled.CheckCircle,
+            imageVector = InstallBadge.ON_YOUR_PHONE.glyph,
             contentDescription = null,
             tint = pilgrimColors.moss,
-            modifier = Modifier.size(CHECK_SIZE),
+            modifier = Modifier.size(BADGE_SIZE),
         )
         Text(
             text = PilgrimageMapsRowModel.savedLine(resources, bytes),
@@ -179,6 +177,3 @@ private fun SaveButton(status: Status, estimateBytes: Long, enabled: Boolean, on
         )
     }
 }
-
-/** The catalog's installed badge's glyph and size. */
-private val CHECK_SIZE = 13.dp

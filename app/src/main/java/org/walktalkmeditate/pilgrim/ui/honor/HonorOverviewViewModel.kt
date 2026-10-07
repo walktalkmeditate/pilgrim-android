@@ -153,8 +153,6 @@ class HonorOverviewViewModel internal constructor(
     private val waveformCache: WaveformCache,
     private val ioDispatcher: CoroutineDispatcher,
     private val tiles: Provider<PilgrimageTilesManager>,
-    /** The tiles manager's thread, where its main-only readers run: the main thread in production. */
-    private val tilesDispatcher: CoroutineDispatcher,
     private val stageHandoff: HonorStageHandoff = HonorStageHandoff(),
     private val connectivity: InternetConnectionProbe = InternetConnectionProbe { true },
     /** A shared voice's bars: iOS's peaks, read from its `.m4a` (S4 §9.3). */
@@ -179,8 +177,7 @@ class HonorOverviewViewModel internal constructor(
         tiles: Provider<PilgrimageTilesManager>,
     ) : this(
         savedStateHandle, ownWalkWays, wayStore, imports, honorPreferences, unitsPreferences, locationSource,
-        weatherFetching, playback, recordingFiles, waveformCache, Dispatchers.IO, tiles, Dispatchers.Main.immediate,
-        stageHandoff, connectivity,
+        weatherFetching, playback, recordingFiles, waveformCache, Dispatchers.IO, tiles, stageHandoff, connectivity,
     )
 
     private val choice: HonorWayChoice = choiceOf(savedStateHandle)
@@ -256,8 +253,10 @@ class HonorOverviewViewModel internal constructor(
         )
         refreshMarkPins()
         if (way.source is WaySource.Share) followLandingMedia(way)
-        if (way.isPilgrimageStage) followStageMaps(way)
-        if (way.isPilgrimageStage) sayOfflineNoteOnce()
+        if (way.isPilgrimageStage) {
+            followStageMaps(way)
+            sayOfflineNoteOnce()
+        }
         val here = awaitLastKnownFix() ?: return
         updateOverview { it.copy(distanceToStartMeters = HonorOverviewModel.distanceToStartMeters(here, way)) }
         // "Today is …": the walk's own weather source, on the walker's
@@ -298,20 +297,18 @@ class HonorOverviewViewModel internal constructor(
 
     /**
      * iOS `refreshStageMapsSaved()` (`HonorOverviewView.swift:168-177,364-369@7c200bf`,
-     * spec D C4 §2.2): the stage's saved flag, read in its own coroutine so
-     * it never waits behind the fix or the weather, then again on every
-     * regions-changed for the overview's life, so an open card's line
-     * changes as a save lands. Subscribed before the first read, so a change
-     * in between isn't lost. Each read waits for the store's first answer;
-     * past the wait there is no line rather than "no offline maps" (owner
-     * decision 3). The stage's value is built once, off the main thread.
+     * spec D C4 §2.2), in its own coroutine so it never waits behind the fix
+     * or the weather, and again on every regions-changed, so an open card's
+     * line changes as a save lands; subscribed first, so a change in between
+     * isn't lost. Past the store's wait there is no line rather than "no
+     * offline maps" (owner decision 3).
      */
     private fun followStageMaps(way: Way) {
-        viewModelScope.launch(tilesDispatcher) {
+        viewModelScope.launch {
             val stage = withContext(ioDispatcher) { PilgrimageTilesCorridor.stage(way) }
             val manager = tiles.get()
             manager.regionsChanged.onSubscription { emit(Unit) }.collectLatest {
-                val saved = if (manager.awaitStore()) manager.isStageSaved(stage) else null
+                val saved = manager.awaitStageSaved(stage)
                 updateOverview { it.copy(mapsSaved = saved) }
             }
         }

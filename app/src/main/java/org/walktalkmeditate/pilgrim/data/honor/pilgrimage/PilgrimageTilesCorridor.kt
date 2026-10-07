@@ -8,6 +8,8 @@ import java.util.Objects
 import kotlin.math.abs
 import kotlin.math.sign
 import kotlin.math.truncate
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.domain.honor.WayCoordinate
@@ -56,7 +58,17 @@ object PilgrimageTilesCorridor {
                 bytes.putLong(swiftRounded(point.lon * MICRODEGREES_PER_DEGREE).toRawBits())
             }
         }
-        return MessageDigest.getInstance("SHA-256").digest(bytes.array()).joinToString("") { "%02x".format(it) }
+        return lowercaseHex(MessageDigest.getInstance("SHA-256").digest(bytes.array()))
+    }
+
+    private fun lowercaseHex(bytes: ByteArray): String {
+        val out = CharArray(bytes.size * 2)
+        for ((index, byte) in bytes.withIndex()) {
+            val value = byte.toInt() and 0xff
+            out[2 * index] = HEX_DIGITS[value ushr 4]
+            out[2 * index + 1] = HEX_DIGITS[value and 0x0f]
+        }
+        return String(out)
     }
 
     /** The one place a decoded stage Way becomes its [TileStage]; the rings and their hash come from one corridor. */
@@ -115,6 +127,35 @@ object PilgrimageTilesCorridor {
     }
 
     private const val MICRODEGREES_PER_DEGREE = 1_000_000.0
+
+    private val HEX_DIGITS = "0123456789abcdef".toCharArray()
+}
+
+/**
+ * One holder's [PilgrimageTilesCorridor.stages] and their pack count for
+ * the installed release, built together on IO once per `(routeId,
+ * release)`. A build cancelled mid-read never fills it. Not thread-safe:
+ * each holder confines its own.
+ */
+class TileStagesCache {
+
+    class Stages(val routeId: String, val release: String, val values: List<TileStage>, val packCount: Int)
+
+    private var cached: Stages? = null
+
+    suspend fun of(installed: PilgrimagePackageManager.Installed, wayStore: WayStore, io: CoroutineDispatcher): Stages {
+        cached?.takeIf { it.routeId == installed.routeId && it.release == installed.release }?.let { return it }
+        val built = withContext(io) {
+            val values = PilgrimageTilesCorridor.stages(wayStore, installed.routeId, installed.route.stageCount)
+            Stages(installed.routeId, installed.release, values, PilgrimageTilesCorridor.packCount(values))
+        }
+        cached = built
+        return built
+    }
+
+    fun clear() {
+        cached = null
+    }
 }
 
 /**

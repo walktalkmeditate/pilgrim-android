@@ -1919,7 +1919,6 @@ class HonorWalkViewModelTest {
         ioDispatcher = dispatcher,
         tickMillis = 1_000L,
         tiles = Provider { tiles.also { tilesResolutions++ } },
-        tilesDispatcher = dispatcher,
         loadWaveform = { FloatArray(150) { 0.5f } },
         stageHandoff = stageHandoff,
     ).also { viewModels += it }

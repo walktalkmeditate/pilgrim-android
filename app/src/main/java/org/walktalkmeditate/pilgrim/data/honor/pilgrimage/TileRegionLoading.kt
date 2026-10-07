@@ -50,8 +50,7 @@ data class TileRegionSummary(
     val completedResourceSize: Long,
     val metadata: Map<String, String>,
 ) {
-    /** Zero required is never complete, and an over-count still is. */
-    val isComplete: Boolean get() = requiredResourceCount > 0 && completedResourceCount >= requiredResourceCount
+    val isComplete: Boolean get() = isComplete(completedResourceCount, requiredResourceCount)
 
     /** Null when the metadata lacks the key; the production loader writes `""` when the store couldn't say. */
     val corridorHash: String? get() = metadata[CORRIDOR_HASH_KEY]
@@ -60,6 +59,13 @@ data class TileRegionSummary(
         const val CORRIDOR_HASH_KEY = "corridorHash"
     }
 }
+
+/**
+ * The completeness rule for a region and for a style pack, whose counts
+ * carry the same names: zero required is never complete, and an over-count
+ * still is.
+ */
+internal fun isComplete(completed: Long, required: Long): Boolean = required > 0 && completed >= required
 
 /** iOS `TileRegionLoadingError`: delivered in a [TileLoadResult], never thrown. */
 enum class TileRegionLoadingError {

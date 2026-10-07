@@ -150,10 +150,12 @@ class OfflineMapsViewModelTest {
     private fun screen(availability: WaysAvailability = WaysAvailability(shown, shownAtFirst = true)) =
         OfflineMapsViewModel(availability, maps()).also { viewModels += it }
 
-    private fun row(
-        availability: WaysAvailability = WaysAvailability(shown, shownAtFirst = true),
-        honorEnabled: Boolean = true,
-    ) = MapsRowViewModel(availability, FixedReleaseFlags(honor = honorEnabled), maps()).also { viewModels += it }
+    private fun row(honorEnabled: Boolean = true) =
+        MapsRowViewModel(FixedReleaseFlags(honor = honorEnabled), maps()).also { viewModels += it }
+
+    /** What Settings shows the Maps row by: the Ways row's own [WaysRowViewModel.shown]. */
+    private fun shownBy(availability: WaysAvailability) =
+        WaysRowViewModel(wayStore, availability, dispatcher).also { viewModels += it }
 
     /**
      * iOS's fixture (`OfflineMapsViewModelTests.swift:20-30`): [count] stages
@@ -586,7 +588,7 @@ class OfflineMapsViewModelTest {
                 voiceRecordingDao = db.voiceRecordingDao(),
                 walkPhotoDao = db.walkPhotoDao(),
             )
-            val vm = row(WaysAvailability(FixedReleaseFlags(honor = true), repository, db.honorDao()))
+            val vm = shownBy(WaysAvailability(FixedReleaseFlags(honor = true), repository, db.honorDao()))
             val collector = backgroundScope.launch { vm.shown.collect {} }
             runCurrent()
             assertTrue("no walk", vm.shown.value)
@@ -622,13 +624,14 @@ class OfflineMapsViewModelTest {
     @Test
     fun `with the flag off the row is hidden and resolves neither the tiles manager nor the installed route`() = runTest(dispatcher) {
         install()
-        val vm = row(WaysAvailability(flowOf(false), shownAtFirst = false), honorEnabled = false)
-        backgroundScope.launch { vm.shown.collect {} }
+        val waysRow = shownBy(WaysAvailability(flowOf(false), shownAtFirst = false))
+        val vm = row(honorEnabled = false)
+        backgroundScope.launch { waysRow.shown.collect {} }
 
         vm.refresh()
         runCurrent()
 
-        assertFalse(vm.shown.value)
+        assertFalse(waysRow.shown.value)
         assertEquals(OfflineMapsUiState.Loading, vm.detail.value)
         assertEquals(0 to 0, tilesResolutions to installedReads)
     }
