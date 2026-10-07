@@ -59,4 +59,11 @@ internal object PilgrimageTilesFixtures {
 
     fun stages(count: Int, routeId: String = "camino-frances"): List<Way> =
         (0 until count).map { stage(it, count = count, routeId = routeId, lonOffset = it.toDouble() * 0.04) }
+
+    /** [stage] as the tiles manager takes it (spec D C1 §11's test adaptation). */
+    fun tileStage(index: Int, count: Int = 3, routeId: String = "camino-frances", lonOffset: Double = 0.0): TileStage =
+        PilgrimageTilesCorridor.stage(stage(index, count, routeId, lonOffset))
+
+    fun tileStages(count: Int, routeId: String = "camino-frances"): List<TileStage> =
+        stages(count, routeId).map(PilgrimageTilesCorridor::stage)
 }
