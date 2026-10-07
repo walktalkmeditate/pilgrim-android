@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.io.File
 import javax.inject.Inject
+import javax.inject.Provider
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToLong
@@ -52,6 +53,8 @@ import org.walktalkmeditate.pilgrim.data.honor.dismissedAt
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageTilesCorridor
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageTilesManager
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
@@ -262,6 +265,10 @@ class HonorWalkViewModel internal constructor(
     private val ioDispatcher: CoroutineDispatcher,
     /** iOS's walk duration tick, the companion's and the player clock's read cadence. */
     private val tickMillis: Long,
+    /** Resolved only by "the day" on a stage's Way (spec D C4 §5). */
+    private val tiles: Provider<PilgrimageTilesManager>,
+    /** The tiles manager's thread, where its main-only readers run: the main thread in production. */
+    private val tilesDispatcher: CoroutineDispatcher,
     private val loadWaveform: suspend (File) -> FloatArray? = ::cardWaveform,
     private val stageHandoff: HonorStageHandoff = HonorStageHandoff(),
 ) : ViewModel() {
@@ -280,6 +287,7 @@ class HonorWalkViewModel internal constructor(
         releaseFlags: ReleaseFlags,
         clock: Clock,
         stageHandoff: HonorStageHandoff,
+        tiles: Provider<PilgrimageTilesManager>,
     ) : this(
         controller, honorDao, repository, wayStore, ownWalkWays, mediaFiles, replies,
         headings = heading::headings,
@@ -288,6 +296,8 @@ class HonorWalkViewModel internal constructor(
         clock = clock,
         ioDispatcher = Dispatchers.IO,
         tickMillis = COMPANION_TICK_MILLIS,
+        tiles = tiles,
+        tilesDispatcher = Dispatchers.Main.immediate,
         stageHandoff = stageHandoff,
     )
 
@@ -465,6 +475,57 @@ class HonorWalkViewModel internal constructor(
             } ?: return@launch
             previewState.value = withContext(ioDispatcher) {
                 HonorWalkUiState(way, HonorWayLine.of(way), wayPins(way, heardVoiceIds = emptySet()), session = null)
+            }
+        }
+    }
+
+    private val _stageDayMapsSaved = MutableStateFlow<Boolean?>(null)
+
+    /**
+     * Whether the stage's maps are saved, for "the day"'s line (spec D C4
+     * §2.3): read once per opening, never again while the sheet is up, as
+     * iOS's line is computed at the tap. Null while the read is pending and
+     * past the store's wait, both of which draw no line (owner decision 3).
+     */
+    val stageDayMapsSaved: StateFlow<Boolean?> = _stageDayMapsSaved.asStateFlow()
+
+    /** Whether this opening of "the day" has had its read; a model rebuilt after process death hasn't. */
+    private var stageDayRead = false
+    private var stageDayJob: Job? = null
+
+    /**
+     * "the day"'s tap, before the sheet's hand-off, as iOS computes the line
+     * at the tap (`ActiveWalkView.swift:297-304@7c200bf`): a fresh opening,
+     * so a warm store's answer is in by the time the sheet rises.
+     */
+    fun openStageDay() {
+        stageDayRead = false
+        readStageDayMaps()
+    }
+
+    /**
+     * The sheet on screen. One restored open after process death has had no
+     * read for its opening, so it starts one (C4 A5); any other already has.
+     */
+    fun stageDayShown() {
+        if (!stageDayRead) readStageDayMaps()
+    }
+
+    /**
+     * The walk's own Way, the overview's hand-off before Start and the
+     * session's copy after, as iOS reads `viewModel.way`. The sheet never
+     * waits on this (R16).
+     */
+    private fun readStageDayMaps() {
+        stageDayJob?.cancel()
+        _stageDayMapsSaved.value = null
+        val way = state.value?.way?.takeIf { it.stage != null } ?: return
+        stageDayRead = true
+        stageDayJob = viewModelScope.launch {
+            val stage = withContext(ioDispatcher) { PilgrimageTilesCorridor.stage(way) }
+            _stageDayMapsSaved.value = withContext(tilesDispatcher) {
+                val manager = tiles.get()
+                if (manager.awaitStore()) manager.isStageSaved(stage) else null
             }
         }
     }

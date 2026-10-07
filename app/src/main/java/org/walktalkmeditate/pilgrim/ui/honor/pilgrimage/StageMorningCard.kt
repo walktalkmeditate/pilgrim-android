@@ -69,6 +69,16 @@ object StageMorningCardModel {
         val temperature = WalkFormat.temperature(snapshot.temperatureCelsius, units)
         return resources.getString(R.string.pilgrimage_morning_weather, condition, temperature)
     }
+
+    /**
+     * iOS `mapsLine(saved:)` (`StageMorningCard.swift:21-26@7c200bf`, spec D
+     * C4 §2.1): here, with the weather, rather than on the walk screen.
+     * "Saved" is the stage's own region, complete and on its current line;
+     * the style packs aren't asked, so a missing pack still reads saved (D4's
+     * companion, matched).
+     */
+    fun mapsLine(resources: Resources, saved: Boolean): String =
+        resources.getString(if (saved) R.string.pilgrimage_morning_maps_saved else R.string.pilgrimage_morning_maps_unsaved)
 }
 
 /**
@@ -90,8 +100,9 @@ enum class StageMorningCardAction(@StringRes val title: Int, @StringRes val labe
  * then runs [onAction]; a swipe down, Back or the scrim close it through
  * [onDismiss] and do nothing else.
  *
- * [mapsLine] is Stage 21-3's seam: every caller in Stage 21-2 passes null,
- * since there is no save for "save on wifi" to point at (P4 §9, A-8).
+ * [mapsLine] is [StageMorningCardModel.mapsLine] once the caller's store
+ * read has landed, and null while it is pending or past the store's wait,
+ * which draws nothing in its place (spec D C4 §2, owner decision 3).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

@@ -6,6 +6,9 @@ import android.content.Context
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -28,6 +31,7 @@ import java.time.Instant
 import java.util.Locale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -62,7 +66,10 @@ import org.walktalkmeditate.pilgrim.ui.walk.map.wayPins
  * forms, the button's face and label, and the two ways it opens: the
  * overview's Begin, where "walk" is what begins and a swipe down leaves
  * the overview as it was, and the walk's "the day", where "close" only
- * closes it and a stage that no longer loads shows nothing.
+ * closes it and a stage that no longer loads shows nothing. Then the maps
+ * line (offline-maps spec D C4 §2): iOS's line test from
+ * `PilgrimageMapsRowTests.swift`, its place after the weather, and "the
+ * day" asking for its read once its card is up.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class, qualifiers = "w400dp-h900dp")
@@ -84,6 +91,7 @@ class StageMorningCardTest {
         stage: WayStage = stage(),
         weather: WeatherSnapshot? = null,
         units: UnitSystem = UnitSystem.Metric,
+        mapsLine: String? = null,
         action: StageMorningCardAction = StageMorningCardAction.WALK,
         onAction: () -> Unit = {},
     ) = show {
@@ -91,7 +99,7 @@ class StageMorningCardTest {
             stage = stage,
             weather = weather,
             units = units,
-            mapsLine = null,
+            mapsLine = mapsLine,
             action = action,
             onAction = onAction,
         )
@@ -153,6 +161,59 @@ class StageMorningCardTest {
 
         composeRule.onAllNodesWithText("°", substring = true).assertCountEquals(0)
         composeRule.onAllNodesWithText("weather", substring = true, ignoreCase = true).assertCountEquals(0)
+    }
+
+    // ---- The maps line (offline-maps spec D C4 §2.1) ----------------------
+
+    // iOS `PilgrimageMapsRowTests.testTheMorningCardSaysWhetherTodayIsSaved`.
+    @Test
+    fun `the morning card says whether today is saved`() {
+        assertEquals("maps saved for today", StageMorningCardModel.mapsLine(resources, saved = true))
+        assertEquals("no offline maps for today \u2014 save on wifi", StageMorningCardModel.mapsLine(resources, saved = false))
+    }
+
+    @Test
+    fun `the maps line is the scroll's last line, after the weather, and the button stays under it`() {
+        showCard(weather = snapshot(WeatherCondition.CLEAR, 9.0), mapsLine = StageMorningCardModel.mapsLine(resources, saved = true))
+
+        val weather = composeRule.onNodeWithText("clear, 9°C").fetchSemanticsNode().boundsInRoot
+        val maps = composeRule.onNodeWithText("maps saved for today").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val button = composeRule.onNodeWithContentDescription("Begin walking this stage").fetchSemanticsNode().boundsInRoot
+        assertTrue("after the weather line", maps.top >= weather.bottom)
+        assertTrue("above the pinned button", maps.bottom <= button.top)
+    }
+
+    @Test
+    fun `a stage's warnings and no weather still put the maps line last`() {
+        showCard(weather = null, mapsLine = StageMorningCardModel.mapsLine(resources, saved = false))
+
+        val warning = composeRule.onNodeWithText("The Napoleon Route closes in winter.").fetchSemanticsNode().boundsInRoot
+        val maps = composeRule.onNodeWithText("no offline maps for today — save on wifi").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue(maps.top >= warning.bottom)
+    }
+
+    @Test
+    fun `no maps line draws nothing in its place`() {
+        showCard(mapsLine = null)
+
+        composeRule.onAllNodesWithText("maps", substring = true).assertCountEquals(0)
+    }
+
+    @Test
+    fun `the overview's card reads the overview's saved flag`() {
+        show { StageOverviewCard(overview = stageOverview().copy(mapsSaved = false)) }
+        composeRule.onNodeWithContentDescription("Walk this stage").performClick()
+
+        composeRule.onNodeWithText("no offline maps for today — save on wifi").assertIsDisplayed()
+    }
+
+    @Test
+    fun `the overview's card has no maps line while its read is pending`() {
+        show { StageOverviewCard(overview = stageOverview().copy(mapsSaved = null)) }
+        composeRule.onNodeWithContentDescription("Walk this stage").performClick()
+
+        composeRule.onNodeWithText("Initiation").assertIsDisplayed()
+        composeRule.onAllNodesWithText("maps", substring = true).assertCountEquals(0)
     }
 
     // ---- The button (P4 §7.2, correction 13) -----------------------------
@@ -286,12 +347,15 @@ class StageMorningCardTest {
                 honor = walkScreen(stageWay()),
                 weather = snapshot(WeatherCondition.OVERCAST, 7.0),
                 units = UnitSystem.Metric,
+                mapsLine = "maps saved for today",
+                onShown = {},
                 onClose = { closes++ },
             )
         }
 
         composeRule.onNodeWithText("Initiation").assertIsDisplayed()
         composeRule.onNodeWithText("overcast, 7°C").assertIsDisplayed()
+        composeRule.onNodeWithText("maps saved for today").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Close the day's words").performClick()
         composeRule.waitForIdle()
 
@@ -306,6 +370,8 @@ class StageMorningCardTest {
                 honor = walkScreen(stageWay().copy(stage = null)),
                 weather = null,
                 units = UnitSystem.Metric,
+                mapsLine = null,
+                onShown = {},
                 onClose = { closes++ },
             )
         }
@@ -318,11 +384,63 @@ class StageMorningCardTest {
     @Test
     fun `the day restored before its Way has loaded shows nothing yet and stays open`() {
         var closed = false
-        show { StageDaySheet(honor = null, weather = null, units = UnitSystem.Metric, onClose = { closed = true }) }
+        var shown = 0
+        show {
+            StageDaySheet(
+                honor = null,
+                weather = null,
+                units = UnitSystem.Metric,
+                mapsLine = null,
+                onShown = { shown++ },
+                onClose = { closed = true },
+            )
+        }
         composeRule.waitForIdle()
 
         assertFalse(closed)
         composeRule.onAllNodesWithText("Initiation").assertCountEquals(0)
+        assertEquals("no card on screen asks for no read", 0, shown)
+    }
+
+    // Spec D C4 §2.3, A5: a sheet restored open had no tap, so it asks for its read once its card is up.
+    @Test
+    fun `the day says it is on screen once its card shows, and once only, its Way landing after a restore included`() {
+        var shown = 0
+        var honor by mutableStateOf<HonorWalkUiState?>(null)
+        show {
+            StageDaySheet(
+                honor = honor,
+                weather = null,
+                units = UnitSystem.Metric,
+                mapsLine = null,
+                onShown = { shown++ },
+                onClose = {},
+            )
+        }
+        composeRule.waitForIdle()
+        assertEquals(0, shown)
+
+        honor = walkScreen(stageWay())
+        composeRule.waitForIdle()
+        honor = walkScreen(stageWay().copy(title = "the session's copy"))
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("Initiation").assertIsDisplayed()
+        assertEquals(1, shown)
+    }
+
+    @Test
+    fun `the day's maps line is the one it is given, and none draws nothing`() {
+        var line by mutableStateOf<String?>(null)
+        show {
+            StageDaySheet(honor = walkScreen(stageWay()), weather = null, units = UnitSystem.Metric, mapsLine = line, onShown = {}, onClose = {})
+        }
+        composeRule.onNodeWithText("Initiation").assertIsDisplayed()
+        composeRule.onAllNodesWithText("maps", substring = true).assertCountEquals(0)
+
+        line = "no offline maps for today — save on wifi"
+
+        composeRule.onNodeWithText("no offline maps for today — save on wifi").assertIsDisplayed()
     }
 
     @Composable

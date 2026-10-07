@@ -10,6 +10,9 @@ import java.io.File
 import java.time.Instant
 import java.time.ZoneId
 import java.util.Locale
+import java.util.concurrent.CopyOnWriteArrayList
+import javax.inject.Provider
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -23,6 +26,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -61,6 +66,12 @@ import org.walktalkmeditate.pilgrim.data.honor.dismissedAt
 import org.walktalkmeditate.pilgrim.data.honor.HonorVoiceEnd
 import org.walktalkmeditate.pilgrim.data.honor.HonorVoiceState
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.FakeTileRegionLoader
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.FakeWalkSignals
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.InMemoryTilesCalibration
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageTilesCorridor
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageTilesManager
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.recordingHandler
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 import org.walktalkmeditate.pilgrim.domain.Clock
@@ -98,6 +109,7 @@ import org.walktalkmeditate.pilgrim.ui.honor.HonorArrivalCopy
 import org.walktalkmeditate.pilgrim.ui.honor.HonorArrivalSummary
 import org.walktalkmeditate.pilgrim.ui.honor.WayRelation
 import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.StageFormat
+import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.StageMorningCardModel
 import org.walktalkmeditate.pilgrim.ui.walk.map.CameraReportThrottle
 import org.walktalkmeditate.pilgrim.ui.walk.map.WayGlyph
 import org.walktalkmeditate.pilgrim.ui.walk.map.WayMarkPin
@@ -113,7 +125,10 @@ import org.walktalkmeditate.pilgrim.walk.honor.HonorMediaFiles
 /**
  * The walk screen's Honor state (parity spec E §1–§6): the Way before
  * Start, the rebuild from Room after a UI restart (AE1), the companion's
- * clock and cadence, pin taps, and the fly-to.
+ * clock and cadence, pin taps, and the fly-to. And "the day"'s maps line
+ * (offline-maps spec D C4 §2.3): read at the tap, once per opening, by a
+ * sheet restored open, through the store's wait and past it, over C2's
+ * fake loader on the test's dispatcher.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -129,6 +144,11 @@ class HonorWalkViewModelTest {
     private lateinit var repository: WalkRepository
     private lateinit var store: WayStore
     private val viewModels = mutableListOf<HonorWalkViewModel>()
+    private val tilesEscaped = CopyOnWriteArrayList<Throwable>()
+    private val tilesScope = CoroutineScope(SupervisorJob() + dispatcher + recordingHandler(tilesEscaped))
+    private val tilesLoader = FakeTileRegionLoader()
+    private val tiles = PilgrimageTilesManager(tilesLoader, InMemoryTilesCalibration(), FakeWalkSignals(), dispatcher, tilesScope)
+    private var tilesResolutions = 0
 
     @Before
     fun setUp() {
@@ -159,10 +179,12 @@ class HonorWalkViewModelTest {
         runBlocking {
             withTimeout(10_000L) { viewModels.forEach { it.viewModelScope.coroutineContext[Job]?.cancelAndJoin() } }
         }
+        tilesScope.cancel()
         db.close()
         storeDirectory.deleteRecursively()
         filesRoot.deleteRecursively()
         Dispatchers.resetMain()
+        assertTrue("escaped the tiles manager's posted work: $tilesEscaped", tilesEscaped.isEmpty())
     }
 
     // ---- Before Start ---------------------------------------------------
@@ -416,6 +438,121 @@ class HonorWalkViewModelTest {
         val drawn = vm.state.awaitValue { it?.session != null }!!
 
         assertEquals("the long way" to route, drawn.way.title to drawn.way.route)
+    }
+
+    // ---- "the day"'s maps line (offline-maps spec D C4 §2.3) -----------------
+
+    private fun stageSavedInTheStore() {
+        tilesLoader.seed(HonorHarness.STAGE_ID, PilgrimageTilesCorridor.stage(HonorHarness.stage()).corridorHash)
+    }
+
+    /** The pre-walk screen on the harness's stage, as its overview's Begin opens it. */
+    private suspend fun TestScope.stageOnScreen(): HonorWalkViewModel {
+        store.save(HonorHarness.stage())
+        val vm = viewModel()
+        backgroundScope.launch { vm.state.collect {} }
+        vm.showWay(HonorWayChoice.Stored(HonorHarness.STAGE_ID))
+        vm.state.awaitValue { it != null }
+        return vm
+    }
+
+    private fun line(saved: Boolean?): String? = saved?.let { StageMorningCardModel.mapsLine(context.resources, it) }
+
+    @Test
+    fun `the day reads its stage's maps at the tap, before its sheet is up`() = runTest(dispatcher) {
+        stageSavedInTheStore()
+        tilesLoader.releaseRegions()
+        val vm = stageOnScreen()
+        assertNull(vm.stageDayMapsSaved.value)
+        assertEquals("nothing resolved before the tap", 0, tilesResolutions)
+
+        vm.openStageDay()
+        runCurrent()
+
+        assertEquals("maps saved for today", line(vm.stageDayMapsSaved.value))
+    }
+
+    // iOS computes the line at the tap and never again while the sheet is up.
+    @Test
+    fun `the day's line is read once per opening, never while it is up, and afresh at the next tap`() = runTest(dispatcher) {
+        tilesLoader.releaseRegions()
+        val vm = stageOnScreen()
+        vm.openStageDay()
+        runCurrent()
+        assertEquals("no offline maps for today — save on wifi", line(vm.stageDayMapsSaved.value))
+
+        stageSavedInTheStore()
+        tilesLoader.releaseRegions()
+        vm.stageDayShown()
+        runCurrent()
+        assertEquals("a save landing while the sheet is up changes nothing", false, vm.stageDayMapsSaved.value)
+
+        vm.openStageDay()
+        runCurrent()
+        assertEquals(true, vm.stageDayMapsSaved.value)
+    }
+
+    // C4 A5: a model rebuilt after process death, its sheet restored open with no tap.
+    @Test
+    fun `a sheet restored open reads its line when it shows`() = runTest(dispatcher) {
+        stageSavedInTheStore()
+        tilesLoader.releaseRegions()
+        val vm = stageOnScreen()
+
+        vm.stageDayShown()
+        runCurrent()
+
+        assertEquals("maps saved for today", line(vm.stageDayMapsSaved.value))
+    }
+
+    // The cold cache: a fresh UI process's store hasn't answered yet; the sheet opens at once and the line fills in.
+    @Test
+    fun `after a UI restart the day waits for the store's first answer, then reads maps saved for today`() = runTest(dispatcher) {
+        stageSavedInTheStore()
+        val vm = stageOnScreen()
+
+        vm.openStageDay()
+        advanceTimeBy(1_000)
+        assertNull("pending, so no line yet", vm.stageDayMapsSaved.value)
+        tilesLoader.releaseRegions()
+        runCurrent()
+
+        assertEquals("maps saved for today", line(vm.stageDayMapsSaved.value))
+    }
+
+    // Owner decision 3: no line rather than "no offline maps", and the opening never corrects, as iOS's doesn't.
+    @Test
+    fun `past the store's wait the day has no maps line for that opening`() = runTest(dispatcher) {
+        stageSavedInTheStore()
+        val vm = stageOnScreen()
+
+        vm.openStageDay()
+        advanceTimeBy(PilgrimageTilesManager.STORE_WAIT_MILLIS + 1)
+        assertNull(vm.stageDayMapsSaved.value)
+        tilesLoader.releaseRegions()
+        vm.stageDayShown()
+        runCurrent()
+
+        assertNull("read once per opening", vm.stageDayMapsSaved.value)
+    }
+
+    @Test
+    fun `the day on a Way that isn't a stage, or with the flag off, never resolves the tiles manager`() = runTest(dispatcher) {
+        val sourceId = insertSourceWalk()
+        val own = viewModel()
+        backgroundScope.launch { own.state.collect {} }
+        own.showWay(HonorWayChoice.OwnWalk(sourceId))
+        own.state.awaitValue { it != null }
+        val off = viewModel(honorEnabled = false)
+
+        own.openStageDay()
+        off.openStageDay()
+        off.stageDayShown()
+        runCurrent()
+
+        assertEquals(0, tilesResolutions)
+        assertNull(own.stageDayMapsSaved.value)
+        assertNull(off.stageDayMapsSaved.value)
     }
 
     // ---- Pin taps and the fly-to -----------------------------------------
@@ -1763,6 +1900,8 @@ class HonorWalkViewModelTest {
         clock = clock,
         ioDispatcher = dispatcher,
         tickMillis = 1_000L,
+        tiles = Provider { tiles.also { tilesResolutions++ } },
+        tilesDispatcher = dispatcher,
         loadWaveform = { FloatArray(150) { 0.5f } },
         stageHandoff = stageHandoff,
     ).also { viewModels += it }

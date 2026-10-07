@@ -59,6 +59,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -100,6 +101,7 @@ import org.walktalkmeditate.pilgrim.ui.honor.StageReplyActions
 import org.walktalkmeditate.pilgrim.ui.honor.WayPlaceCardActions
 import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.StageMorningCard
 import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.StageMorningCardAction
+import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.StageMorningCardModel
 import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupCancelReason
 import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupStage
 import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupViewModel
@@ -1103,16 +1105,22 @@ fun ActiveWalkScreen(
                 stageDay = honor?.way?.stage,
                 onOpenStageDay = {
                     showOptions = false
+                    // The maps line's read starts at the tap, as iOS's does (spec D C4 §2.3).
+                    honorWalkViewModel.openStageDay()
                     sheetHandoff.open { showStageDay = true }
                 },
             )
         }
         if (showStageDay) {
             val stageDayWeather by viewModel.stageDayWeather.collectAsStateWithLifecycle()
+            val stageDayMapsSaved by honorWalkViewModel.stageDayMapsSaved.collectAsStateWithLifecycle()
+            val resources = LocalResources.current
             StageDaySheet(
                 honor = honor,
                 weather = stageDayWeather,
                 units = distanceUnits,
+                mapsLine = stageDayMapsSaved?.let { StageMorningCardModel.mapsLine(resources, it) },
+                onShown = honorWalkViewModel::stageDayShown,
                 onClose = { showStageDay = false },
             )
         }
@@ -1430,18 +1438,22 @@ fun ActiveWalkScreen(
 private data class ReplyRequest(val walkId: Long, val wayId: String, val momentId: String)
 
 /**
- * "the day" (`ActiveWalkView.swift:312-320@7c200bf`, pilgrimage-stage spec
+ * "the day" (`ActiveWalkView.swift:310-320@7c200bf`, pilgrimage-stage spec
  * P5 §10, gap 12): the morning card over the walk screen, with the Way's
- * own stage, the walk's [weather], no maps line, and "close", which only
- * closes it. As iOS's `if let stage = viewModel.way?.stage`, a Way that
- * loads with no stage block shows nothing and closes; one still loading
- * after a restore shows nothing yet.
+ * own stage, the walk's [weather], its [mapsLine] once read, and "close",
+ * which only closes it. As iOS's `if let stage = viewModel.way?.stage`, a
+ * Way that loads with no stage block shows nothing and closes; one still
+ * loading after a restore shows nothing yet. [onShown] runs once the card
+ * is on screen, so a sheet restored open, which had no tap, gets its read
+ * (spec D C4 §2.3, A5).
  */
 @Composable
 internal fun StageDaySheet(
     honor: HonorWalkUiState?,
     weather: WeatherSnapshot?,
     units: UnitSystem,
+    mapsLine: String?,
+    onShown: () -> Unit,
     onClose: () -> Unit,
 ) {
     val stage = honor?.way?.stage
@@ -1451,11 +1463,13 @@ internal fun StageDaySheet(
         if (wayLoaded && stage == null) close()
     }
     stage ?: return
+    val shown by rememberUpdatedState(onShown)
+    LaunchedEffect(Unit) { shown() }
     StageMorningCard(
         stage = stage,
         weather = weather,
         units = units,
-        mapsLine = null,
+        mapsLine = mapsLine,
         action = StageMorningCardAction.CLOSE,
         onAction = onClose,
         onDismiss = onClose,

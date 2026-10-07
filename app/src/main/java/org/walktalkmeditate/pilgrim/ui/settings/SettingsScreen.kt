@@ -50,6 +50,7 @@ import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.settings.about.PilgrimLogo
 import org.walktalkmeditate.pilgrim.ui.settings.connect.ConnectCard
 import org.walktalkmeditate.pilgrim.ui.settings.data.DataCard
+import org.walktalkmeditate.pilgrim.ui.settings.data.MapsRowViewModel
 import org.walktalkmeditate.pilgrim.ui.settings.data.WaysRowViewModel
 import org.walktalkmeditate.pilgrim.ui.settings.permissions.PermissionsCard
 import org.walktalkmeditate.pilgrim.ui.settings.practice.PracticeCard
@@ -80,11 +81,17 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
     modelDownloadViewModel: ModelDownloadViewModel = hiltViewModel(),
     waysRowViewModel: WaysRowViewModel = hiltViewModel(),
+    mapsRowViewModel: MapsRowViewModel = hiltViewModel(),
 ) {
     val showsWays by waysRowViewModel.shown.collectAsStateWithLifecycle()
     val waysTotals by waysRowViewModel.totals.collectAsStateWithLifecycle()
+    val showsMaps by mapsRowViewModel.shown.collectAsStateWithLifecycle()
+    val mapsDetail by mapsRowViewModel.detail.collectAsStateWithLifecycle()
     // iOS counts on each appearance of the card; returning from the list re-enters here.
-    LaunchedEffect(Unit) { waysRowViewModel.refresh() }
+    LaunchedEffect(Unit) {
+        waysRowViewModel.refresh()
+        mapsRowViewModel.refresh()
+    }
     val stats by viewModel.stats.collectAsStateWithLifecycle()
     val routeCatalog by viewModel.routeCatalog.collectAsStateWithLifecycle()
     val optIn by viewModel.optIn.collectAsStateWithLifecycle()
@@ -229,7 +236,13 @@ fun SettingsScreen(
                 PermissionsCard(onAction = onAction)
             }
             item {
-                DataCard(onAction = onAction, showsWays = showsWays, waysTotals = waysTotals)
+                DataCard(
+                    onAction = onAction,
+                    showsWays = showsWays,
+                    waysTotals = waysTotals,
+                    showsMaps = showsMaps,
+                    mapsDetail = mapsDetail,
+                )
             }
             item {
                 ConnectCard(onAction = onAction)

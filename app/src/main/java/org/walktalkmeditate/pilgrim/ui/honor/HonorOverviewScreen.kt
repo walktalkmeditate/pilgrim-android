@@ -58,6 +58,7 @@ import org.walktalkmeditate.pilgrim.honor.HonorImportState
 import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.StageMorningCard
 import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.StageMorningCardAction
+import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.StageMorningCardModel
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimCornerRadius
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -341,7 +342,7 @@ internal fun HonorOverviewCard(
             stage = stage,
             weather = overview.todayWeather,
             units = units,
-            mapsLine = null,
+            mapsLine = overview.mapsSaved?.let { StageMorningCardModel.mapsLine(resources, it) },
             action = StageMorningCardAction.WALK,
             onAction = {
                 showMorningCard = false
