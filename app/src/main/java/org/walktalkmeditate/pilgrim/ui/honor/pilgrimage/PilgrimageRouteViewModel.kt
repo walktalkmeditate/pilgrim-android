@@ -338,8 +338,8 @@ class PilgrimageRouteViewModel internal constructor(
      */
     private var stagesCache: TileStages? = null
 
-    /** On [tilesDispatcher]: the store's first answer waited for, once per page, before its first status read. */
-    private var storeAwaited = false
+    /** On [tilesDispatcher]: whether the store has answered one of the page's reloads; until it has, each reload's status read waits for it. */
+    private var storeAnswered = false
 
     /** On [tilesDispatcher]: whether the page follows the store's regions, from its first installed reload. */
     private var followingRegions = false
@@ -567,9 +567,12 @@ class PilgrimageRouteViewModel internal constructor(
      * iOS's reload of `stageWays`, `mapsEstimateBytes` and `mapsStatus`,
      * the estimate and the stage values off the main thread (C1 §12). The
      * pack count is the release's; bytes per pack is read every time, since
-     * a save calibrates it without a release. The first status waits for
-     * the store's first answer; past the bound the cache is read anyway,
-     * iOS's own cold face, which regions-changed then corrects.
+     * a save calibrates it without a release. The status waits for the
+     * store's first answer, bounded, until a reload has it. A failed answer,
+     * or none by the bound, reads the cache anyway, iOS's own cold face,
+     * which regions-changed corrects; the next reload asks the store again,
+     * as the manager allows after a failure, since nothing may be left in
+     * flight to signal.
      */
     private suspend fun deriveMapsRow(manager: PilgrimageTilesManager, installed: PilgrimagePackageManager.Installed) {
         followRegions(manager)
@@ -579,10 +582,7 @@ class PilgrimageRouteViewModel internal constructor(
             return
         }
         val estimate = stages.packCount.toLong() * manager.bytesPerPack(installed.routeId)
-        if (!storeAwaited) {
-            manager.awaitStore()
-            storeAwaited = true
-        }
+        if (!storeAnswered) storeAnswered = manager.awaitStore()
         _mapsRow.value = PilgrimageMapsRowState(
             routeId = installed.routeId,
             release = installed.release,

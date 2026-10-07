@@ -83,8 +83,8 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
  * its page, the failure lines, what a save holds, the stage values off the
  * main thread, the flag, another route's page held by a save, a stage
  * restored at the same release, bytes per pack read on every reload, the
- * held row refreshed mid-download, the idle trigger, and a store that
- * can't open. Robolectric for the strings; waits are
+ * held row refreshed mid-download, the idle trigger, a store that can't
+ * open, and a failed answer asked again. Robolectric for the strings; waits are
  * wall-clock, as the manager runs on real threads.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -1140,6 +1140,41 @@ class PilgrimageRouteViewModelTest {
         val row = mapsRowOf(vm)
         assertEquals(PilgrimageTilesManager.Status.None, row.status)
         assertEquals("Save maps for the way · ~16 MB", rowText(row))
+    }
+
+    /**
+     * After a failed first answer nothing may be left in flight to signal
+     * regions-changed, and the manager asks the store afresh, so the page's
+     * next reload (here a refused install's) asks again and reads what is on
+     * disk, rather than drawing the cold face until the page is reopened.
+     */
+    @Test
+    fun `after a failed first answer the next reload asks the store again and reads the saved status`() {
+        world.install()
+        File(world.harness.waysDir, WayStore.stageWayId(ROUTE_ID, 1)).deleteRecursively()
+        world.holdCatalog()
+        val vm = world.routeViewModel()
+        settled(vm)
+        waitUntil("the row asks the store") { world.onTiles { world.tilesLoader.firstAnswerRequests } == 1 }
+        world.onTiles { world.tilesLoader.failRegions() }
+        val cold = mapsRowOf(vm)
+        assertEquals(PilgrimageTilesManager.Status.None, cold.status)
+
+        vm.open(1)
+        waitUntil("Download this route first?") { vm.alert.value == PilgrimageRouteAlert.DOWNLOAD_FIRST }
+        world.harness.signals.screenUp = true
+        vm.confirmDownloadFirst()
+        waitUntil("the refused install's reload asks the store again") {
+            world.onTiles { world.tilesLoader.firstAnswerRequests } == 2
+        }
+        world.onTiles {
+            world.tilesLoader.seed(cold.stages[0].id, cold.stages[0].corridorHash)
+            world.tilesLoader.seedStylePacks()
+            world.tilesLoader.releaseRegions()
+        }
+
+        val saved = mapsRowOf(vm, "the saved status") { it.status is PilgrimageTilesManager.Status.Saved }
+        assertEquals(PilgrimageTilesManager.Status.Saved(bytes = 100_000), saved.status)
     }
 
     // ---- Helpers ----
