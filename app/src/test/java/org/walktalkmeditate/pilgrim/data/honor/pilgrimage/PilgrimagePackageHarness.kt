@@ -332,7 +332,20 @@ internal class FakeWalkSignals : PilgrimageWalkSignals {
         return screenUp
     }
 
-    override suspend fun walkActive(): Boolean = active
+    /** Every walk-row read, counted from 1. */
+    val activeReads = AtomicInteger()
+
+    /**
+     * Runs inside each walk-row read, given its number, before the answer:
+     * a test suspends it to hold a Room read in flight, or throws from it
+     * as a failed read would.
+     */
+    @Volatile var onActiveRead: suspend (read: Int) -> Unit = {}
+
+    override suspend fun walkActive(): Boolean {
+        onActiveRead(activeReads.incrementAndGet())
+        return active
+    }
 
     /** When set, the live-session read throws it, as a failed Room read would. */
     @Volatile var liveIdsFailure: Exception? = null
