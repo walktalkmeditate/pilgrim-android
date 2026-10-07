@@ -118,6 +118,12 @@ enum class TileStoreRead { READ, FAILED }
  * 4. [removeRegion] is fire-and-forget: it drops the id from the cache at
  *    once, signals [TileStoreChange.REGIONS], and never fails to the caller.
  * 5. [hasStylePack] is a cache read of complete packs only.
+ * 6. Every completion (a load's, [refreshRegions]', [firstAnswer]'s) is the
+ *    callback's last step, after the loader's own bookkeeping: the cache
+ *    written, the signal sent, any generation moved. On
+ *    `Dispatchers.Main.immediate` a completion resumes its waiter inline,
+ *    so the save reads the cache, and calls back into the loader, before
+ *    the completion returns.
  */
 interface TileRegionLoading {
 
@@ -149,8 +155,11 @@ interface TileRegionLoading {
      * Calls back once with the store's first answer after the process
      * started, starting the store's first read if none has. A stale answer
      * doesn't count: while the first answer is pending, the loader reads
-     * again rather than drain on it. Once known, it answers at once, on
-     * every later call (spec D C3 §7).
+     * again rather than drain on it. [TileStoreRead.READ] is settled for
+     * the process and answered at once on every later call; a call after a
+     * [TileStoreRead.FAILED] answer starts a fresh read and answers on that,
+     * never replaying the failure (spec D C3 §7, re-askable by owner
+     * decision).
      */
     fun firstAnswer(completion: (TileStoreRead) -> Unit)
 }
