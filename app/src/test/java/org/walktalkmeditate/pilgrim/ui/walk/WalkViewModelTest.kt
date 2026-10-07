@@ -1375,7 +1375,10 @@ class WalkViewModelTest {
         runCurrent()
 
         assertNull("the in-memory snapshot is gone", restarted.activeWeather.value)
-        assertEquals(stubSnapshot, restarted.stageDayWeather.value)
+        // Awaited, not read: `first`'s cancelAndJoin above can resume this body
+        // on the thread that finished its last child, so the restarted VM's
+        // walk-row read may still be in flight when a bare `.value` is read.
+        assertEquals(stubSnapshot, restarted.stageDayWeather.first { it != null })
         restarted.viewModelScope.coroutineContext[Job]!!.cancelAndJoin()
     }
 
