@@ -15,26 +15,44 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.lifecycle.viewModelScope
+import java.util.concurrent.CopyOnWriteArrayList
+import javax.inject.Provider
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.FakeTileRegionLoader
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.FakeWalkSignals
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.InMemoryTilesCalibration
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageTilesManager
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.recordingHandler
 import org.walktalkmeditate.pilgrim.ui.settings.SettingsAction
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
 
 /**
  * Settings → Maps and the Data card's Maps row on screen (offline-maps spec
  * D C4 §3.1, §3.3): the row's place and its three details, the screen's
- * three states, and "Delete maps?" with iOS's words.
+ * three states, the screen leaving mid-walk, and "Delete maps?" with
+ * iOS's words.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
 class OfflineMapsScreenTest {
 
     @get:Rule val composeRule = createComposeRule()
+
+    @get:Rule val folder = TemporaryFolder()
 
     private val saved = OfflineMapsUiState.Saved("Camino de Santiago (Francés)", bytes = 26_100_000, savedStages = 12, totalStages = 33)
 
@@ -139,6 +157,38 @@ class OfflineMapsScreenTest {
         composeRule.onNodeWithText("Delete maps").performClick()
 
         assertEquals(1, deletes)
+    }
+
+    // Owner decision 6: the screen pops itself once a walk starts, so no Delete can blank a walk's basemap.
+    @Test
+    fun `the Maps screen leaves once a walk starts`() {
+        val shown = MutableStateFlow(true)
+        val tilesScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + recordingHandler(CopyOnWriteArrayList()))
+        val tiles = PilgrimageTilesManager(
+            FakeTileRegionLoader(), InMemoryTilesCalibration(), FakeWalkSignals(), Dispatchers.Main.immediate, tilesScope,
+        )
+        val nothingInstalled = InstalledMaps(
+            installed = { null },
+            wayStore = WayStore({ folder.root }, syncDirectory = { true }),
+            tiles = Provider { tiles },
+            ioDispatcher = Dispatchers.Main.immediate,
+            tilesDispatcher = Dispatchers.Main.immediate,
+        )
+        val vm = OfflineMapsViewModel(WaysAvailability(shown, shownAtFirst = true), nothingInstalled)
+        var backs = 0
+        try {
+            composeRule.setContent { PilgrimTheme { OfflineMapsScreen(onBack = { backs++ }, viewModel = vm) } }
+            composeRule.onNodeWithText("no maps saved").assertIsDisplayed()
+            assertEquals(0, backs)
+
+            shown.value = false
+            composeRule.waitForIdle()
+
+            assertEquals(1, backs)
+        } finally {
+            vm.viewModelScope.cancel()
+            tilesScope.cancel()
+        }
     }
 
     @Test

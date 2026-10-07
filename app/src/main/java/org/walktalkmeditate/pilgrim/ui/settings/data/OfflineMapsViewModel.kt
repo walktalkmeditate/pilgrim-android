@@ -99,10 +99,11 @@ object OfflineMapsModel {
  * are built off the main thread once per installed release, and each read
  * asks the manager once.
  *
- * Each holder collects [reads] once; its first read waits for the store's
- * first answer, bounded, so neither surface opens on "none saved" right
- * after launch (C4 correction 18). Past the bound it reads the cache,
- * iOS's cold face, which the store's regions answer then corrects.
+ * Each holder collects [reads] once; its reads wait for the store's first
+ * answer, bounded, until one has it, so neither surface opens on "none
+ * saved" right after launch (C4 correction 18). A failed answer, or none
+ * by the bound, reads the cache, iOS's cold face, and the next read asks
+ * the store again, as the manager allows after a failure.
  */
 class InstalledMaps internal constructor(
     private val installed: suspend () -> PilgrimagePackageManager.Installed?,
@@ -124,8 +125,8 @@ class InstalledMaps internal constructor(
     /** One read's answer: [state] is `Empty` or `Saved`, and [routeId] the installed route Delete removes. */
     data class Read(val state: OfflineMapsUiState, val routeId: String?)
 
-    /** Touched by one read at a time ([reads]' `mapLatest` joins the one it replaces). */
-    private var storeAwaited = false
+    /** Whether the store has answered a read. Touched by one read at a time ([reads]' `mapLatest` joins the one it replaces). */
+    private var storeAnswered = false
     private var stagesCache: CachedStages? = null
 
     /**
@@ -153,10 +154,7 @@ class InstalledMaps internal constructor(
         val route = installedOrNone() ?: return Read(OfflineMapsUiState.Empty, routeId = null)
         val stages = stagesOf(route)
         val saved = withContext(tilesDispatcher) {
-            if (!storeAwaited) {
-                manager.awaitStore()
-                storeAwaited = true
-            }
+            if (!storeAnswered) storeAnswered = manager.awaitStore()
             OfflineMapsModel.load(route.route.name, route.routeId, stages, manager)
         }
         return Read(saved ?: OfflineMapsUiState.Empty, route.routeId)

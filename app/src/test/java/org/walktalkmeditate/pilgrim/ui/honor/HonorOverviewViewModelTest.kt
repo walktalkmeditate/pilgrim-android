@@ -1048,6 +1048,21 @@ class HonorOverviewViewModelTest {
         assertEquals("maps saved for today", line(ready(vm).mapsSaved))
     }
 
+    // U45's loader reads a store that can't open as empty and answers it FAILED: unknown, so no line, and no crash.
+    @Test
+    fun `a store that can't open leaves the card with no maps line`() = runTest(dispatcher) {
+        store.save(HonorHarness.stage())
+        tilesLoader.seed(HonorHarness.STAGE_ID, PilgrimageTilesCorridor.stage(HonorHarness.stage()).corridorHash)
+        tilesLoader.storeOpens = false
+        val vm = overview(savedStateHandle = stageArgs())
+        advanceTimeBy(1_000)
+        assertEquals("the line's read is waiting on the store", 1, tilesLoader.firstAnswerRequests)
+
+        tilesLoader.failRegions()
+
+        assertNull(ready(vm).mapsSaved)
+    }
+
     // iOS's `onReceive(regionsChanged)`: a save landing elsewhere, or a Delete, changes an open card's line.
     @Test
     fun `the line changes live on regions-changed, a save landing and a Delete`() = runTest(dispatcher) {

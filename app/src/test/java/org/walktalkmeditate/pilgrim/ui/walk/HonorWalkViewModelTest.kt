@@ -492,6 +492,24 @@ class HonorWalkViewModelTest {
         assertEquals(true, vm.stageDayMapsSaved.value)
     }
 
+    // Closed while the store hadn't answered, then opened again: the earlier opening's read is cancelled, so only one reads the store.
+    @Test
+    fun `a re-opened day's line is its own opening's read, the earlier one cancelled`() = runTest(dispatcher) {
+        stageSavedInTheStore()
+        val vm = stageOnScreen()
+        vm.openStageDay()
+        advanceTimeBy(1_000)
+        vm.openStageDay()
+        runCurrent()
+        val readsBefore = tilesLoader.regionsReadCount
+
+        tilesLoader.releaseRegions()
+        runCurrent()
+
+        assertEquals("maps saved for today", line(vm.stageDayMapsSaved.value))
+        assertEquals("one opening's read", 1, tilesLoader.regionsReadCount - readsBefore)
+    }
+
     // C4 A5: a model rebuilt after process death, its sheet restored open with no tap.
     @Test
     fun `a sheet restored open reads its line when it shows`() = runTest(dispatcher) {

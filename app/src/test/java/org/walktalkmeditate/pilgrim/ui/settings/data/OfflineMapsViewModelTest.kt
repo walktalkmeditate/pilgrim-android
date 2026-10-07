@@ -19,12 +19,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.TestScope
@@ -77,7 +75,8 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayStagePlace
  * built by U43's corridor from iOS's fixture lines), then the installed
  * read, Delete (asked first, cancelled, done, and stopping a save running
  * elsewhere), the wait for the store and past it, the row's availability
- * and its flag, and the screen leaving mid-walk.
+ * and its flag, the screen leaving mid-walk, a failed answer asked again,
+ * a store that can't open, and AE10's Update.
  *
  * The tiles manager runs over C2's fake loader. Its thread is a standard
  * test dispatcher on the test's scheduler, so its posted work (a Delete's
@@ -116,11 +115,24 @@ class OfflineMapsViewModelTest {
 
     @After
     fun tearDown() {
-        runBlocking { viewModels.forEach { it.viewModelScope.coroutineContext[Job]?.cancelAndJoin() } }
+        val outlived = cancelViewModels()
         tilesScope.cancel()
         scheduler.runCurrent()
         Dispatchers.resetMain()
+        assertTrue("ViewModel work outlived its cancel: $outlived", outlived.isEmpty())
         assertTrue("escaped the tiles manager's posted work: $tilesEscaped", tilesEscaped.isEmpty())
+    }
+
+    /**
+     * Cancelled, then the scheduler run, never joined: a read left waiting
+     * for the store resumes on the tiles thread, which only the scheduler
+     * runs, so a join would wait for it forever. Returns what still runs.
+     */
+    private fun cancelViewModels(): List<Job> {
+        val jobs = viewModels.mapNotNull { it.viewModelScope.coroutineContext[Job] }
+        jobs.forEach { it.cancel() }
+        scheduler.runCurrent()
+        return jobs.filterNot { it.isCompleted }
     }
 
     private fun maps() = InstalledMaps(
@@ -146,9 +158,10 @@ class OfflineMapsViewModelTest {
     /**
      * iOS's fixture (`OfflineMapsViewModelTests.swift:20-30`): [count] stages
      * of `camino-frances`, each a 0.01° line east along latitude 42 from
-     * 0.05° times its index.
+     * 0.05° times its index; a [redrawn] one's line starts 0.01° further east.
      */
-    private fun stageWay(index: Int, count: Int = 3): Way {
+    private fun stageWay(index: Int, count: Int = 3, redrawn: Boolean = false): Way {
+        val west = index * 0.05 + if (redrawn) 0.01 else 0.0
         val stage = WayStage(
             routeId = ROUTE_ID, index = index, count = count, name = "s", theme = "t", narrative = "n", closing = "c",
             warnings = emptyList(), distanceKm = 1.0, gainMeters = 0.0, hours = WayStageHours(min = 1.0, max = 1.0),
@@ -164,8 +177,8 @@ class OfflineMapsViewModelTest {
             tzIdentifier = null,
             expires = null,
             route = listOf(
-                WayPoint(lat = 42.0, lon = index * 0.05, alt = null, t = 0.0),
-                WayPoint(lat = 42.0, lon = index * 0.05 + 0.01, alt = null, t = 60.0),
+                WayPoint(lat = 42.0, lon = west, alt = null, t = 0.0),
+                WayPoint(lat = 42.0, lon = west + 0.01, alt = null, t = 60.0),
             ),
             totalDistanceMeters = 1000.0,
             theirActiveSeconds = 600.0,
@@ -179,12 +192,12 @@ class OfflineMapsViewModelTest {
 
     private fun stages(count: Int = 3): List<TileStage> = (0 until count).map { PilgrimageTilesCorridor.stage(stageWay(it, count)) }
 
-    /** The three stages on the phone under iOS's route name, as `installed()` reads them. */
-    private fun install(count: Int = 3) {
-        (0 until count).forEach { wayStore.save(stageWay(it, count)) }
+    /** [count] stages on the phone under iOS's route name at [release], as `installed()` reads them. */
+    private fun install(count: Int = 3, release: String = "v1.7.0", redrawn: Int? = null) {
+        (0 until count).forEach { wayStore.save(stageWay(it, count, redrawn = it == redrawn)) }
         installedRoute = PilgrimagePackageManager.Installed(
             routeId = ROUTE_ID,
-            release = "v1.7.0",
+            release = release,
             route = PilgrimageRoute(
                 id = ROUTE_ID, name = ROUTE_NAME, names = emptyMap(), country = "ES", region = "Europe", distanceKm = 3.0,
                 stageCount = count, tradition = "christian", summary = null, stages = emptyList(),
@@ -542,11 +555,15 @@ class OfflineMapsViewModelTest {
         assertEquals("a Delete's regions-changed", OfflineMapsUiState.Empty, vm.detail.value)
     }
 
+    // Outside runTest, whose last step runs the store's wait out: the read is still waiting at the teardown, which must cancel it without a join.
     @Test
-    fun `the row's detail is blank until its first read`() = runTest(dispatcher) {
+    fun `the row's detail is blank until its first read`() {
         install()
+        val vm = row()
+        vm.refresh()
+        scheduler.runCurrent()
 
-        assertEquals(OfflineMapsUiState.Loading, row().detail.value)
+        assertEquals(OfflineMapsUiState.Loading, vm.detail.value)
     }
 
     /** Owner decision 6 through the real availability: the flag on, no walk on, and no Honor step pending. */
@@ -596,7 +613,7 @@ class OfflineMapsViewModelTest {
             assertTrue(vm.shown.value)
             collector.cancel()
         } finally {
-            runBlocking { viewModels.forEach { it.viewModelScope.coroutineContext[Job]?.cancelAndJoin() } }
+            cancelViewModels()
             db.close()
         }
     }
@@ -614,6 +631,109 @@ class OfflineMapsViewModelTest {
         assertFalse(vm.shown.value)
         assertEquals(OfflineMapsUiState.Loading, vm.detail.value)
         assertEquals(0 to 0, tilesResolutions to installedReads)
+    }
+
+    // ---- A failed answer, and a store that can't open (C2.12 point 7, A-C3-11) ----
+
+    // The manager asks the store afresh after a failed answer, so a read that got one asks again.
+    @Test
+    fun `after a failed first answer the row reads none saved, and the next entry to Settings asks the store again`() = runTest(dispatcher) {
+        install()
+        val vm = row()
+        vm.refresh()
+        runCurrent()
+        loader.failRegions()
+        runCurrent()
+        assertEquals(OfflineMapsUiState.Empty, vm.detail.value)
+
+        vm.refresh()
+        runCurrent()
+        assertEquals("the store is asked again", 2, loader.firstAnswerRequests)
+        seedAllSaved()
+        loader.releaseRegions()
+        runCurrent()
+
+        assertEquals(saved(bytes = 300_000, savedStages = 3), vm.detail.value)
+    }
+
+    @Test
+    fun `after a failed first answer the screen reads no maps saved, and its next read asks the store again`() = runTest(dispatcher) {
+        install()
+        val vm = screen()
+        runCurrent()
+        loader.failRegions()
+        runCurrent()
+        assertEquals(OfflineMapsUiState.Empty, vm.state.value)
+
+        tiles.save(ROUTE_ID, stages())
+        runCurrent()
+        completePacks()
+        loader.completeNextRegion()
+        runCurrent()
+        assertEquals("a save's region landing asks the store again", 2, loader.firstAnswerRequests)
+        loader.releaseRegions()
+        runCurrent()
+
+        assertEquals(saved(bytes = 100_000, savedStages = 1), vm.state.value)
+        tiles.cancel()
+        runCurrent()
+    }
+
+    // U45's loader reads a store that can't open as empty, and answers it FAILED: iOS's cold face, never a crash.
+    @Test
+    fun `a store that can't open reads none saved on the row and no maps saved on the screen`() = runTest(dispatcher) {
+        install()
+        seedAllSaved()
+        loader.storeOpens = false
+        val row = row()
+        row.refresh()
+        val screen = screen()
+        runCurrent()
+
+        loader.failRegions()
+        runCurrent()
+        assertEquals(OfflineMapsUiState.Empty, row.detail.value)
+        assertEquals(OfflineMapsUiState.Empty, screen.state.value)
+        screen.onDeleteTapped()
+        assertFalse("nothing to delete", screen.confirmingDelete.value)
+
+        row.refresh()
+        runCurrent()
+        assertEquals("the next entry asks again", 2, loader.firstAnswerRequests)
+    }
+
+    // ---- AE10 on Settings (C4 §6) ----------------------------------------------------
+
+    /**
+     * Every stage of 33 saved, then an Update to 30 that redraws stage 12.
+     * The stage values are cached per installed (route, release), so the
+     * new release's 30 Ways are read: T is 30, and stage 12's region,
+     * complete under the old line's hash, no longer counts. The bytes cover
+     * every region with the prefix until the posted removals of 30–32 land.
+     */
+    @Test
+    fun `after an Update Settings reads the new release's stages, 29 of 30`() = runTest(dispatcher) {
+        install(count = 33)
+        seedAllSaved(count = 33)
+        loader.releaseRegions()
+        val row = row()
+        row.refresh()
+        val screen = screen()
+        runCurrent()
+        assertEquals(saved(bytes = 3_300_000, savedStages = 33, totalStages = 33), screen.state.value)
+
+        install(count = 30, release = "v1.8.0", redrawn = 12)
+        (30 until 33).forEach { wayStore.delete(WayStore.stageWayId(ROUTE_ID, it)) }
+        row.refresh()
+        runCurrent()
+        assertEquals("before the removals land", saved(bytes = 3_300_000, savedStages = 29, totalStages = 30), row.detail.value)
+        tiles.removeRegions(ROUTE_ID, atOrAbove = 30)
+        runCurrent()
+
+        val after = saved(bytes = 3_000_000, savedStages = 29, totalStages = 30)
+        assertEquals(after to after, screen.state.value to row.detail.value)
+        assertEquals("3 MB · 29 of 30 stages", OfflineMapsModel.savedLine(resources, after))
+        assertEquals("$ROUTE_NAME · 3 MB", OfflineMapsModel.rowDetail(resources, after))
     }
 
     private companion object {
