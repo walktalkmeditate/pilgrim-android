@@ -60,4 +60,7 @@ sealed interface SettingsAction {
 
     /** Opens Settings → Ways (iOS v2.0.0, Phase 21 U28), from the Data card. */
     data object OpenWays : SettingsAction
+
+    /** Opens Settings → Maps (iOS v2.0.0, Phase 21 U47), from the Data card; its route exists only with the flag on. */
+    data object OpenMaps : SettingsAction
 }

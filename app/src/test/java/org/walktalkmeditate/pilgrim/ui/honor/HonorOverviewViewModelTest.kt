@@ -12,6 +12,8 @@ import java.io.IOException
 import java.time.Instant
 import java.time.ZoneId
 import java.util.Locale
+import java.util.concurrent.CopyOnWriteArrayList
+import javax.inject.Provider
 import androidx.room.Room
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.resumeWithException
@@ -61,6 +63,12 @@ import org.walktalkmeditate.pilgrim.data.honor.WayMediaWork
 import org.walktalkmeditate.pilgrim.data.honor.WayError
 import org.walktalkmeditate.pilgrim.data.honor.WayImportException
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.FakeTileRegionLoader
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.FakeWalkSignals
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.InMemoryTilesCalibration
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageTilesCorridor
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageTilesManager
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.recordingHandler
 import org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
@@ -98,7 +106,11 @@ import org.walktalkmeditate.pilgrim.walk.honor.HonorHarness
  * The overview's Way, lines, framing inputs, toggle, and preview player
  * (parity spec F §8–§14), and a pilgrimage stage's branches: its stage
  * line, today's whole weather, and the once-ever offline note
- * (pilgrimage-stage spec P4 §6).
+ * (pilgrimage-stage spec P4 §6). Then a stage's maps flag for its morning
+ * card (offline-maps spec D C4 §2.2): saved and unsaved, AE10's redrawn
+ * stage, the wait for the store and past it, the live change on
+ * regions-changed, and no read for any other Way. The tiles manager runs
+ * over C2's fake loader on the test's dispatcher, virtual time and all.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -127,6 +139,11 @@ class HonorOverviewViewModelTest {
     )
     private val sharedWaveform = FloatArray(4) { 0.5f }
     private val viewModels = mutableListOf<HonorOverviewViewModel>()
+    private val tilesEscaped = CopyOnWriteArrayList<Throwable>()
+    private val tilesScope = CoroutineScope(SupervisorJob() + dispatcher + recordingHandler(tilesEscaped))
+    private val tilesLoader = FakeTileRegionLoader()
+    private val tiles = PilgrimageTilesManager(tilesLoader, InMemoryTilesCalibration(), FakeWalkSignals(), dispatcher, tilesScope)
+    private var tilesResolutions = 0
     private var sourceId = 0L
     private var recordingId = 0L
 
@@ -193,10 +210,12 @@ class HonorOverviewViewModelTest {
             withTimeout(10_000L) { viewModels.forEach { it.viewModelScope.coroutineContext[Job]?.cancelAndJoin() } }
         }
         importScope.cancel()
+        tilesScope.cancel()
         db.close()
         File(context.filesDir, "recordings").deleteRecursively()
         storeDirectory.deleteRecursively()
         Dispatchers.resetMain()
+        assertTrue("escaped the tiles manager's posted work: $tilesEscaped", tilesEscaped.isEmpty())
     }
 
     private fun overview(
@@ -221,6 +240,8 @@ class HonorOverviewViewModelTest {
         recordingFiles = VoiceRecordingFileSystem(context),
         waveformCache = WaveformCache(),
         ioDispatcher = dispatcher,
+        tiles = Provider { tiles.also { tilesResolutions++ } },
+        tilesDispatcher = dispatcher,
         stageHandoff = stageHandoff,
         connectivity = connectivity,
         loadSharedWaveform = { sharedWaveform },
@@ -936,6 +957,141 @@ class HonorOverviewViewModelTest {
             assertNotNull("the distance to the start", overview.distanceToStartMeters)
             assertEquals(today, overview.todayWeather)
         }
+
+    // ---- A stage's maps flag for its morning card (offline-maps spec D C4 §2.2) --
+
+    /** Stage 5 of the harness, its region saved complete on its own line, and the store answered. */
+    private fun withStageSaved() {
+        store.save(HonorHarness.stage())
+        tilesLoader.seed(HonorHarness.STAGE_ID, PilgrimageTilesCorridor.stage(HonorHarness.stage()).corridorHash)
+        tilesLoader.releaseRegions()
+    }
+
+    private fun line(saved: Boolean?): String? = saved?.let { StageMorningCardModel.mapsLine(resources, it) }
+
+    @Test
+    fun `a saved stage's card reads maps saved for today`() = runTest(dispatcher) {
+        withStageSaved()
+
+        val overview = ready(overview(savedStateHandle = stageArgs()))
+
+        assertEquals("maps saved for today", line(overview.mapsSaved))
+    }
+
+    @Test
+    fun `an unsaved stage's card reads no offline maps for today`() = runTest(dispatcher) {
+        store.save(HonorHarness.stage())
+        tilesLoader.releaseRegions()
+
+        val overview = ready(overview(savedStateHandle = stageArgs()))
+
+        assertEquals("no offline maps for today — save on wifi", line(overview.mapsSaved))
+    }
+
+    @Test
+    fun `an incomplete region is not saved`() = runTest(dispatcher) {
+        store.save(HonorHarness.stage())
+        tilesLoader.seed(HonorHarness.STAGE_ID, PilgrimageTilesCorridor.stage(HonorHarness.stage()).corridorHash, complete = false)
+        tilesLoader.releaseRegions()
+
+        assertEquals(false, ready(overview(savedStateHandle = stageArgs())).mapsSaved)
+    }
+
+    /**
+     * AE10 from the card (C4 §6): every stage saved, then an Update redraws
+     * stage 12. Its region is still complete, under the old line's hash,
+     * and the overview reads the new Way, so the card says it isn't saved.
+     */
+    @Test
+    fun `AE10's redrawn stage 12 reads no offline maps for today`() = runTest(dispatcher) {
+        val before = stageWay(index = 12)
+        val redrawn = before.copy(route = before.route.map { it.copy(lon = it.lon + 0.01) })
+        tilesLoader.seed(before.id, PilgrimageTilesCorridor.stage(before).corridorHash)
+        tilesLoader.seedStylePacks()
+        tilesLoader.releaseRegions()
+        store.save(redrawn)
+
+        val overview = ready(overview(savedStateHandle = SavedStateHandle(mapOf(HonorOverviewViewModel.ARG_WAY_ID to redrawn.id))))
+
+        assertEquals("no offline maps for today — save on wifi", line(overview.mapsSaved))
+    }
+
+    // C4 correction 13 and A3: absent while the first read waits, as after a UI restart, then the store's answer.
+    @Test
+    fun `a stage's line waits for the store's first answer, and is absent until then`() = runTest(dispatcher) {
+        store.save(HonorHarness.stage())
+        tilesLoader.seed(HonorHarness.STAGE_ID, PilgrimageTilesCorridor.stage(HonorHarness.stage()).corridorHash)
+        val vm = overview(savedStateHandle = stageArgs())
+        advanceTimeBy(1_000)
+
+        val pending = (vm.state.value as HonorOverviewUiState.Ready).overview
+        assertNull("no line while the store hasn't answered", pending.mapsSaved)
+        assertEquals(1, tilesLoader.firstAnswerRequests)
+
+        tilesLoader.releaseRegions()
+
+        assertEquals("maps saved for today", line(ready(vm).mapsSaved))
+    }
+
+    // Owner decision 3: past the bound, no line, never iOS's cold "no offline maps"; the store's regions answer then corrects it.
+    @Test
+    fun `past the store's wait the card has no maps line, and a later regions answer gives it one`() = runTest(dispatcher) {
+        store.save(HonorHarness.stage())
+        val vm = overview(savedStateHandle = stageArgs())
+        advanceTimeBy(PilgrimageTilesManager.STORE_WAIT_MILLIS + 1)
+
+        assertNull(ready(vm).mapsSaved)
+
+        tilesLoader.seed(HonorHarness.STAGE_ID, PilgrimageTilesCorridor.stage(HonorHarness.stage()).corridorHash)
+        tilesLoader.releaseRegions()
+
+        assertEquals("maps saved for today", line(ready(vm).mapsSaved))
+    }
+
+    // U45's loader reads a store that can't open as empty and answers it FAILED: unknown, so no line, and no crash.
+    @Test
+    fun `a store that can't open leaves the card with no maps line`() = runTest(dispatcher) {
+        store.save(HonorHarness.stage())
+        tilesLoader.seed(HonorHarness.STAGE_ID, PilgrimageTilesCorridor.stage(HonorHarness.stage()).corridorHash)
+        tilesLoader.storeOpens = false
+        val vm = overview(savedStateHandle = stageArgs())
+        advanceTimeBy(1_000)
+        assertEquals("the line's read is waiting on the store", 1, tilesLoader.firstAnswerRequests)
+
+        tilesLoader.failRegions()
+
+        assertNull(ready(vm).mapsSaved)
+    }
+
+    // iOS's `onReceive(regionsChanged)`: a save landing elsewhere, or a Delete, changes an open card's line.
+    @Test
+    fun `the line changes live on regions-changed, a save landing and a Delete`() = runTest(dispatcher) {
+        store.save(HonorHarness.stage())
+        tilesLoader.releaseRegions()
+        val vm = overview(savedStateHandle = stageArgs())
+        assertEquals(false, ready(vm).mapsSaved)
+
+        tilesLoader.seed(HonorHarness.STAGE_ID, PilgrimageTilesCorridor.stage(HonorHarness.stage()).corridorHash)
+        tilesLoader.releaseRegions()
+        assertEquals("a save lands", true, ready(vm).mapsSaved)
+
+        tiles.remove("camino-frances")
+        assertEquals("Settings' Delete", false, ready(vm).mapsSaved)
+    }
+
+    @Test
+    fun `an own walk and a shared walk never ask the store`() = runTest(dispatcher) {
+        store.save(sharedWay())
+        tilesLoader.releaseRegions()
+
+        val own = ready(overview())
+        val shared = ready(overview(savedStateHandle = stored()))
+
+        assertNull(own.mapsSaved)
+        assertNull(shared.mapsSaved)
+        assertEquals("the tiles manager is never resolved", 0, tilesResolutions)
+        assertEquals(0 to 0, tilesLoader.firstAnswerRequests to tilesLoader.regionsReadCount)
+    }
 
     // ---- A stage's service marks on the overview (pilgrimage-stage spec P5 §3) --
 

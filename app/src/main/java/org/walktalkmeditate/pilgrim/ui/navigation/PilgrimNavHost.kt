@@ -163,6 +163,9 @@ object Routes {
     const val RECORDINGS_LIST = "recordings"
     const val DATA_SETTINGS = "data_settings"
     const val WAYS_LIST = "ways_list"
+
+    /** Settings → Maps; registered only with the release flag on (spec D C4 §3.3, R21). */
+    const val OFFLINE_MAPS = "offline_maps"
     const val JOURNEY_VIEWER = "journey_viewer"
     const val JOURNEY_EDITOR = "journey_editor"
     const val ABOUT = "about"
@@ -1027,8 +1030,9 @@ private fun NavController.hasBackStackEntry(route: String): Boolean = try {
  * → walk screen chain (parity spec F §2–§12, pilgrimage-stage spec P4 §1).
  * Each step leaves the one before it: the sheets are gone before the
  * overview opens, and Back from the overview never lands on a sheet. Begin
- * closes the overview and opens the walk screen before its Start. With
- * Honor off, none of these routes exists.
+ * closes the overview and opens the walk screen before its Start. Settings
+ * → Maps is here too, the Data card's row being its only door. With Honor
+ * off, none of these routes exists.
  */
 internal fun androidx.navigation.NavGraphBuilder.honorRoutes(navController: NavHostController, honorEnabled: Boolean) {
     if (!honorEnabled) return
@@ -1077,6 +1081,12 @@ internal fun androidx.navigation.NavGraphBuilder.honorRoutes(navController: NavH
         org.walktalkmeditate.pilgrim.ui.honor.HonorOverviewScreen(
             onClose = navController::closeHonorOverview,
             onBegin = navController::beginHonorWalk,
+        )
+    }
+    composable(Routes.OFFLINE_MAPS) {
+        // Popped by name: the screen also leaves on its own when a walk starts.
+        org.walktalkmeditate.pilgrim.ui.settings.data.OfflineMapsScreen(
+            onBack = { navController.popBackStack(Routes.OFFLINE_MAPS, inclusive = true) },
         )
     }
 }
@@ -1212,5 +1222,7 @@ private fun handleSettingsAction(
             navController.navigate(Routes.APPEARANCE) { launchSingleTop = true }
         SettingsAction.OpenWays ->
             navController.navigate(Routes.WAYS_LIST) { launchSingleTop = true }
+        SettingsAction.OpenMaps ->
+            navController.navigate(Routes.OFFLINE_MAPS) { launchSingleTop = true }
     }
 }

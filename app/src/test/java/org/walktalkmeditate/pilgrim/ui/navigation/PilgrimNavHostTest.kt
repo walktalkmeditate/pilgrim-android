@@ -451,24 +451,24 @@ class PilgrimNavHostTest {
         assertOnlyPathBeneath(nav)
     }
 
-    /** P4 §11 gap 14: with Honor off there is no door, so neither pilgrimage route is in the graph. */
+    /** P4 §11 gap 14 and spec D C4 §5 (R21): with Honor off there is no door, so neither pilgrimage route nor Settings → Maps is in the graph. */
     @Test
-    fun `with the flag off, no Honor route is registered, the pilgrimage ones included`() {
+    fun `with the flag off, no Honor route is registered, the pilgrimage ones and Maps included`() {
         val nav = productionHonorGraph(honorEnabled = false)
 
         onMain {
-            listOf(Routes.HONOR_WAYS, Routes.HONOR_PILGRIMAGES, Routes.HONOR_PILGRIMAGE_PATTERN).forEach {
+            listOf(Routes.HONOR_WAYS, Routes.HONOR_PILGRIMAGES, Routes.HONOR_PILGRIMAGE_PATTERN, Routes.OFFLINE_MAPS).forEach {
                 assertNull(it, nav.graph.findNode(it))
             }
         }
     }
 
     @Test
-    fun `with the flag on, both pilgrimage routes are registered over the Ways sheet`() {
+    fun `with the flag on, both pilgrimage routes are registered over the Ways sheet, and the Maps screen`() {
         val nav = productionHonorGraph(honorEnabled = true)
 
         onMain {
-            listOf(Routes.HONOR_WAYS, Routes.HONOR_PILGRIMAGES, Routes.HONOR_PILGRIMAGE_PATTERN).forEach {
+            listOf(Routes.HONOR_WAYS, Routes.HONOR_PILGRIMAGES, Routes.HONOR_PILGRIMAGE_PATTERN, Routes.OFFLINE_MAPS).forEach {
                 assertTrue(it, nav.graph.findNode(it) != null)
             }
         }

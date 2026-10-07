@@ -1315,6 +1315,23 @@
          word picked by `stageCount == 1`. The name is the installed route.json's. -->
     <string name="settings_ways_package_footer_one">the %1$s keeps its %2$s stage on its route page</string>
     <string name="settings_ways_package_footer" tools:ignore="PluralsCandidate">the %1$s keeps its %2$s stages on its route page</string>
+    <!-- Phase 21 U47: Settings → Data → Maps and its Data card row (offline-maps spec D
+         C4 §3 and its Strings table, OfflineMapsView.swift:17-24,58-95 and
+         DataCard.swift:25-29@7c200bf). English Swift literals on iOS. The megabytes are
+         the route row's whole decimal figure and the counts Locale.US digits, both
+         passed formatted. "stages" stays plural at 1, as iOS's "1 of 1 stages" reads
+         (C4-3, matched). -->
+    <string name="settings_data_maps">Maps</string>
+    <string name="settings_maps_none_saved">none saved</string>
+    <string name="settings_maps_detail">%1$s · %2$s</string>
+    <string name="settings_maps_title">Maps</string>
+    <string name="settings_maps_saved_line" tools:ignore="PluralsCandidate">%1$s · %2$s of %3$s stages</string>
+    <string name="settings_maps_empty">no maps saved</string>
+    <string name="settings_maps_delete">Delete maps</string>
+    <string name="settings_maps_delete_title">Delete maps?</string>
+    <string name="settings_maps_delete_message">Removes the saved basemap. The route\'s stages stay on your phone.</string>
+    <string name="settings_maps_delete_confirm">Delete</string>
+    <string name="settings_maps_delete_cancel">Cancel</string>
     <string name="honor_moment_spoken_kicker">spoken here</string>
     <string name="honor_moment_ambient_kicker">the sound of this place</string>
     <string name="honor_moment_photo_kicker">what they saw here</string>
@@ -1509,6 +1526,12 @@
     <string name="pilgrimage_morning_walk_a11y">Begin walking this stage</string>
     <string name="pilgrimage_morning_close_a11y">Close the day\'s words</string>
     <string name="pilgrimage_morning_weather">%1$s, %2$s</string>
+    <!-- Phase 21 U47: the morning card's maps line (offline-maps spec D C4 §2.1 and its
+         Strings table, StageMorningCard.swift:21-26@7c200bf). English Swift literals on
+         iOS. The dash is U+2014 with a space either side. "save on wifi" is advice; a
+         save runs on cellular too (D9, a note). -->
+    <string name="pilgrimage_morning_maps_saved">maps saved for today</string>
+    <string name="pilgrimage_morning_maps_unsaved">no offline maps for today — save on wifi</string>
     <string name="walk_options_the_day">the day</string>
 
     <!-- Phase 21 U39: on a stage walk (pilgrimage-stage spec P5 §6–§8, §16). English Swift
