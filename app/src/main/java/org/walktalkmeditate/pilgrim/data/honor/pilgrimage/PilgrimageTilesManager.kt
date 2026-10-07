@@ -11,8 +11,8 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.completeWith
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -43,7 +43,9 @@ import org.walktalkmeditate.pilgrim.data.honor.WayStore
  *
  * **Owned work.** A save runs in [scope], app-scoped and a `SupervisorJob`,
  * so leaving the route page never cancels one. Its [Deferred] carries the
- * outcome for a caller that wants it; the [phase] carries it for the row.
+ * outcome for a caller that wants it, and cancelling it stops nothing, as
+ * cancelling iOS's waiting task never reaches its save; the [phase] carries
+ * the outcome for the row.
  * The scope must carry a `CoroutineExceptionHandler`: what escapes the
  * posted work (a loader bug in a hook or the sweep) reaches it rather than
  * crashing the UI process. Nothing in this package logs, so the handler
@@ -118,6 +120,7 @@ class PilgrimageTilesManager internal constructor(
     /** Held across the door's suspending walk read, so a second tap meanwhile starts no second loop. */
     private var doorClaimed = false
 
+    /** The latch [awaitStore] waits on: null until asked, and again once an answer has failed. */
     private var storeAnswer: CompletableDeferred<TileStoreRead>? = null
 
     init {
@@ -168,9 +171,12 @@ class PilgrimageTilesManager internal constructor(
 
     /**
      * Whether the store has answered since the process started, waiting up
-     * to [STORE_WAIT_MILLIS] from the call. False on a failed first answer
-     * or past the bound: "unknown", never "nothing saved". The first call,
-     * or [warm], asks the loader once per process (spec D §C2.12 point 7).
+     * to [STORE_WAIT_MILLIS] from the call. False on a failed answer or
+     * past the bound: "unknown", never "nothing saved". The first call, or
+     * [warm], asks the loader; a read answer holds for the process, and the
+     * next call after a failed one asks again (spec D §C2.12 point 7). A
+     * request the loader throws on is a failed answer, given at once; what
+     * it threw goes to [scope]'s handler.
      */
     suspend fun awaitStore(): Boolean = withContext(mainDispatcher) {
         val answer = requestStoreAnswer()
@@ -182,11 +188,23 @@ class PilgrimageTilesManager internal constructor(
         post { requestStoreAnswer() }
     }
 
-    private fun requestStoreAnswer(): CompletableDeferred<TileStoreRead> =
-        storeAnswer ?: CompletableDeferred<TileStoreRead>().also { answer ->
-            storeAnswer = answer
-            loader.firstAnswer { answer.complete(it) }
+    private fun requestStoreAnswer(): CompletableDeferred<TileStoreRead> {
+        storeAnswer?.let { return it }
+        val answer = CompletableDeferred<TileStoreRead>()
+        storeAnswer = answer
+        fun settle(read: TileStoreRead) {
+            // Before the readers resume, so one that asks again at once asks afresh.
+            if (read == TileStoreRead.FAILED && storeAnswer === answer) storeAnswer = null
+            answer.complete(read)
         }
+        try {
+            loader.firstAnswer(::settle)
+        } catch (failure: Throwable) {
+            settle(TileStoreRead.FAILED)
+            post { throw failure }
+        }
+        return answer
+    }
 
     private fun regionsById(): Map<String, TileRegionSummary> = loader.regions().distinctBy { it.id }.associateBy { it.id }
 
@@ -199,19 +217,31 @@ class PilgrimageTilesManager internal constructor(
      * Style packs first, then one region per stage by index, skipping any
      * region that is complete and still matches its stage's corridor
      * (§C2.5, Android's door per §C2.12 point 3). One save at a time: a
-     * call while one runs returns normally and does nothing. The deferred
-     * fails with a [PilgrimageException]: `WALK_IN_PROGRESS` for a walk at
-     * the door or at any step, `INCOMPLETE` for a load that failed or was
-     * cancelled or a walk read that threw, `DISK_FULL`, `MAP_TOO_LARGE`.
-     * Every failure but a cancel's also lands in [phase].
+     * call while one runs returns normally and does nothing.
+     *
+     * The deferred completes when the save ends. A refusal or a failed load
+     * fails it with a [PilgrimageException]: `WALK_IN_PROGRESS` for a walk
+     * at the door or at any step, `INCOMPLETE` for a load that failed or
+     * was cancelled or a walk read that threw, `DISK_FULL`, `MAP_TOO_LARGE`.
+     * A loader that throws fails it with that `Throwable` as it is, its
+     * phase `Failed(INCOMPLETE)`. Every failure but a cancel's also lands in
+     * [phase]. Cancelling the deferred only drops the caller's handle: the
+     * save runs on, and [cancel] is what stops one. It ends cancelled only
+     * when [scope] is.
      *
      * The walk: iOS's clause, the walk screen up, wherever iOS checks (the
      * door and every step, a skipped one too); Android's walk row, a Room
      * read, at the door and before each real load, each read followed by a
      * check that no cancel landed meanwhile (owner decision 4).
      */
-    fun save(routeId: String, stages: List<TileStage>): Deferred<Unit> = scope.async(mainDispatcher) {
-        saveOnMain(routeId, stages)
+    fun save(routeId: String, stages: List<TileStage>): Deferred<Unit> {
+        val outcome = CompletableDeferred<Unit>()
+        val work = scope.launch(mainDispatcher) {
+            outcome.completeWith(runCatching { saveOnMain(routeId, stages) })
+        }
+        // A scope cancelled before the save starts never runs its body.
+        work.invokeOnCompletion { cause -> if (cause != null) outcome.completeExceptionally(cause) }
+        return outcome
     }
 
     private suspend fun saveOnMain(routeId: String, stages: List<TileStage>) {

@@ -29,7 +29,11 @@ internal class PilgrimageTilesHarness {
     private val scheduler = TestCoroutineScheduler()
     val main = StandardTestDispatcher(scheduler)
 
-    /** What escaped the manager's posted work into its scope's handler, which production's logs. */
+    /**
+     * What escaped the manager's posted work into its scope's handler, which
+     * production's logs. [run] fails a test that leaves anything here, so a
+     * test that expects an escape clears it once it has asserted it.
+     */
     val escaped = CopyOnWriteArrayList<Throwable>()
 
     /** The manager's own scope, the app scope's stand-in; cancelled and joined at the end of [run]. */
@@ -49,6 +53,7 @@ internal class PilgrimageTilesHarness {
         } finally {
             scope.coroutineContext.job.cancelAndJoin()
         }
+        assertTrue("escaped the manager's posted work: $escaped", escaped.isEmpty())
     }
 
     /** Runs what the manager's thread has queued: posted hooks, resumed loads. */

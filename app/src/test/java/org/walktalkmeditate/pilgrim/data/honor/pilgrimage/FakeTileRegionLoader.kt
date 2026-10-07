@@ -11,7 +11,7 @@ package org.walktalkmeditate.pilgrim.data.honor.pilgrimage
  *
  * Android additions: [failRegions], the partial completion, and the
  * store's [firstAnswer], which the first [releaseRegions] or [failRegions]
- * gives.
+ * gives, and which a call after a failed one asks for again.
  */
 internal class FakeTileRegionLoader : TileRegionLoading {
 
@@ -128,10 +128,19 @@ internal class FakeTileRegionLoader : TileRegionLoading {
         onChange?.invoke(TileStoreChange.REGIONS)
     }
 
+    /**
+     * A read answer is given at once; a call after a failed one waits for
+     * the next [releaseRegions] or [failRegions], as the real loader's call
+     * starts a fresh read.
+     */
     override fun firstAnswer(completion: (TileStoreRead) -> Unit) {
         firstAnswerRequests += 1
-        val known = answered
-        if (known != null) completion(known) else firstAnswerWaiters += completion
+        if (answered == TileStoreRead.READ) {
+            completion(TileStoreRead.READ)
+        } else {
+            answered = null
+            firstAnswerWaiters += completion
+        }
     }
 
     // ---- Driving the fake ---------------------------------------------------------

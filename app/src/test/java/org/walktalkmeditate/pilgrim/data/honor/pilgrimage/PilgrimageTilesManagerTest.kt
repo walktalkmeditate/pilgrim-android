@@ -3,12 +3,16 @@ package org.walktalkmeditate.pilgrim.data.honor.pilgrimage
 
 import android.app.Application
 import android.database.sqlite.SQLiteException
+import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
+import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CompletableDeferred
@@ -18,6 +22,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
@@ -51,8 +57,9 @@ import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageTilesManager
  *
  * Then the Android additions: the walk row as a second clause, the door's
  * and a load's suspending walk read (a cancel or a second tap during it,
- * a read that throws), the re-tap that draws nothing, a partial load,
- * the store wait, and the DataStore calibration.
+ * a read that throws), the re-tap that draws nothing, a loader that throws
+ * or calls back twice, a deferred its caller cancels, a partial load, the
+ * store wait, and the DataStore calibration.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -581,6 +588,98 @@ class PilgrimageTilesManagerTest {
     }
 
     @Test
+    fun `a loader that throws on a style pack ends the save as failed`() = h.run {
+        val throwing = object : TileRegionLoading by loader {
+            override fun loadStylePack(pack: StylePackRequest, completion: (TileLoadResult<Unit>) -> Unit): TileLoadHandle =
+                throw UnsatisfiedLinkError("native")
+        }
+        val manager = PilgrimageTilesManager(throwing, h.calibration, h.signals, h.main, h.scope)
+        val save = manager.save("camino-frances", tileStages(1))
+        h.drain()
+
+        assertTrue("the save ended rather than hung", save.isCompleted)
+        assertEquals(Phase.Failed(PilgrimageError.INCOMPLETE), manager.phase.value)
+        assertTrue(runCatching { save.await() }.exceptionOrNull() is UnsatisfiedLinkError)
+        assertTrue("no region was asked for", loader.regionRequests.isEmpty())
+    }
+
+    /**
+     * A doubled SDK callback, the second after the next load started: only
+     * `pending === cont` keeps it from resuming the first load's wait again
+     * and clearing the second's.
+     */
+    @Test
+    fun `a load's completion delivered twice is heard once`() = h.run {
+        val two = tileStages(2)
+        loader.seedStylePacks()
+        val save = manager.save("camino-frances", two)
+        h.untilPending()
+        val first = loader.pendingRegions.single()
+        loader.completeNextRegion()
+        h.untilPending()
+        assertEquals(Phase.Saving(done = 3, total = 4), manager.phase.value)
+
+        first.completion(TileLoadResult.Success(loader.regions().single()))
+        h.drain()
+
+        assertEquals("the second stage still waits on its own load", Phase.Saving(done = 3, total = 4), manager.phase.value)
+        assertFalse(save.isCompleted)
+        assertFalse(loader.pendingRegions.single().handle.isCancelled)
+        loader.completeNextRegion()
+        save.await()
+        assertEquals(Status.Saved(bytes = 200_000L), manager.status(two))
+        assertEquals("one load per stage", 2, loader.regionRequests.size)
+    }
+
+    // ---- Android: the deferred is the caller's handle, not the save ------------------
+
+    /** iOS's caller holds a `Task` whose cancellation never reaches the save; a caller cancelling the deferred must not freeze the row in `Saving`. */
+    @Test
+    fun `cancelling a save's deferred mid load leaves the save to finish, and the next save starts`() = h.run {
+        val two = tileStages(2)
+        loader.seedStylePacks()
+        val save = manager.save("camino-frances", two)
+        h.untilPending()
+        save.cancel()
+        h.drain()
+        assertFalse("the load in flight runs on", loader.pendingRegions.single().handle.isCancelled)
+
+        loader.completeNextRegion()
+        h.untilPending()
+        loader.completeNextRegion()
+        h.drain()
+        assertEquals(Phase.Idle, manager.phase.value)
+        assertEquals(Status.Saved(bytes = 200_000L), manager.status(two))
+
+        val three = tileStages(3)
+        val next = manager.save("camino-frances", three)
+        h.untilPending()
+        assertEquals(three[2].id, loader.regionRequests.last().id)
+        loader.completeNextRegion()
+        next.await()
+        assertEquals(Phase.Idle, manager.phase.value)
+    }
+
+    @Test
+    fun `cancelling a save's deferred during the door's walk read leaves the save to run`() = h.run {
+        val read = CompletableDeferred<Unit>()
+        h.signals.onActiveRead = { number -> if (number == 1) read.await() }
+        loader.seedStylePacks()
+        val one = tileStages(1)
+        val save = manager.save("camino-frances", one)
+        h.drain()
+        save.cancel()
+        read.complete(Unit)
+
+        h.untilPending()
+        assertEquals(Phase.Saving(done = 2, total = 3), manager.phase.value)
+        loader.completeNextRegion()
+        h.drain()
+        assertEquals(Phase.Idle, manager.phase.value)
+        assertTrue(manager.isStageSaved(one[0]))
+    }
+
+    @Test
     fun `what escapes a posted hook reaches the scope's handler, and the next one still runs`() = h.run {
         val throwing = object : TileRegionLoading by loader {
             override fun removeRegion(id: String) {
@@ -592,6 +691,7 @@ class PilgrimageTilesManagerTest {
         manager.remove("camino-frances")
         h.drain()
         assertTrue(h.escaped.single() is IllegalStateException)
+        h.escaped.clear()
 
         manager.warm()
         h.drain()
@@ -684,6 +784,47 @@ class PilgrimageTilesManagerTest {
         runCurrent()
         loader.failRegions()
         assertFalse(answer.await())
+    }
+
+    /** One failed read at a cold start must not cost "the day" its maps line for the rest of the walk. */
+    @Test
+    fun `after a failed first answer the next store wait asks again and can read`() = h.run {
+        val first = async { manager.awaitStore() }
+        runCurrent()
+        loader.failRegions()
+        assertFalse(first.await())
+
+        val again = async { manager.awaitStore() }
+        runCurrent()
+        assertFalse("a fresh read, not the failure replayed", again.isCompleted)
+        assertEquals(2, loader.firstAnswerRequests)
+        loader.releaseRegions()
+        assertTrue(again.await())
+    }
+
+    @Test
+    fun `a first answer request that throws reads as unknown at once, and the next reader asks again`() = h.run {
+        var requests = 0
+        val throwing = object : TileRegionLoading by loader {
+            override fun firstAnswer(completion: (TileStoreRead) -> Unit) {
+                requests += 1
+                if (requests == 1) throw IllegalStateException("the store won't open")
+                loader.firstAnswer(completion)
+            }
+        }
+        val manager = PilgrimageTilesManager(throwing, h.calibration, h.signals, h.main, h.scope)
+        val answer = async { manager.awaitStore() }
+        runCurrent()
+        assertTrue("no time passed", answer.isCompleted)
+        assertFalse(answer.await())
+        assertTrue("what it threw reached the handler", h.escaped.single() is IllegalStateException)
+        h.escaped.clear()
+
+        val later = async { manager.awaitStore() }
+        runCurrent()
+        assertEquals(2, requests)
+        loader.releaseRegions()
+        assertTrue(later.await())
     }
 
     /** A removal is what makes the first read stale at a cold start; neither it nor the packs answer is the store's answer. */
@@ -790,5 +931,64 @@ class PilgrimageTilesManagerTest {
         manager.calibrate("camino-frances", two)
         assertEquals(0L, h.calibration.stored("camino-frances"))
         assertEquals(SEED_BYTES_PER_PACK, manager.bytesPerPack("camino-frances"))
+    }
+
+    @Test
+    fun `two calibration writes landing out of order leave the newer figure on disk`() = h.run {
+        val disk = ScriptedPreferencesStore()
+        val firstWrite = CompletableDeferred<Unit>()
+        disk.holds.addLast(firstWrite)
+        val calibration = DataStorePilgrimageTilesCalibration(disk, h.scope)
+        val key = DataStorePilgrimageTilesCalibration.key("camino-frances")
+
+        calibration.store("camino-frances", 1_000L)
+        h.drain()
+        calibration.store("camino-frances", 2_000L)
+        h.drain()
+        assertEquals("the second write landed first", 2_000L, disk.data.first()[key])
+
+        firstWrite.complete(Unit)
+        h.drain()
+        assertEquals("both writes landed", 2, disk.writes)
+        assertEquals(2_000L, disk.data.first()[key])
+    }
+
+    @Test
+    fun `a failed calibration write reaches the handler and keeps the figure in memory`() = h.run {
+        val disk = ScriptedPreferencesStore().apply { failure = IOException("no space left on device") }
+        val calibration = DataStorePilgrimageTilesCalibration(disk, h.scope)
+
+        calibration.store("camino-frances", 1_000L)
+        h.drain()
+
+        assertTrue(h.escaped.single() is IOException)
+        h.escaped.clear()
+        assertNull("nothing reached the disk", disk.data.first()[DataStorePilgrimageTilesCalibration.key("camino-frances")])
+        assertEquals("served from memory for the process", 1_000L, calibration.stored("camino-frances"))
+    }
+}
+
+/** Preferences in memory whose writes a test can hold or fail, which the real store can't be made to do on cue. */
+private class ScriptedPreferencesStore : DataStore<Preferences> {
+    private val stored = MutableStateFlow(emptyPreferences())
+
+    override val data: Flow<Preferences> = stored
+
+    /** Each write takes the next hold, if any, and waits on it before it reads and transforms. */
+    val holds = ArrayDeque<CompletableDeferred<Unit>>()
+
+    /** When set, every write throws it, after its hold. */
+    var failure: IOException? = null
+
+    var writes = 0
+        private set
+
+    override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences {
+        holds.removeFirstOrNull()?.await()
+        failure?.let { throw it }
+        return transform(stored.value).also {
+            stored.value = it
+            writes += 1
+        }
     }
 }
