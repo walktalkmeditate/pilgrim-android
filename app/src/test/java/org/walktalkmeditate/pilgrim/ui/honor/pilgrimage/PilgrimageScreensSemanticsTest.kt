@@ -58,6 +58,7 @@ import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageLedger
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageRoute
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageRouteStage
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageTilesManager
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
 import org.walktalkmeditate.pilgrim.honor.HonorImportState
@@ -71,8 +72,9 @@ import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
  * row as one button with the badge's words and no plate, the catalog's
  * three faces and its rust line's place, the route page's bar, button,
  * footer lines, next row and stage rows (the circle caption-sized), and
- * the three alerts with iOS's buttons. A window as tall as
- * the content, so the lazy lists compose every row.
+ * the three alerts with iOS's buttons; the maps row's saved face, and
+ * what a save and a download each hold (offline-maps spec D C4 §1). A
+ * window as tall as the content, so the lazy lists compose every row.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class, qualifiers = "w400dp-h1600dp")
@@ -295,6 +297,8 @@ class PilgrimageScreensSemanticsTest {
                 PilgrimageRouteContent(
                     state = PilgrimageRouteUiState.Ready(page()),
                     phase = PilgrimagePackageManager.Phase.Idle,
+                    tilesPhase = PilgrimageTilesManager.Phase.Idle,
+                    mapsRow = null,
                     units = UnitSystem.Metric,
                     alert = null,
                     actions = actions(),
@@ -322,6 +326,80 @@ class PilgrimageScreensSemanticsTest {
         composeRule.onNodeWithText("the routes are out of reach right now").assertIsDisplayed()
         composeRule.onNodeWithText("try again").assert(isButton()).performClick()
         assertEquals(1, retries)
+    }
+
+    // ---- Spec D C4 §1: the maps row ----
+
+    /** C4 §1.3: one button whose children TalkBack never reaches, the check unspoken, right under the download button. */
+    @Test
+    fun `the saved maps row is one button reading its pinned label, its check unspoken, under the download button`() {
+        var saves = 0
+        showRoute(
+            page(installed = installed(release = RELEASE)),
+            mapsRow = mapsRow(PilgrimageTilesManager.Status.Saved(bytes = 26_100_000)),
+            actions = actions(onSaveMaps = { saves++ }),
+        )
+
+        val row = composeRule.onNodeWithContentDescription("maps saved, 26 MB. Tap to save again")
+        row.assert(isButton())
+            .assert(noClickLabel())
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.ContentDescription, listOf("maps saved, 26 MB. Tap to save again")))
+            .assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.Text))
+            .assertIsEnabled()
+            .performClick()
+        assertEquals(1, saves)
+        composeRule.onAllNodesWithText("maps saved · 26 MB", useUnmergedTree = true).assertCountEquals(0)
+        assertTrue(top(row) > top(composeRule.onNodeWithText("On your phone")))
+        val nextRow = composeRule.onNodeWithText("start with stage 1", substring = true)
+        assertTrue("inside the section, above the next row", top(row) < top(nextRow))
+    }
+
+    /** C4 §1.4: a save holds the download button and the ellipsis, never the row, so its cancel stays reachable. */
+    @Test
+    fun `while a save runs the download button and the ellipsis are held, and cancel is live`() {
+        var cancels = 0
+        showRoute(
+            page(installed = installed(release = "v1.6.0")),
+            tilesPhase = PilgrimageTilesManager.Phase.Saving(done = 14, total = 35),
+            mapsRow = mapsRow(PilgrimageTilesManager.Status.Partial(saved = 12, of = 33)),
+            actions = actions(onCancelMaps = { cancels++ }),
+        )
+
+        composeRule.onNodeWithText("Update").assert(isButton()).assertIsNotEnabled()
+        composeRule.onNodeWithContentDescription("ellipsis").assertIsNotEnabled()
+        composeRule.onNodeWithText("maps · stage 12 of 33").assertIsDisplayed()
+        composeRule.onNodeWithText("cancel").assert(isButton()).assertIsEnabled().performClick()
+        assertEquals(1, cancels)
+    }
+
+    /** C4 §1.4: a package download holds the row, its words as they were. */
+    @Test
+    fun `while a download runs the maps row is held, its words as they were`() {
+        showRoute(
+            page(installed = installed(release = "v1.6.0")),
+            phase = PilgrimagePackageManager.Phase.Downloading(done = 2, total = 3),
+            mapsRow = mapsRow(PilgrimageTilesManager.Status.None),
+        )
+
+        composeRule.onNodeWithText("Save maps for the way · ~26 MB").assert(isButton()).assertIsNotEnabled()
+    }
+
+    /** C4 §1.4, A2: the page's holds stand in for iOS's synchronous early phase and reload. */
+    @Test
+    fun `the page's own hold holds the maps row`() {
+        showRoute(
+            page(installed = installed(release = "v1.6.0"), holds = 1),
+            mapsRow = mapsRow(PilgrimageTilesManager.Status.Partial(saved = 1, of = 2)),
+        )
+
+        composeRule.onNodeWithText("Save maps for the way · 1 of 2 saved").assert(isButton()).assertIsNotEnabled()
+    }
+
+    @Test
+    fun `no row state draws no maps row`() {
+        showRoute(page(installed = installed(release = RELEASE)))
+
+        composeRule.onAllNodesWithText("Save maps for the way", substring = true).assertCountEquals(0)
     }
 
     // ---- P4 §4.7: the alerts ----
@@ -385,6 +463,8 @@ class PilgrimageScreensSemanticsTest {
             PilgrimageRouteContent(
                 state = PilgrimageRouteUiState.Resolving,
                 phase = PilgrimagePackageManager.Phase.Idle,
+                tilesPhase = PilgrimageTilesManager.Phase.Idle,
+                mapsRow = null,
                 units = UnitSystem.Metric,
                 alert = PilgrimageRouteAlert.REMOVE,
                 actions = actions(),
@@ -444,6 +524,7 @@ class PilgrimageScreensSemanticsTest {
         isLoadingStages: Boolean = false,
         stagesFailure: PilgrimageError? = null,
         showRedrawNotice: Boolean = false,
+        holds: Int = 0,
     ) = PilgrimageRoutePage(
         entry = entry,
         release = RELEASE,
@@ -454,6 +535,7 @@ class PilgrimageScreensSemanticsTest {
         isLoadingStages = isLoadingStages,
         stagesFailure = stagesFailure,
         showRedrawNotice = showRedrawNotice,
+        holds = holds,
     )
 
     private fun actions(
@@ -467,20 +549,30 @@ class PilgrimageScreensSemanticsTest {
         onConfirmRemove: () -> Unit = {},
         onConfirmDownloadFirst: () -> Unit = {},
         onDismissAlert: () -> Unit = {},
+        onSaveMaps: () -> Unit = {},
+        onCancelMaps: () -> Unit = {},
     ) = PilgrimageRouteActions(
         onBack, onDownload, onOpenNext, onOpenStage, onRetryStages, onRemove,
         onConfirmReplace, onConfirmRemove, onConfirmDownloadFirst, onDismissAlert,
+        onSaveMaps, onCancelMaps,
     )
+
+    private fun mapsRow(status: PilgrimageTilesManager.Status, estimateBytes: Long = 26_400_000) =
+        PilgrimageMapsRowState(routeId = ROUTE_ID, release = RELEASE, stages = emptyList(), estimateBytes = estimateBytes, status = status)
 
     private fun showRoute(
         page: PilgrimageRoutePage,
         phase: PilgrimagePackageManager.Phase = PilgrimagePackageManager.Phase.Idle,
         alert: PilgrimageRouteAlert? = null,
         actions: PilgrimageRouteActions = actions(),
+        tilesPhase: PilgrimageTilesManager.Phase = PilgrimageTilesManager.Phase.Idle,
+        mapsRow: PilgrimageMapsRowState? = null,
     ) = show {
         PilgrimageRouteContent(
             state = PilgrimageRouteUiState.Ready(page),
             phase = phase,
+            tilesPhase = tilesPhase,
+            mapsRow = mapsRow,
             units = UnitSystem.Metric,
             alert = alert,
             actions = actions,

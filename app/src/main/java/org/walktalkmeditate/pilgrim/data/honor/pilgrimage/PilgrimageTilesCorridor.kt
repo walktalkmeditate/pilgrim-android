@@ -66,6 +66,15 @@ object PilgrimageTilesCorridor {
     }
 
     /**
+     * Every surface's stage list (C1 §11): one value per stage Way of the
+     * route that loads, in index order, a stage that doesn't load skipped,
+     * as iOS's `compactMap` skips it, so `status`'s "of" is the list's size.
+     * Each Way is dropped once it is a value. Reads the store: call on IO.
+     */
+    fun stages(store: WayStore, routeId: String, stageCount: Int): List<TileStage> =
+        (0 until stageCount).mapNotNull { index -> store.load(WayStore.stageWayId(routeId, index))?.let(::stage) }
+
+    /**
      * Distinct z11 cells the stages' corridors touch, in one sweep over every
      * stage's rings, so a cell two stages share counts once, as the store
      * holds it once. A count, not bytes: the estimate multiplies it by a

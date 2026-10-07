@@ -9,10 +9,13 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.io.IOException
 import javax.inject.Inject
+import javax.inject.Provider
 import kotlin.math.max
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -23,6 +26,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageCatalog
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageCatalogEntry
@@ -34,6 +38,9 @@ import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageLedgerStore
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageRoute
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageRouteStage
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageTilesCorridor
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageTilesManager
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.TileStage
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.honor.digits
@@ -95,6 +102,21 @@ sealed interface PilgrimageRouteUiState {
     data class Ready(val page: PilgrimageRoutePage) : PilgrimageRouteUiState
 }
 
+/**
+ * The maps row's inputs for one installed release, [routeId] at [release]
+ * (iOS's `stageWays`, `mapsEstimateBytes` and `mapsStatus`,
+ * `PilgrimageRouteView.swift:77-85@7c200bf`): the stages' values, never
+ * their decoded Ways, the estimate from them, and the status last read.
+ */
+@Immutable
+data class PilgrimageMapsRowState(
+    val routeId: String,
+    val release: String,
+    val stages: List<TileStage>,
+    val estimateBytes: Long,
+    val status: PilgrimageTilesManager.Status,
+)
+
 /** iOS `PilgrimageRouteModel` (`PilgrimageRouteView.swift:35-64@7c200bf`, P4 §4) and the page's other words. */
 object PilgrimageRouteModel {
 
@@ -140,13 +162,21 @@ object PilgrimageRouteModel {
 
     /**
      * iOS's `isBusy` (`PilgrimageRouteView.swift:308-312@7c200bf`) holds the
-     * button and the overflow while any download runs, this page's or not;
-     * a map save joins it in Stage 21-3; [held] is the page's own
-     * ([PilgrimageRoutePage.holds]). The stage rows and the alerts stay
-     * live (pilgrim-ios #121, matched).
+     * button and the overflow while any download or map save runs, this
+     * page's or not; [held] is the page's own ([PilgrimageRoutePage.holds]).
+     * The stage rows, the alerts and the maps row stay live (pilgrim-ios
+     * #121, matched).
      */
-    fun isBusy(phase: PilgrimagePackageManager.Phase, held: Boolean): Boolean =
-        phase is PilgrimagePackageManager.Phase.Downloading || held
+    fun isBusy(phase: PilgrimagePackageManager.Phase, tilesPhase: PilgrimageTilesManager.Phase, held: Boolean): Boolean =
+        phase is PilgrimagePackageManager.Phase.Downloading || tilesPhase is PilgrimageTilesManager.Phase.Saving || held
+
+    /**
+     * iOS `mapsRowIsHeld` (`PilgrimageRouteView.swift:57-64@7c200bf`): a save
+     * begun mid-Update hashes stage lines being rewritten, so a package
+     * download holds the maps row. A save is not one, so the row's own
+     * "cancel" stays reachable. The page adds its own holds (spec D C4 §1.4).
+     */
+    fun mapsRowIsHeld(phase: PilgrimagePackageManager.Phase): Boolean = phase is PilgrimagePackageManager.Phase.Downloading
 
     /** "stage d of n" from the manager's phase: both sides drop `route.json`, the one file that isn't a stage. */
     fun downloadProgress(resources: Resources, phase: PilgrimagePackageManager.Phase): String? {
@@ -224,6 +254,18 @@ object PilgrimageRouteModel {
  * after the commit, as iOS's does (pilgrim-ios #121, matched). Every
  * package action runs in the manager's own scope, so leaving the page
  * never cancels one; its outcome lands only on a page still here.
+ *
+ * **The maps row** (spec D C4 §1). Its stage values are built on IO from
+ * the page's own `installed`, in [reload] only, so a page opened mid-Update
+ * keeps the old release's lines after the commit (#121 item 5, matched).
+ * The row is published once its estimate and its status are both in, and
+ * hidden again only when the installed release moves. The status is read
+ * again on regions-changed and when the tiles phase turns idle, iOS's two
+ * triggers. Every read of the tiles manager, and every write of the row,
+ * runs on [tilesDispatcher], the manager's one thread, so the latest
+ * values always win. The manager is resolved only for an installed page
+ * with the release flag on (C4 §5); a page for another route doesn't see a
+ * running save, so its button isn't held by one.
  */
 @HiltViewModel
 class PilgrimageRouteViewModel internal constructor(
@@ -233,7 +275,11 @@ class PilgrimageRouteViewModel internal constructor(
     private val ledgerStore: PilgrimageLedgerStore,
     private val wayStore: WayStore,
     unitsPreferences: UnitsPreferencesRepository,
+    private val releaseFlags: ReleaseFlags,
+    private val tilesProvider: Provider<PilgrimageTilesManager>,
     private val ioDispatcher: CoroutineDispatcher,
+    /** The tiles manager's thread, where its main-only readers and `cancel` run: the main thread in production. */
+    private val tilesDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
 
     @Inject
@@ -244,7 +290,20 @@ class PilgrimageRouteViewModel internal constructor(
         ledgerStore: PilgrimageLedgerStore,
         wayStore: WayStore,
         unitsPreferences: UnitsPreferencesRepository,
-    ) : this(savedState, catalogs, packages, ledgerStore, wayStore, unitsPreferences, Dispatchers.IO)
+        releaseFlags: ReleaseFlags,
+        tiles: Provider<PilgrimageTilesManager>,
+    ) : this(
+        savedState,
+        catalogs,
+        packages,
+        ledgerStore,
+        wayStore,
+        unitsPreferences,
+        releaseFlags,
+        tiles,
+        Dispatchers.IO,
+        Dispatchers.Main.immediate,
+    )
 
     private val routeId: String? = savedState[ARG_ROUTE_ID]
 
@@ -254,6 +313,27 @@ class PilgrimageRouteViewModel internal constructor(
 
     private val _state = MutableStateFlow(openingState())
     val state: StateFlow<PilgrimageRouteUiState> = _state.asStateFlow()
+
+    private val _tilesPhase = MutableStateFlow<PilgrimageTilesManager.Phase>(PilgrimageTilesManager.Phase.Idle)
+
+    /** The tiles manager's phase, live from the page's first installed reload: a page reopened mid-save shows it. */
+    val tilesPhase: StateFlow<PilgrimageTilesManager.Phase> = _tilesPhase.asStateFlow()
+
+    private val _mapsRow = MutableStateFlow<PilgrimageMapsRowState?>(null)
+
+    /** Null while there is no row: not installed, no stage Way loads, the flag off, or its first reads not yet in. */
+    val mapsRow: StateFlow<PilgrimageMapsRowState?> = _mapsRow.asStateFlow()
+
+    @Volatile private var tiles: PilgrimageTilesManager? = null
+
+    /** On [tilesDispatcher]: the reload's row derivation, replaced by the next reload's. */
+    private var mapsJob: Job? = null
+
+    /** On [tilesDispatcher]: the last release's stage values and pack count, built once per `(routeId, release)`. */
+    private var stagesCache: TileStages? = null
+
+    /** On [tilesDispatcher]: the store's first answer waited for, once per page, before its first status read. */
+    private var storeAwaited = false
 
     private val _alert = MutableStateFlow<PilgrimageRouteAlert?>(null)
     val alert: StateFlow<PilgrimageRouteAlert?> = _alert.asStateFlow()
@@ -281,16 +361,39 @@ class PilgrimageRouteViewModel internal constructor(
     /** The download button: nothing while busy or with this release on the phone, as iOS's disabled button. */
     fun onDownloadTapped() {
         val page = page ?: return
-        if (PilgrimageRouteModel.isBusy(phase.value, page.isHeld) || page.isCurrent) return
+        if (PilgrimageRouteModel.isBusy(phase.value, tilesPhaseNow(), page.isHeld) || page.isCurrent) return
         beginInstall()
     }
 
     /** The overflow's Remove, held while busy as iOS's menu is. */
     fun onRemoveTapped() {
         val page = page ?: return
-        if (PilgrimageRouteModel.isBusy(phase.value, page.isHeld)) return
+        if (PilgrimageRouteModel.isBusy(phase.value, tilesPhaseNow(), page.isHeld)) return
         _alert.value = PilgrimageRouteAlert.REMOVE
     }
+
+    /**
+     * The maps row's button, "Tap to save again" too: the page's stage
+     * values into the manager's own scope, so leaving the page never stops
+     * the save. Its outcome is dropped; the phase carries it (iOS's `save()`,
+     * `PilgrimageMapsRow.swift:93-99@7c200bf`). Nothing while the row is held.
+     */
+    fun onSaveMaps() {
+        val page = page ?: return
+        val row = _mapsRow.value ?: return
+        val manager = tiles ?: return
+        if (PilgrimageRouteModel.mapsRowIsHeld(phase.value) || page.isHeld) return
+        manager.save(row.routeId, row.stages)
+    }
+
+    /** The saving face's "cancel": the manager's own, at once and on the main thread; the regions already saved stay. */
+    fun onCancelMaps() {
+        val page = page ?: return
+        if (PilgrimageRouteModel.mapsRowIsHeld(phase.value) || page.isHeld) return
+        tiles?.cancel()
+    }
+
+    private fun tilesPhaseNow(): PilgrimageTilesManager.Phase = tiles?.phase?.value ?: PilgrimageTilesManager.Phase.Idle
 
     /**
      * iOS `open(index:)`: the stage's overview when this route is installed
@@ -394,6 +497,8 @@ class PilgrimageRouteViewModel internal constructor(
      * file at once under the ledger's locks, so no later opening says it
      * again; the page keeps it in its saved state, so a restore after
      * process death still shows a notice the walker may not have read.
+     * Last, the maps row starts again from what this reload read; a row
+     * from another release is hidden before the page's hold lets go.
      */
     private suspend fun reload() {
         val routeId = page?.entry?.id ?: return
@@ -418,7 +523,97 @@ class PilgrimageRouteViewModel internal constructor(
                 showRedrawNotice = current.showRedrawNotice || notice,
             )
         }
+        withContext(tilesDispatcher) { restartMapsRow() }
     }
+
+    /**
+     * On [tilesDispatcher]. The row follows the page's own `installed`,
+     * never a live read; a release that moved hides it until its own
+     * estimate and status are in, so no tap lands on the old release's lines.
+     */
+    private fun restartMapsRow() {
+        mapsJob?.cancel()
+        val page = page
+        val installed = page?.installed?.takeIf { page.isInstalled && releaseFlags.honor }
+        if (installed == null) {
+            _mapsRow.value = null
+            return
+        }
+        val shown = _mapsRow.value
+        if (shown != null && (shown.routeId != installed.routeId || shown.release != installed.release)) _mapsRow.value = null
+        mapsJob = viewModelScope.launch(tilesDispatcher) { deriveMapsRow(installed) }
+    }
+
+    /**
+     * iOS's reload of `stageWays`, `mapsEstimateBytes` and `mapsStatus`,
+     * the estimate and the stage values off the main thread (C1 §12). The
+     * pack count is the release's; bytes per pack is read every time, since
+     * a save calibrates it without a release. The first status waits for
+     * the store's first answer; past the bound the cache is read anyway,
+     * iOS's own cold face, which regions-changed then corrects.
+     */
+    private suspend fun deriveMapsRow(installed: PilgrimagePackageManager.Installed) {
+        val manager = resolveTiles()
+        val stages = stagesOf(installed)
+        if (stages.values.isEmpty()) {
+            _mapsRow.value = null
+            return
+        }
+        val estimate = stages.packCount.toLong() * manager.bytesPerPack(installed.routeId)
+        if (!storeAwaited) {
+            manager.awaitStore()
+            storeAwaited = true
+        }
+        _mapsRow.value = PilgrimageMapsRowState(
+            routeId = installed.routeId,
+            release = installed.release,
+            stages = stages.values,
+            estimateBytes = estimate,
+            status = manager.status(stages.values),
+        )
+    }
+
+    private suspend fun stagesOf(installed: PilgrimagePackageManager.Installed): TileStages {
+        stagesCache?.takeIf { it.routeId == installed.routeId && it.release == installed.release }?.let { return it }
+        val built = withContext(ioDispatcher) {
+            val values = PilgrimageTilesCorridor.stages(wayStore, installed.routeId, installed.route.stageCount)
+            TileStages(installed.routeId, installed.release, values, PilgrimageTilesCorridor.packCount(values))
+        }
+        stagesCache = built
+        return built
+    }
+
+    /** At the first installed reload, on [tilesDispatcher]; the page then follows the manager's phase and regions while it lives. */
+    private fun resolveTiles(): PilgrimageTilesManager = tiles ?: tilesProvider.get().also { manager ->
+        tiles = manager
+        viewModelScope.launch(tilesDispatcher, start = CoroutineStart.UNDISPATCHED) {
+            manager.regionsChanged.collect { refreshMapsStatus() }
+        }
+        // A save whose regions were all present loads only packs and ends
+        // with no regions signal, and a cancel ends with none either.
+        viewModelScope.launch(tilesDispatcher, start = CoroutineStart.UNDISPATCHED) {
+            manager.phase.collect { phase ->
+                _tilesPhase.value = phase
+                if (phase == PilgrimageTilesManager.Phase.Idle) refreshMapsStatus()
+            }
+        }
+    }
+
+    /**
+     * iOS `refreshMapsStatus`, over the stage values the row already holds;
+     * a packs-only answer never calls it (D4, matched). A held page has its
+     * reload still to come, which reads the status itself: an Update's
+     * removals land before it, and iOS's synchronous Update never draws
+     * their figure against the old lines (C4 §6 step 2).
+     */
+    private fun refreshMapsStatus() {
+        val manager = tiles ?: return
+        val row = _mapsRow.value ?: return
+        if (page?.isHeld == true) return
+        _mapsRow.value = row.copy(status = manager.status(row.stages))
+    }
+
+    private class TileStages(val routeId: String, val release: String, val values: List<TileStage>, val packCount: Int)
 
     /** iOS's `try?` save: a clear that can't be written shows the notice again next time. */
     private fun clearRedrawNotice(routeId: String) {

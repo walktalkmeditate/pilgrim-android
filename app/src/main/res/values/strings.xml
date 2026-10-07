@@ -1480,6 +1480,19 @@
     <string name="pilgrimage_download_first_title">Download this route first?</string>
     <string name="pilgrimage_download_first_message">Its stages have to be on your phone before you can walk one.</string>
     <string name="pilgrimage_not_now">Not now</string>
+    <!-- Phase 21 U46: the route page's maps row (offline-maps spec D C4 §1.3 and its
+         Strings table, PilgrimageMapsRow.swift:3-24,42-91@7c200bf). English Swift
+         literals on iOS with no Localizable.strings entry. Counts are Locale.US digits
+         and megabytes a whole decimal figure, both passed formatted. "Tap to save again"
+         saves nothing new on a current route (D7, matched); "cancel" is lower-case, as
+         iOS's button reads. -->
+    <string name="pilgrimage_maps_save_estimate">Save maps for the way · ~%1$s</string>
+    <string name="pilgrimage_maps_save_partial">Save maps for the way · %1$s of %2$s saved</string>
+    <string name="pilgrimage_maps_saved">maps saved · %1$s</string>
+    <string name="pilgrimage_maps_saved_a11y">maps saved, %1$s. Tap to save again</string>
+    <string name="pilgrimage_maps_saving">maps · stage %1$s of %2$s</string>
+    <string name="pilgrimage_maps_cancel" tools:ignore="ButtonCase">cancel</string>
+    <string name="pilgrimage_maps_megabytes">%1$s MB</string>
 
     <!-- Phase 21 U38: a stage's overview, its morning card, and "the day" (pilgrimage-stage
          spec P4 §6–§8, §12; P5 §10). English Swift literals on iOS. Counts are Locale.US

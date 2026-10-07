@@ -687,19 +687,20 @@ class PilgrimagePackageManagerTest {
         assertEquals("camino-frances", manager.installedBlocking()?.routeId)
     }
 
-    /** The route page's own rule, read from this manager's phase; a map save joins it in Stage 21-3. */
+    /** The route page's own rule, read from this manager's phase; a map save is the tiles manager's half. */
     @Test
     fun `the route page is busy while a download runs`() {
         val routeFile = h.hold("route.json")
         val manager = h.makeManager()
-        assertFalse(PilgrimageRouteModel.isBusy(manager.phase.value, held = false))
+        val noSave = PilgrimageTilesManager.Phase.Idle
+        assertFalse(PilgrimageRouteModel.isBusy(manager.phase.value, noSave, held = false))
         val download = manager.download(h.entry, RELEASE)
         routeFile.awaitArrival()
-        assertTrue(PilgrimageRouteModel.isBusy(manager.phase.value, held = false))
+        assertTrue(PilgrimageRouteModel.isBusy(manager.phase.value, noSave, held = false))
         routeFile.release()
         download.awaitBlocking()
 
-        assertFalse(PilgrimageRouteModel.isBusy(manager.phase.value, held = false))
+        assertFalse(PilgrimageRouteModel.isBusy(manager.phase.value, noSave, held = false))
     }
 
     // ---- The owned download (P4 correction 2) ----------------------------------------
