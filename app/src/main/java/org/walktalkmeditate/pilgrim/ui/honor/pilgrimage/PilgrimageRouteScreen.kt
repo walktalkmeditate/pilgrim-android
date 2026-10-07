@@ -224,7 +224,7 @@ private fun HeaderSection(
                         estimateBytes = mapsRow.estimateBytes,
                         status = mapsRow.status,
                         phase = tilesPhase,
-                        enabled = !PilgrimageRouteModel.mapsRowIsHeld(phase) && !page.isHeld,
+                        enabled = !PilgrimageRouteModel.mapsRowIsHeld(phase, page),
                         onSave = actions.onSaveMaps,
                         onCancel = actions.onCancelMaps,
                     )

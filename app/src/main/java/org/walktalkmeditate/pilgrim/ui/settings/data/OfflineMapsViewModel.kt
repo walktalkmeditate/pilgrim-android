@@ -35,9 +35,9 @@ import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager
-import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageTilesCorridor
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageTilesManager
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.TileStage
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.TileStagesCache
 import org.walktalkmeditate.pilgrim.domain.honor.digits
 import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.PilgrimageMapsRowModel
 
@@ -99,11 +99,10 @@ object OfflineMapsModel {
  * are built off the main thread once per installed release, and each read
  * asks the manager once.
  *
- * Each holder collects [reads] once; its reads wait for the store's first
- * answer, bounded, until one has it, so neither surface opens on "none
- * saved" right after launch (C4 correction 18). A failed answer, or none
- * by the bound, reads the cache, iOS's cold face, and the next read asks
- * the store again, as the manager allows after a failure.
+ * Each holder collects [reads] once; each read waits for the store's first
+ * answer, bounded, so neither surface opens on "none saved" right after
+ * launch (C4 correction 18). A failed answer, or none by the bound, reads
+ * the cache, iOS's cold face, and the next read asks the store again.
  */
 class InstalledMaps internal constructor(
     private val installed: suspend () -> PilgrimagePackageManager.Installed?,
@@ -125,9 +124,8 @@ class InstalledMaps internal constructor(
     /** One read's answer: [state] is `Empty` or `Saved`, and [routeId] the installed route Delete removes. */
     data class Read(val state: OfflineMapsUiState, val routeId: String?)
 
-    /** Whether the store has answered a read. Touched by one read at a time ([reads]' `mapLatest` joins the one it replaces). */
-    private var storeAnswered = false
-    private var stagesCache: CachedStages? = null
+    /** Touched by one read at a time ([reads]' `mapLatest` joins the one it replaces). */
+    private val stagesCache = TileStagesCache()
 
     /**
      * A read at once, then one per regions-changed signal and per [requests]
@@ -152,9 +150,9 @@ class InstalledMaps internal constructor(
 
     private suspend fun read(manager: PilgrimageTilesManager): Read {
         val route = installedOrNone() ?: return Read(OfflineMapsUiState.Empty, routeId = null)
-        val stages = stagesOf(route)
+        val stages = stagesCache.of(route, wayStore, ioDispatcher).values
         val saved = withContext(tilesDispatcher) {
-            if (!storeAnswered) storeAnswered = manager.awaitStore()
+            manager.awaitStore()
             OfflineMapsModel.load(route.route.name, route.routeId, stages, manager)
         }
         return Read(saved ?: OfflineMapsUiState.Empty, route.routeId)
@@ -168,35 +166,22 @@ class InstalledMaps internal constructor(
     } catch (e: Exception) {
         null
     }
-
-    private suspend fun stagesOf(route: PilgrimagePackageManager.Installed): List<TileStage> {
-        stagesCache?.takeIf { it.routeId == route.routeId && it.release == route.release }?.let { return it.stages }
-        val stages = withContext(ioDispatcher) { PilgrimageTilesCorridor.stages(wayStore, route.routeId, route.route.stageCount) }
-        stagesCache = CachedStages(route.routeId, route.release, stages)
-        return stages
-    }
-
-    private class CachedStages(val routeId: String, val release: String, val stages: List<TileStage>)
 }
 
 /**
  * The Data card's "Maps" row (iOS `DataCard`, `DataCard.swift:25-29,38-50@7c200bf`,
- * spec D C4 §3.1), beside [WaysRowViewModel]. Shown while [WaysAvailability]
- * allows (owner decision 6), so never with the flag off or while a walk or
- * its Honor step is pending. Its detail is blank until the first read
- * lands, then read again on each entry to Settings and on each
+ * spec D C4 §3.1), beside [WaysRowViewModel], and shown with it, by
+ * [WaysAvailability] (owner decision 6), so never with the flag off or
+ * while a walk or its Honor step is pending. Its detail is blank until the
+ * first read lands, then read again on each entry to Settings and on each
  * regions-changed while the model lives. With the flag off nothing here
  * resolves the tiles manager or the package manager (C4 §5).
  */
 @HiltViewModel
 class MapsRowViewModel @Inject constructor(
-    availability: WaysAvailability,
     private val releaseFlags: ReleaseFlags,
     private val maps: InstalledMaps,
 ) : ViewModel() {
-
-    val shown: StateFlow<Boolean> = availability.shown
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS), availability.shownAtFirst)
 
     private val _detail = MutableStateFlow<OfflineMapsUiState>(OfflineMapsUiState.Loading)
     val detail: StateFlow<OfflineMapsUiState> = _detail.asStateFlow()
@@ -212,10 +197,6 @@ class MapsRowViewModel @Inject constructor(
         } else {
             requests.tryEmit(Unit)
         }
-    }
-
-    private companion object {
-        const val SUBSCRIBER_GRACE_MS = 5_000L
     }
 }
 

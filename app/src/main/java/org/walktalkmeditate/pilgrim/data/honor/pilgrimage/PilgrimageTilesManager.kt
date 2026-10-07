@@ -52,7 +52,7 @@ import org.walktalkmeditate.pilgrim.data.honor.WayStore
  * that logs is the scope provider's, as the walk-finalization scope's is.
  *
  * **Readers wait for the store, hooks don't** (owner decision 2): a surface
- * calls [awaitStore] once before its first read; [remove], [removeRegions],
+ * calls [awaitStore] before it reads; [remove], [removeRegions],
  * [reconcile] and [save] read the cache as iOS's do (D6, matched).
  */
 class PilgrimageTilesManager internal constructor(
@@ -137,6 +137,11 @@ class PilgrimageTilesManager internal constructor(
     /** The single-stage entry point, for the morning card: complete, and loaded for the stage's current line. */
     @MainThread
     fun isStageSaved(stage: TileStage): Boolean = isSaved(stage, loader.regions().firstOrNull { it.id == stage.id })
+
+    /** [isStageSaved] once the store has answered; null, "unknown", where [awaitStore] is false. From any thread. */
+    suspend fun awaitStageSaved(stage: TileStage): Boolean? = withContext(mainDispatcher) {
+        if (awaitStore()) isStageSaved(stage) else null
+    }
 
     /** From one store read; `Saved` needs both style packs, so every region saved with a pack missing is "n of n" (D4, matched). */
     @MainThread

@@ -85,7 +85,6 @@ fun SettingsScreen(
 ) {
     val showsWays by waysRowViewModel.shown.collectAsStateWithLifecycle()
     val waysTotals by waysRowViewModel.totals.collectAsStateWithLifecycle()
-    val showsMaps by mapsRowViewModel.shown.collectAsStateWithLifecycle()
     val mapsDetail by mapsRowViewModel.detail.collectAsStateWithLifecycle()
     // iOS counts on each appearance of the card; returning from the list re-enters here.
     LaunchedEffect(Unit) {
@@ -240,7 +239,7 @@ fun SettingsScreen(
                     onAction = onAction,
                     showsWays = showsWays,
                     waysTotals = waysTotals,
-                    showsMaps = showsMaps,
+                    showsMaps = showsWays,
                     mapsDetail = mapsDetail,
                 )
             }

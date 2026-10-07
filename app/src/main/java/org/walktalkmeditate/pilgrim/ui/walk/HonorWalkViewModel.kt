@@ -267,8 +267,6 @@ class HonorWalkViewModel internal constructor(
     private val tickMillis: Long,
     /** Resolved only by "the day" on a stage's Way (spec D C4 §5). */
     private val tiles: Provider<PilgrimageTilesManager>,
-    /** The tiles manager's thread, where its main-only readers run: the main thread in production. */
-    private val tilesDispatcher: CoroutineDispatcher,
     private val loadWaveform: suspend (File) -> FloatArray? = ::cardWaveform,
     private val stageHandoff: HonorStageHandoff = HonorStageHandoff(),
 ) : ViewModel() {
@@ -297,7 +295,6 @@ class HonorWalkViewModel internal constructor(
         ioDispatcher = Dispatchers.IO,
         tickMillis = COMPANION_TICK_MILLIS,
         tiles = tiles,
-        tilesDispatcher = Dispatchers.Main.immediate,
         stageHandoff = stageHandoff,
     )
 
@@ -489,8 +486,7 @@ class HonorWalkViewModel internal constructor(
      */
     val stageDayMapsSaved: StateFlow<Boolean?> = _stageDayMapsSaved.asStateFlow()
 
-    /** Whether this opening of "the day" has had its read; a model rebuilt after process death hasn't. */
-    private var stageDayRead = false
+    /** This opening's read; null until it has one, so a model rebuilt after process death has none. */
     private var stageDayJob: Job? = null
 
     /**
@@ -499,7 +495,6 @@ class HonorWalkViewModel internal constructor(
      * so a warm store's answer is in by the time the sheet rises.
      */
     fun openStageDay() {
-        stageDayRead = false
         readStageDayMaps()
     }
 
@@ -508,7 +503,7 @@ class HonorWalkViewModel internal constructor(
      * read for its opening, so it starts one (C4 A5); any other already has.
      */
     fun stageDayShown() {
-        if (!stageDayRead) readStageDayMaps()
+        if (stageDayJob == null) readStageDayMaps()
     }
 
     /**
@@ -518,15 +513,12 @@ class HonorWalkViewModel internal constructor(
      */
     private fun readStageDayMaps() {
         stageDayJob?.cancel()
+        stageDayJob = null
         _stageDayMapsSaved.value = null
         val way = state.value?.way?.takeIf { it.stage != null } ?: return
-        stageDayRead = true
         stageDayJob = viewModelScope.launch {
             val stage = withContext(ioDispatcher) { PilgrimageTilesCorridor.stage(way) }
-            _stageDayMapsSaved.value = withContext(tilesDispatcher) {
-                val manager = tiles.get()
-                if (manager.awaitStore()) manager.isStageSaved(stage) else null
-            }
+            _stageDayMapsSaved.value = tiles.get().awaitStageSaved(stage)
         }
     }
 

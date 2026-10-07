@@ -6,6 +6,7 @@ import android.os.Looper
 import androidx.annotation.MainThread
 import com.mapbox.bindgen.Expected
 import com.mapbox.bindgen.Value
+import com.mapbox.common.Cancelable
 import com.mapbox.common.NetworkRestriction
 import com.mapbox.common.TileRegion
 import com.mapbox.common.TileRegionError
@@ -64,8 +65,7 @@ import kotlinx.coroutines.launch
  * `Throwable` counts, since a device whose Mapbox natives didn't load throws
  * an `Error` there: Mapbox's startup swallows the failure, and the next
  * Mapbox class to load retries it and throws. What was thrown goes to the
- * scope's handler, and an entry's failure that repeats the last one isn't
- * sent again, so a store failing alike on every call is logged once.
+ * scope's handler, which logs it, since nothing in this package does.
  */
 class MapboxTileRegionLoader internal constructor(
     private val scope: CoroutineScope,
@@ -94,7 +94,6 @@ class MapboxTileRegionLoader internal constructor(
             cache.onChange = value
         }
 
-    /** A store that can't open has no packs; the cache can't hold one, since nothing has read or loaded. */
     @MainThread
     override fun hasStylePack(pack: StylePackRequest): Boolean {
         mapboxCall { open() } ?: return false
@@ -102,9 +101,8 @@ class MapboxTileRegionLoader internal constructor(
     }
 
     @MainThread
-    override fun loadStylePack(pack: StylePackRequest, completion: (TileLoadResult<Unit>) -> Unit): TileLoadHandle {
-        val failed = { completion(TileLoadResult.Failure(TileRegionLoadingError.FAILED)) }
-        val cancelable = mapboxCall(failed) {
+    override fun loadStylePack(pack: StylePackRequest, completion: (TileLoadResult<Unit>) -> Unit): TileLoadHandle =
+        startLoad(completion) {
             open().offline.loadStylePack(styleUri(pack), stylePackLoadOptions()) { answer ->
                 onMain {
                     if (answer.value != null) {
@@ -114,35 +112,28 @@ class MapboxTileRegionLoader internal constructor(
                     }
                 }
             }
-        } ?: return NOT_STARTED
-        return TileLoadHandle(cancelable::cancel)
-    }
+        }
 
     @MainThread
     override fun loadRegion(
         request: TileRegionRequest,
         progress: (completed: Long, required: Long) -> Unit,
         completion: (TileLoadResult<TileRegionSummary>) -> Unit,
-    ): TileLoadHandle {
-        val failed = { completion(TileLoadResult.Failure(TileRegionLoadingError.FAILED)) }
-        val cancelable = mapboxCall(failed) {
-            val mapbox = open()
-            mapbox.store.loadTileRegion(request.id, regionLoadOptions(request, mapbox.descriptors)) { answer ->
-                onMain {
-                    val region = answer.value
-                    if (region != null) {
-                        // The request's hash, not a metadata read-back: it is what the load was given.
-                        cache.regionLoaded(summary(region, request.corridorHash), completion)
-                    } else {
-                        completion(TileLoadResult.Failure(answer.error?.let { mapped(it) } ?: TileRegionLoadingError.FAILED))
-                    }
+    ): TileLoadHandle = startLoad(completion) {
+        val mapbox = open()
+        mapbox.store.loadTileRegion(request.id, regionLoadOptions(request, mapbox.descriptors)) { answer ->
+            onMain {
+                val region = answer.value
+                if (region != null) {
+                    // The request's hash, not a metadata read-back: it is what the load was given.
+                    cache.regionLoaded(summary(region, request.corridorHash), completion)
+                } else {
+                    completion(TileLoadResult.Failure(answer.error?.let { mapped(it) } ?: TileRegionLoadingError.FAILED))
                 }
             }
-        } ?: return NOT_STARTED
-        return TileLoadHandle(cancelable::cancel)
+        }
     }
 
-    /** A store that can't open has no regions, as the cache would say: nothing has read or loaded into it. */
     @MainThread
     override fun regions(): List<TileRegionSummary> {
         mapboxCall { open() } ?: return emptyList()
@@ -155,33 +146,32 @@ class MapboxTileRegionLoader internal constructor(
         cache.refreshRegions(completion)
     }
 
-    /**
-     * Fire-and-forget, as the SDK's removal is: a load of the same id still
-     * pending fails as cancelled. One the store refuses, or can't open for,
-     * leaves the cache and signals nothing.
-     */
+    /** Fire-and-forget, as the SDK's removal is: a load of the same id still pending fails as cancelled. */
     @MainThread
     override fun removeRegion(id: String) {
         mapboxCall { open().store.removeTileRegion(id) } ?: return
         cache.regionRemoved(id)
     }
 
-    /**
-     * A store that can't even be opened answers [TileStoreRead.FAILED],
-     * posted, rather than leaving the caller waiting; a later call tries
-     * again, as a call after any failed answer does.
-     */
     @MainThread
     override fun firstAnswer(completion: (TileStoreRead) -> Unit) {
         mapboxCall({ completion(TileStoreRead.FAILED) }) { open() } ?: return
         cache.firstAnswer(completion)
     }
 
+    /** A load's entry: a failed load when the SDK call throws, with nothing to cancel. */
+    private fun <T> startLoad(completion: (TileLoadResult<T>) -> Unit, start: () -> Cancelable): TileLoadHandle {
+        val cancelable = mapboxCall({ completion(TileLoadResult.Failure(TileRegionLoadingError.FAILED)) }, start)
+            ?: return NOT_STARTED
+        return TileLoadHandle(cancelable::cancel)
+    }
+
     /**
      * An entry's Mapbox work, from the open to the SDK call it makes: its
      * value, or null when it threw. Then the failure is rethrown in [scope],
-     * unless it is the one last rethrown from here, and [answer], the
-     * caller's failed answer, runs posted behind it, the last step.
+     * unless it is the one last rethrown from here, so a store failing alike
+     * on every call is logged once, and [answer], the caller's failed
+     * answer, runs posted behind it, the last step.
      */
     private fun <T : Any> mapboxCall(answer: (() -> Unit)? = null, call: () -> T): T? {
         checkMainThread()
@@ -193,7 +183,7 @@ class MapboxTileRegionLoader internal constructor(
             val heard = failure.toString()
             if (heard != lastEntryFailure) {
                 lastEntryFailure = heard
-                rethrowInScope(failure)
+                onMain { throw failure }
             }
             if (answer != null) onMain(answer)
             null
@@ -221,27 +211,19 @@ class MapboxTileRegionLoader internal constructor(
      */
     private fun read(token: Int) {
         val mapbox = checkNotNull(opened) { "a store read before the store opened" }
-        try {
+        readCall(failed = { cache.regionsAnswered(token, null) }) {
             mapbox.store.getAllTileRegions { answer ->
                 onMain {
                     val regions = answer.value
                     if (regions == null) cache.regionsAnswered(token, null) else readMetadata(mapbox.store, token, regions)
                 }
             }
-        } catch (cancel: CancellationException) {
-            throw cancel
-        } catch (failure: Throwable) {
-            reportUnrequested(failure) { cache.regionsAnswered(token, null) }
         }
-        try {
+        readCall(failed = { cache.packsAnswered(token, null) }) {
             mapbox.offline.getAllStylePacks { answer ->
                 // A failed packs read is hopped too, unlike iOS's, so the first answer hears it (C3 §7).
                 onMain { cache.packsAnswered(token, answer.value?.let(::presentPacks)) }
             }
-        } catch (cancel: CancellationException) {
-            throw cancel
-        } catch (failure: Throwable) {
-            reportUnrequested(failure) { cache.packsAnswered(token, null) }
         }
     }
 
@@ -256,7 +238,8 @@ class MapboxTileRegionLoader internal constructor(
             return
         }
         val summaries = ArrayList<TileRegionSummary>(regions.size)
-        try {
+        // On a throw the count can no longer reach the list's size, so the failure is the read's only answer.
+        readCall(failed = { cache.regionsAnswered(token, null) }) {
             for (region in regions) {
                 store.getTileRegionMetadata(region.id) { metadata ->
                     onMain {
@@ -265,28 +248,28 @@ class MapboxTileRegionLoader internal constructor(
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * A store read's SDK call, which no entry asked for, so every failure is
+     * sent: it reaches the scope's handler first, then [failed] runs, posted
+     * behind it, so a completion is still the last step.
+     */
+    private inline fun readCall(noinline failed: () -> Unit, call: () -> Unit) {
+        try {
+            call()
         } catch (cancel: CancellationException) {
             throw cancel
         } catch (failure: Throwable) {
-            // The count can no longer reach the list's size, so this is the read's only answer.
-            reportUnrequested(failure) { cache.regionsAnswered(token, null) }
+            onMain { throw failure }
+            onMain(failed)
         }
     }
 
     /** iOS's `DispatchQueue.main.async`: always enqueued behind what the main thread already holds, never run inline. */
     private fun onMain(block: () -> Unit) {
         scope.launch(Dispatchers.Main) { block() }
-    }
-
-    /** [failure] reaches the scope's handler first, then [answer] runs, posted behind it, so a completion is still the last step. */
-    private fun reportUnrequested(failure: Throwable, answer: () -> Unit) {
-        rethrowInScope(failure)
-        onMain(answer)
-    }
-
-    /** Posted, to the scope's handler, which logs it, since nothing in this package does. */
-    private fun rethrowInScope(failure: Throwable) {
-        scope.launch(Dispatchers.Main) { throw failure }
     }
 
     /** What `onChange(REGIONS)` speaks for: which regions exist, whether each is done, and which corridor it was loaded for. */
@@ -389,7 +372,8 @@ class MapboxTileRegionLoader internal constructor(
         internal fun settled(regions: List<TileRegionSummary>): List<SettledRegion> =
             regions.map { SettledRegion(it.id, it.isComplete, it.corridorHash) }
 
-        /** [TileRegionSummary.isComplete]'s rule, for the counts a style pack reports under the same names. */
-        internal fun isComplete(completed: Long, required: Long): Boolean = required > 0 && completed >= required
+        /** iOS's static, which its ported test reads; the rule itself is `TileRegionLoading.kt`'s, the package's one. */
+        internal fun isComplete(completed: Long, required: Long): Boolean =
+            org.walktalkmeditate.pilgrim.data.honor.pilgrimage.isComplete(completed, required)
     }
 }
