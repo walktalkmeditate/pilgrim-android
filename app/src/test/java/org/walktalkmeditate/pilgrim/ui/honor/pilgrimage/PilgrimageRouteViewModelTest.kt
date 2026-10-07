@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.test.core.app.ApplicationProvider
 import java.io.File
 import java.time.Instant
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -18,6 +19,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -36,6 +38,7 @@ import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.HonorStageOutcome
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageCatalogEntry
@@ -52,7 +55,15 @@ import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarne
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageRoute
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageRouteStage
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageTilesCorridor
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageTilesManager
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageTilesManager.Phase as TilesPhase
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.StylePackRequest
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.TileRegionLoadingError
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.TileStage
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.domain.honor.Way
+import org.walktalkmeditate.pilgrim.domain.honor.WayJson
 import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
 
 /**
@@ -66,8 +77,15 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
  * after the commit (pilgrim-ios #121, matched), process-death restore, the
  * redraw notice shown once, the page's holds (its opening reload's, each
  * install's, counted, and none for a Remove), the stage taps, Replace,
- * Update, Remove, and a download that outlives its page. Robolectric for
- * the strings; waits are wall-clock, as the manager runs on real threads.
+ * Update, Remove, and a download that outlives its page. Then the maps row
+ * (offline-maps spec D C4 §1): iOS's held-row test, the wait for the
+ * store, the cold face, AE10, #121 item 5's Update case, a save outliving
+ * its page, the failure lines, what a save holds, the stage values off the
+ * main thread, the flag, another route's page held by a save, a stage
+ * restored at the same release, bytes per pack read on every reload, the
+ * held row refreshed mid-download, the idle trigger, a store that can't
+ * open, and a failed answer asked again. Robolectric for the strings; waits are
+ * wall-clock, as the manager runs on real threads.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -251,12 +269,33 @@ class PilgrimageRouteViewModelTest {
     }
 
     @Test
-    fun `busy is any download running, or this page's own hold`() {
+    fun `busy is any download or map save running, or this page's own hold`() {
         val downloading = PilgrimagePackageManager.Phase.Downloading(done = 1, total = 3)
-        assertTrue(PilgrimageRouteModel.isBusy(downloading, held = false))
-        assertTrue(PilgrimageRouteModel.isBusy(PilgrimagePackageManager.Phase.Idle, held = true))
-        assertFalse(PilgrimageRouteModel.isBusy(PilgrimagePackageManager.Phase.Idle, held = false))
-        assertFalse(PilgrimageRouteModel.isBusy(PilgrimagePackageManager.Phase.Failed(PilgrimageError.INCOMPLETE), held = false))
+        val failed = PilgrimagePackageManager.Phase.Failed(PilgrimageError.INCOMPLETE)
+        val idle = PilgrimagePackageManager.Phase.Idle
+        val saving = TilesPhase.Saving(done = 2, total = 4)
+        val refused = TilesPhase.Failed(PilgrimageError.WALK_IN_PROGRESS)
+        assertTrue(PilgrimageRouteModel.isBusy(downloading, TilesPhase.Idle, held = false))
+        assertTrue(PilgrimageRouteModel.isBusy(idle, TilesPhase.Idle, held = true))
+        assertTrue("a save holds the button and Remove", PilgrimageRouteModel.isBusy(idle, saving, held = false))
+        assertFalse(PilgrimageRouteModel.isBusy(idle, TilesPhase.Idle, held = false))
+        assertFalse(PilgrimageRouteModel.isBusy(failed, TilesPhase.Idle, held = false))
+        assertFalse("a failed save holds nothing", PilgrimageRouteModel.isBusy(idle, refused, held = false))
+    }
+
+    /**
+     * iOS `testTheMapsRowIsHeldOnlyWhileThePackageDownloads`
+     * (`PilgrimageCatalogServiceTests.swift:415-423@7c200bf`): during an
+     * Update the stage lines are being rewritten, so a save started then
+     * hashes soon-to-be-stale corridors. Only a download holds the row,
+     * never `isBusy`, which includes a save in flight and would take the
+     * row's own cancel with it.
+     */
+    @Test
+    fun `the maps row is held only while the package downloads`() {
+        assertTrue(PilgrimageRouteModel.mapsRowIsHeld(PilgrimagePackageManager.Phase.Downloading(done = 1, total = 34)))
+        assertFalse(PilgrimageRouteModel.mapsRowIsHeld(PilgrimagePackageManager.Phase.Idle))
+        assertFalse(PilgrimageRouteModel.mapsRowIsHeld(PilgrimagePackageManager.Phase.Failed(PilgrimageError.INCOMPLETE)))
     }
 
     // ---- The spec's additions: the ViewModel ----
@@ -324,7 +363,7 @@ class PilgrimageRouteViewModelTest {
         assertEquals(PilgrimagePackageManager.Phase.Downloading(done = 2, total = 3), vm.phase.value)
         assertEquals("stage 1 of 2", PilgrimageRouteModel.downloadProgress(resources, vm.phase.value))
         val page = settled(vm)
-        assertTrue(PilgrimageRouteModel.isBusy(vm.phase.value, page.isHeld))
+        assertTrue(PilgrimageRouteModel.isBusy(vm.phase.value, vm.tilesPhase.value, page.isHeld))
         vm.onDownloadTapped()
         vm.onRemoveTapped()
         assertNull(vm.alert.value)
@@ -351,6 +390,7 @@ class PilgrimageRouteViewModelTest {
         val page = pageOf(vm)
         assertNull("still the opening's state", page.installed)
         assertEquals("Download", PilgrimageRouteModel.buttonLabel(resources, page.isInstalled, page.hasUpdate))
+        assertNull("and the maps row stays hidden with it", vm.mapsRow.value)
         vm.open(0)
         waitUntil("a stage asks for the download") { vm.alert.value == PilgrimageRouteAlert.DOWNLOAD_FIRST }
     }
@@ -371,7 +411,7 @@ class PilgrimageRouteViewModelTest {
         assertEquals(RELEASE, page.release)
         assertTrue(page.showRedrawNotice)
         assertEquals(PilgrimagePackageManager.Phase.Idle, vm.phase.value)
-        assertFalse(PilgrimageRouteModel.isBusy(vm.phase.value, page.isHeld))
+        assertFalse(PilgrimageRouteModel.isBusy(vm.phase.value, vm.tilesPhase.value, page.isHeld))
     }
 
     @Test
@@ -427,7 +467,7 @@ class PilgrimageRouteViewModelTest {
         vm.onDownloadTapped()
         waitUntil("the guard is reading") { guardReads.get() == 1 }
         assertEquals("the phase hasn't moved yet", PilgrimagePackageManager.Phase.Idle, vm.phase.value)
-        assertTrue(PilgrimageRouteModel.isBusy(vm.phase.value, pageOf(vm).isHeld))
+        assertTrue(PilgrimageRouteModel.isBusy(vm.phase.value, vm.tilesPhase.value, pageOf(vm).isHeld))
         vm.onDownloadTapped()
         guardHeld.countDown()
 
@@ -491,7 +531,10 @@ class PilgrimageRouteViewModelTest {
             pageOf(vm).failure == PilgrimageError.INCOMPLETE && pageOf(vm).holds == 1
         }
 
-        assertTrue("held whatever the phase says", PilgrimageRouteModel.isBusy(PilgrimagePackageManager.Phase.Idle, pageOf(vm).isHeld))
+        assertTrue(
+            "held whatever the phase says",
+            PilgrimageRouteModel.isBusy(PilgrimagePackageManager.Phase.Idle, TilesPhase.Idle, pageOf(vm).isHeld),
+        )
         hold.release()
         waitUntil("the first install lands") { pageOf(vm).isInstalled && !pageOf(vm).isHeld }
         assertNull("its success clears the refusal's line, as iOS's does", pageOf(vm).failure)
@@ -589,7 +632,10 @@ class PilgrimageRouteViewModelTest {
         vm.onRemoveTapped()
         assertEquals(PilgrimageRouteAlert.REMOVE, vm.alert.value)
         vm.confirmRemove()
-        assertFalse("a Remove dims nothing, as iOS's synchronous one", PilgrimageRouteModel.isBusy(vm.phase.value, pageOf(vm).isHeld))
+        assertFalse(
+            "a Remove dims nothing, as iOS's synchronous one",
+            PilgrimageRouteModel.isBusy(vm.phase.value, vm.tilesPhase.value, pageOf(vm).isHeld),
+        )
 
         waitUntil("the remove lands") { !pageOf(vm).isInstalled }
         val page = pageOf(vm)
@@ -613,6 +659,522 @@ class PilgrimageRouteViewModelTest {
         hold.release()
 
         waitUntil("the download lands without its page") { runBlocking { world.manager.installed() } != null }
+    }
+
+
+    // ---- Spec D C4 §1: the maps row ----
+
+    /** C4 §1.2, A1: no row until the estimate and the store's answer are in, as iOS's synchronous reload draws none without them. */
+    @Test
+    fun `the maps row waits for the store's first answer, then reads the estimate`() {
+        world.install()
+        world.holdCatalog()
+        val vm = world.routeViewModel()
+        assertTrue(settled(vm).isInstalled)
+
+        waitUntil("the row asks the store") { world.onTiles { world.tilesLoader.firstAnswerRequests } == 1 }
+        assertNull("no row before the store has answered", vm.mapsRow.value)
+        world.answerStore()
+
+        val row = mapsRowOf(vm)
+        val stages = installedStages(count = 2)
+        assertEquals(stages, row.stages)
+        assertEquals(PilgrimageTilesManager.Status.None, row.status)
+        assertEquals(PilgrimageTilesCorridor.packCount(stages) * PilgrimageTilesManager.SEED_BYTES_PER_PACK, row.estimateBytes)
+        assertEquals("four z11 cells at the seed", "Save maps for the way · ~16 MB", rowText(row))
+    }
+
+    /**
+     * C4 §1.2, A3: past the wait, the cache is read anyway, iOS's own cold
+     * face, and the store's regions answer corrects it. A failed first
+     * answer gives the wait's `false` at once, as the bound passing does.
+     */
+    @Test
+    fun `a store with no answer draws iOS's cold face, and its regions answer corrects it`() {
+        world.install()
+        world.holdCatalog()
+        val vm = world.routeViewModel()
+        settled(vm)
+        waitUntil("the row asks the store") { world.onTiles { world.tilesLoader.firstAnswerRequests } == 1 }
+
+        world.onTiles { world.tilesLoader.failRegions() }
+
+        assertEquals(PilgrimageTilesManager.Status.None, mapsRowOf(vm).status)
+        world.onTiles {
+            installedStages(count = 2).forEach { world.tilesLoader.seed(it.id, it.corridorHash) }
+            world.tilesLoader.seedStylePacks()
+            world.tilesLoader.releaseRegions()
+        }
+        val saved = mapsRowOf(vm, "the regions answer lands") { it.status is PilgrimageTilesManager.Status.Saved }
+        assertEquals("maps saved · 1 MB", rowText(saved))
+    }
+
+    /**
+     * C4 correction 7: a stage Way that doesn't load is skipped, as iOS's
+     * `compactMap` skips it, so "of" counts the ones that do. With the
+     * packs missing a whole save reads "n of n" (D4, matched).
+     */
+    @Test
+    fun `the row counts only the stage Ways that load`() {
+        world.install()
+        world.answerStore()
+        File(world.harness.waysDir, WayStore.stageWayId(ROUTE_ID, 1)).deleteRecursively()
+        world.holdCatalog()
+        val vm = world.routeViewModel()
+        settled(vm)
+
+        val row = mapsRowOf(vm)
+        assertEquals(listOf(WayStore.stageWayId(ROUTE_ID, 0)), row.stages.map { it.id })
+        world.onTiles {
+            world.tilesLoader.seed(row.stages[0].id, row.stages[0].corridorHash)
+            world.tilesLoader.releaseRegions()
+        }
+
+        val counted = mapsRowOf(vm, "the regions answer lands") { it.status is PilgrimageTilesManager.Status.Partial }
+        assertEquals("Save maps for the way · 1 of 1 saved", rowText(counted))
+    }
+
+    /**
+     * AE10 from the route row (C4 §6): all 33 stages saved, then an Update
+     * to 30 that redraws stage 12. Once the page reloads on the new release
+     * the row reads 29 of 30. The Update's posted removals land before that
+     * reload, on a page its own install holds, so no "of 33" is ever
+     * published, and the old release never comes back.
+     */
+    @Test
+    fun `after an Update the row reads 29 of 30 saved once the page reloads on the new release`() {
+        withAllThirtyThreeSaved()
+        withAnUpdateToThirty()
+        world.holdCatalog()
+        val vm = world.routeViewModel()
+        assertTrue(settled(vm).hasUpdate)
+        assertEquals("maps saved · 3 MB", rowText(mapsRowOf(vm)))
+        val seen = recordRows(vm)
+
+        vm.onDownloadTapped()
+
+        waitUntil("the update lands") { pageOf(vm).installed?.release == "v1.8.0" && !pageOf(vm).isHeld }
+        val row = mapsRowOf(vm, "the new release's row") { it.release == "v1.8.0" }
+        assertEquals("Save maps for the way · 29 of 30 saved", rowText(row))
+        assertEquals(30, row.stages.size)
+        assertEquals((30..32).map { WayStore.stageWayId(ROUTE_ID, it) }.toSet(), world.onTiles { world.tilesLoader.removedIds.toSet() })
+        assertEquals("once everything posted has run", row, world.onTiles { vm.mapsRow.value })
+        assertTrue(
+            "no stale 'of 33': ${seen.map { it?.release to it?.status }}",
+            seen.none { (it?.status as? PilgrimageTilesManager.Status.Partial)?.of == 33 },
+        )
+        val fresh = seen.indexOfFirst { it?.release == "v1.8.0" }
+        assertTrue("the old release never comes back", seen.drop(fresh).none { it?.release == RELEASE })
+    }
+
+    /**
+     * pilgrim-ios #121 item 5, with C4 §1.7's maps consequence, matched: a
+     * page opened while an Update downloads keeps the old release's stage
+     * values, held until the commit; then the Update's removals read
+     * against them, "30 of 33 saved", and nothing reloads.
+     */
+    @Test
+    fun `a page opened mid-Update keeps the old release's stages and reads 30 of 33 after the commit`() {
+        withAllThirtyThreeSaved()
+        withAnUpdateToThirty()
+        val hold = world.harness.hold("stage-05.json", release = "v1.8.0")
+        val update = world.manager.update(world.harness.entry.copy(stageCount = 30), "v1.8.0")
+        hold.awaitArrival()
+        world.holdCatalog()
+        val vm = world.routeViewModel()
+        settled(vm)
+        assertEquals("maps saved · 3 MB", rowText(mapsRowOf(vm)))
+        assertTrue("held while the package downloads", PilgrimageRouteModel.mapsRowIsHeld(vm.phase.value))
+
+        hold.release()
+        update.awaitBlocking()
+
+        val row = mapsRowOf(vm, "the removals read against the old lines") {
+            it.status == PilgrimageTilesManager.Status.Partial(saved = 30, of = 33)
+        }
+        assertEquals("Save maps for the way · 30 of 33 saved", rowText(row))
+        assertEquals("still the opening's release", RELEASE, row.release)
+        assertFalse(PilgrimageRouteModel.mapsRowIsHeld(vm.phase.value) || pageOf(vm).isHeld)
+    }
+
+    /** C4 §1.5: the save runs in the manager's scope, so a page reopened mid-save shows it live, and a later one reads it saved. */
+    @Test
+    fun `a save outlives its page, a page reopened shows it live, and one opened after it ends reads maps saved`() {
+        world.install()
+        world.answerStore()
+        world.onTiles { world.tilesLoader.seedStylePacks() }
+        world.holdCatalog()
+        val first = world.routeViewModel()
+        settled(first)
+        mapsRowOf(first)
+
+        first.onSaveMaps()
+        awaitLoad()
+        leave(first)
+
+        val second = world.routeViewModel()
+        settled(second)
+        mapsRowOf(second)
+        waitUntil("the live phase") { second.tilesPhase.value == TilesPhase.Saving(done = 2, total = 4) }
+        assertEquals("maps · stage 0 of 2", savingLine(second.tilesPhase.value))
+        world.onTiles { world.tilesLoader.completeNextRegion() }
+        waitUntil("stage 1 saved") { second.tilesPhase.value == TilesPhase.Saving(done = 3, total = 4) }
+        assertEquals("maps · stage 1 of 2", savingLine(second.tilesPhase.value))
+        leave(second)
+
+        awaitLoad()
+        world.onTiles { world.tilesLoader.completeNextRegion() }
+        waitUntil("the save ends with no page open") { world.tiles.phase.value == TilesPhase.Idle }
+
+        val third = world.routeViewModel()
+        settled(third)
+        assertEquals("maps saved · 1 MB", rowText(mapsRowOf(third)))
+    }
+
+    /**
+     * C4 §1.5, C4-1 matched: a refusal lives on the manager's phase, so its
+     * line outlives the walk and the page, until the next save starts, a
+     * cancel, or a Remove, whose `remove` cancels first.
+     */
+    @Test
+    fun `a refused save reads finish your walk first until the next save, a cancel or a Remove`() {
+        world.install()
+        world.answerStore()
+        world.holdCatalog()
+        val vm = world.routeViewModel()
+        settled(vm)
+        mapsRowOf(vm)
+        val refused = TilesPhase.Failed(PilgrimageError.WALK_IN_PROGRESS)
+
+        world.tilesSignals.screenUp = true
+        vm.onSaveMaps()
+        waitUntil("the refusal") { vm.tilesPhase.value == refused }
+        assertEquals("finish your walk first", resources.getString(PilgrimageCopy.line(refused.error)))
+        world.tilesSignals.screenUp = false
+
+        val later = world.routeViewModel()
+        settled(later)
+        mapsRowOf(later)
+        waitUntil("a page opened after the walk still says it") { later.tilesPhase.value == refused }
+
+        later.onSaveMaps()
+        waitUntil("the next save clears it") { later.tilesPhase.value is TilesPhase.Saving }
+        awaitLoad()
+        world.onTiles { later.onCancelMaps() }
+        waitUntil("the cancel") { later.tilesPhase.value == TilesPhase.Idle }
+
+        world.tilesSignals.screenUp = true
+        later.onSaveMaps()
+        waitUntil("refused again") { later.tilesPhase.value == refused }
+        world.tilesSignals.screenUp = false
+        later.onRemoveTapped()
+        later.confirmRemove()
+        waitUntil("the Remove's cancel clears it") { later.tilesPhase.value == TilesPhase.Idle }
+        waitUntil("the row goes with the route") { !pageOf(later).isInstalled && later.mapsRow.value == null }
+    }
+
+    /** pilgrim-ios #122 item 5, matched: a full disk's line names voices, under the idle face. */
+    @Test
+    fun `a save stopped by a full disk reads the share importer's voices line`() {
+        world.install()
+        world.answerStore()
+        world.onTiles {
+            world.tilesLoader.seedStylePacks()
+            world.tilesLoader.nextRegionFailure = TileRegionLoadingError.DISK_FULL
+        }
+        world.holdCatalog()
+        val vm = world.routeViewModel()
+        settled(vm)
+        mapsRowOf(vm)
+
+        vm.onSaveMaps()
+        awaitLoad()
+        world.onTiles { world.tilesLoader.completeNextRegion() }
+
+        waitUntil("the failure") { vm.tilesPhase.value == TilesPhase.Failed(PilgrimageError.DISK_FULL) }
+        assertEquals(
+            "not enough space on this phone to save these voices",
+            resources.getString(PilgrimageCopy.line(PilgrimageError.DISK_FULL)),
+        )
+        assertEquals("the idle face stays over it", PilgrimageTilesManager.Status.None, vm.mapsRow.value?.status)
+    }
+
+    /** C4 §1.4: a save holds Remove and the download button, never the maps row, whose cancel stays live. */
+    @Test
+    fun `a save holds Remove and the download button, never the maps row`() {
+        world.install()
+        world.answerStore()
+        world.holdCatalog()
+        val vm = world.routeViewModel()
+        settled(vm)
+        mapsRowOf(vm)
+
+        vm.onSaveMaps()
+        waitUntil("the save runs") { vm.tilesPhase.value is TilesPhase.Saving }
+        val page = pageOf(vm)
+        assertTrue(PilgrimageRouteModel.isBusy(vm.phase.value, vm.tilesPhase.value, page.isHeld))
+        vm.onRemoveTapped()
+        assertNull("Remove is held", vm.alert.value)
+        assertFalse("the row is not", PilgrimageRouteModel.mapsRowIsHeld(vm.phase.value) || page.isHeld)
+
+        awaitLoad()
+        world.onTiles { vm.onCancelMaps() }
+        waitUntil("the cancel") { vm.tilesPhase.value == TilesPhase.Idle }
+        vm.onRemoveTapped()
+        assertEquals(PilgrimageRouteAlert.REMOVE, vm.alert.value)
+    }
+
+    /** C1 §12, A1: the stages' values are built on IO, and the page keeps only them, never a decoded Way. */
+    @Test
+    fun `the stage values are built off the main thread, and no decoded Way is kept`() {
+        world.install()
+        world.answerStore()
+        world.holdCatalog()
+        val decodes = CopyOnWriteArrayList<String>()
+        val store = WayStore({ world.harness.waysDir }, syncDirectory = { true }, decodeWay = { text ->
+            decodes += Thread.currentThread().name
+            WayJson.decode(text)
+        })
+        val vm = world.routeViewModel(wayStore = store)
+        settled(vm)
+
+        val row = mapsRowOf(vm)
+
+        assertEquals(installedStages(count = 2), row.stages)
+        assertEquals("each stage decoded once", 2, decodes.size)
+        assertTrue("on IO, never the main thread: $decodes", decodes.all { it.startsWith("DefaultDispatcher-worker") })
+        val kept = listOf(PilgrimageRouteViewModel::class.java, PilgrimageMapsRowState::class.java) +
+            PilgrimageRouteViewModel::class.java.declaredClasses
+        kept.forEach(::assertKeepsNoWay)
+    }
+
+    /** R21, C4 §5: with the flag off the page draws no row and never resolves the tiles manager. */
+    @Test
+    fun `with the flag off there is no maps row, and the tiles manager is never resolved`() {
+        world.install()
+        world.answerStore()
+        world.holdCatalog()
+
+        val vm = world.routeViewModel(flags = FixedReleaseFlags(honor = false))
+
+        assertTrue(settled(vm).isInstalled)
+        assertNull(vm.mapsRow.value)
+        assertEquals(0, world.tilesResolutions.get())
+        assertEquals(TilesPhase.Idle, vm.tilesPhase.value)
+    }
+
+    /**
+     * C4 §1.4, iOS's `isBusy` (`PilgrimageRouteView.swift:308-312@7c200bf`):
+     * a save holds any route's button, so another route's page follows the
+     * manager's phase. It draws no row and reads no store of its own.
+     */
+    @Test
+    fun `a save holds another route's Download, and that page draws no maps row and reads no store`() {
+        world.stubIndex(PilgrimageScreensWorld.index(routes = listOf(ROUTE_ID to "Francés", NORTE_ID to "Norte")))
+        world.harness.stubNorte()
+        world.install()
+        world.answerStore()
+        world.holdCatalog()
+        val saving = world.routeViewModel()
+        settled(saving)
+        mapsRowOf(saving)
+        saving.onSaveMaps()
+        awaitLoad()
+        leave(saving)
+        val storeReads = world.onTiles { world.tilesLoader.regionsReadCount to world.tilesLoader.firstAnswerRequests }
+
+        val other = world.routeViewModel(routeId = NORTE_ID)
+
+        val page = settled(other)
+        assertFalse(page.isInstalled)
+        waitUntil("the page follows the save") { other.tilesPhase.value is TilesPhase.Saving }
+        assertTrue(PilgrimageRouteModel.isBusy(other.phase.value, other.tilesPhase.value, page.isHeld))
+        other.onDownloadTapped()
+        assertNull("no Replace? while the save runs", other.alert.value)
+
+        world.onTiles { world.tiles.cancel() }
+        waitUntil("the save ends") { other.tilesPhase.value == TilesPhase.Idle }
+        assertNull(other.mapsRow.value)
+        assertEquals(
+            "no store read of its own",
+            storeReads,
+            world.onTiles { world.tilesLoader.regionsReadCount to world.tilesLoader.firstAnswerRequests },
+        )
+        other.onDownloadTapped()
+        assertEquals(PilgrimageRouteAlert.REPLACE, other.alert.value)
+    }
+
+    /**
+     * Parity review P3-1: iOS's every reload reads the stage Ways afresh. A
+     * same-release download rewrites every stage, so a stage it restores
+     * joins the row and its estimate.
+     */
+    @Test
+    fun `a stage restored by Download this route first joins the row at the same release`() {
+        world.install()
+        world.answerStore()
+        File(world.harness.waysDir, WayStore.stageWayId(ROUTE_ID, 1)).deleteRecursively()
+        world.holdCatalog()
+        val vm = world.routeViewModel()
+        settled(vm)
+        assertEquals(listOf(WayStore.stageWayId(ROUTE_ID, 0)), mapsRowOf(vm).stages.map { it.id })
+
+        vm.open(1)
+        waitUntil("Download this route first?") { vm.alert.value == PilgrimageRouteAlert.DOWNLOAD_FIRST }
+        vm.confirmDownloadFirst()
+        waitUntil("the download lands") { !pageOf(vm).isHeld }
+
+        assertNull(pageOf(vm).failure)
+        val row = mapsRowOf(vm, "the restored stage joins the row") { it.stages.size == 2 }
+        assertEquals(installedStages(count = 2), row.stages)
+        assertEquals("Save maps for the way · ~16 MB", rowText(row))
+    }
+
+    /** C4 correction 5: a save calibrates bytes per pack without a release, so a same-release reload reads it again. */
+    @Test
+    fun `bytes per pack is read again on every reload, so a calibration since the last one moves the estimate`() {
+        world.install()
+        world.answerStore()
+        File(world.harness.waysDir, WayStore.stageWayId(ROUTE_ID, 1)).deleteRecursively()
+        world.holdCatalog()
+        val vm = world.routeViewModel()
+        settled(vm)
+        val first = mapsRowOf(vm)
+        val packs = PilgrimageTilesCorridor.packCount(first.stages).toLong()
+        assertEquals(packs * PilgrimageTilesManager.SEED_BYTES_PER_PACK, first.estimateBytes)
+        world.tilesCalibration.store(ROUTE_ID, CALIBRATED_BYTES_PER_PACK)
+
+        vm.open(1)
+        waitUntil("Download this route first?") { vm.alert.value == PilgrimageRouteAlert.DOWNLOAD_FIRST }
+        world.harness.signals.screenUp = true
+        vm.confirmDownloadFirst()
+        waitUntil("the refusal reloads the page") {
+            pageOf(vm).failure == PilgrimageError.WALK_IN_PROGRESS && !pageOf(vm).isHeld
+        }
+
+        val row = mapsRowOf(vm, "the reload's estimate") { it.estimateBytes == packs * CALIBRATED_BYTES_PER_PACK }
+        assertEquals("a refused install keeps the release's stages", first.stages, row.stages)
+    }
+
+    /**
+     * Parity review P3-2: an install holds the page through its download,
+     * and iOS's held row still refreshes then. Here the cold face, then a
+     * regions answer mid-Update, corrects the held row before the commit.
+     */
+    @Test
+    fun `a row held by its own Update is refreshed while the package downloads`() {
+        world.install()
+        world.stubIndex(PilgrimageScreensWorld.index(release = "v1.8.0"))
+        world.harness.stubWholePackage(release = "v1.8.0")
+        val hold = world.harness.hold("stage-01.json", release = "v1.8.0")
+        world.holdCatalog()
+        val vm = world.routeViewModel()
+        assertTrue(settled(vm).hasUpdate)
+        waitUntil("the row asks the store") { world.onTiles { world.tilesLoader.firstAnswerRequests } == 1 }
+        world.onTiles { world.tilesLoader.failRegions() }
+        assertEquals(PilgrimageTilesManager.Status.None, mapsRowOf(vm).status)
+
+        vm.onDownloadTapped()
+        hold.awaitArrival()
+        world.onTiles {
+            installedStages(count = 2).forEach { world.tilesLoader.seed(it.id, it.corridorHash) }
+            world.tilesLoader.seedStylePacks()
+            world.tilesLoader.releaseRegions()
+        }
+
+        val saved = mapsRowOf(vm, "the held row corrects") { it.status is PilgrimageTilesManager.Status.Saved }
+        assertEquals("maps saved · 1 MB", rowText(saved))
+        assertTrue("still downloading", vm.phase.value is PilgrimagePackageManager.Phase.Downloading)
+        assertTrue("still held", pageOf(vm).isHeld)
+        hold.release()
+        waitUntil("the update lands") { pageOf(vm).installed?.release == "v1.8.0" && !pageOf(vm).isHeld }
+    }
+
+    /**
+     * iOS's third trigger (`PilgrimageRouteView.swift:150-154@7c200bf`): a
+     * save whose regions were all present loads only packs, whose answer
+     * never signals regions (D4), so only the phase turning idle re-reads
+     * the row.
+     */
+    @Test
+    fun `a save that loads only packs re-reads the row when its phase turns idle`() {
+        world.install()
+        world.onTiles { installedStages(count = 2).forEach { world.tilesLoader.seed(it.id, it.corridorHash) } }
+        world.answerStore()
+        world.holdCatalog()
+        val vm = world.routeViewModel()
+        settled(vm)
+        assertEquals("Save maps for the way · 2 of 2 saved", rowText(mapsRowOf(vm)))
+
+        vm.onSaveMaps()
+        repeat(StylePackRequest.entries.size) {
+            awaitLoad()
+            world.onTiles { world.tilesLoader.completeNextPack() }
+        }
+
+        val saved = mapsRowOf(vm, "the idle phase re-reads the row") { it.status is PilgrimageTilesManager.Status.Saved }
+        assertEquals("maps saved · 1 MB", rowText(saved))
+        assertEquals(TilesPhase.Idle, world.tiles.phase.value)
+    }
+
+    /**
+     * A-C3-11: a store that can't open answers as an empty, unread one, its
+     * first answer failed. The page reads the status anyway and draws iOS's
+     * cold face, over maps already on disk, with nothing thrown.
+     */
+    @Test
+    fun `a store that can't open draws iOS's cold face, whatever is on disk`() {
+        world.install()
+        world.onTiles {
+            installedStages(count = 2).forEach { world.tilesLoader.seed(it.id, it.corridorHash) }
+            world.tilesLoader.seedStylePacks()
+            world.tilesLoader.storeOpens = false
+        }
+        world.holdCatalog()
+        val vm = world.routeViewModel()
+        settled(vm)
+        waitUntil("the row asks the store") { world.onTiles { world.tilesLoader.firstAnswerRequests } == 1 }
+
+        world.onTiles { world.tilesLoader.failRegions() }
+
+        val row = mapsRowOf(vm)
+        assertEquals(PilgrimageTilesManager.Status.None, row.status)
+        assertEquals("Save maps for the way · ~16 MB", rowText(row))
+    }
+
+    /**
+     * After a failed first answer nothing may be left in flight to signal
+     * regions-changed, and the manager asks the store afresh, so the page's
+     * next reload (here a refused install's) asks again and reads what is on
+     * disk, rather than drawing the cold face until the page is reopened.
+     */
+    @Test
+    fun `after a failed first answer the next reload asks the store again and reads the saved status`() {
+        world.install()
+        File(world.harness.waysDir, WayStore.stageWayId(ROUTE_ID, 1)).deleteRecursively()
+        world.holdCatalog()
+        val vm = world.routeViewModel()
+        settled(vm)
+        waitUntil("the row asks the store") { world.onTiles { world.tilesLoader.firstAnswerRequests } == 1 }
+        world.onTiles { world.tilesLoader.failRegions() }
+        val cold = mapsRowOf(vm)
+        assertEquals(PilgrimageTilesManager.Status.None, cold.status)
+
+        vm.open(1)
+        waitUntil("Download this route first?") { vm.alert.value == PilgrimageRouteAlert.DOWNLOAD_FIRST }
+        world.harness.signals.screenUp = true
+        vm.confirmDownloadFirst()
+        waitUntil("the refused install's reload asks the store again") {
+            world.onTiles { world.tilesLoader.firstAnswerRequests } == 2
+        }
+        world.onTiles {
+            world.tilesLoader.seed(cold.stages[0].id, cold.stages[0].corridorHash)
+            world.tilesLoader.seedStylePacks()
+            world.tilesLoader.releaseRegions()
+        }
+
+        val saved = mapsRowOf(vm, "the saved status") { it.status is PilgrimageTilesManager.Status.Saved }
+        assertEquals(PilgrimageTilesManager.Status.Saved(bytes = 100_000), saved.status)
     }
 
     // ---- Helpers ----
@@ -675,7 +1237,7 @@ class PilgrimageRouteViewModelTest {
     private fun assertTapsHeldUntilTheFirstReload(vm: PilgrimageRouteViewModel, busy: PilgrimageScreensWorld.ManagerHold) {
         val opening = pageOf(vm)
         assertNull("nothing is read yet", opening.installed)
-        assertTrue(PilgrimageRouteModel.isBusy(vm.phase.value, opening.isHeld))
+        assertTrue(PilgrimageRouteModel.isBusy(vm.phase.value, vm.tilesPhase.value, opening.isHeld))
         vm.onDownloadTapped()
         vm.onRemoveTapped()
         assertNull(vm.alert.value)
@@ -692,10 +1254,75 @@ class PilgrimageRouteViewModelTest {
         assertEquals(PilgrimageRouteAlert.REPLACE, vm.alert.value)
     }
 
+    /** The row once it has landed and [until] holds of it, as the page last published it. */
+    private fun mapsRowOf(
+        vm: PilgrimageRouteViewModel,
+        what: String = "the maps row lands",
+        until: (PilgrimageMapsRowState) -> Boolean = { true },
+    ): PilgrimageMapsRowState {
+        var row: PilgrimageMapsRowState? = null
+        waitUntil(what) { vm.mapsRow.value?.takeIf(until).also { row = it } != null }
+        return row!!
+    }
+
+    /** What the row's idle face reads: the saved line beside the check, or the button's label. */
+    private fun rowText(row: PilgrimageMapsRowState): String =
+        (row.status as? PilgrimageTilesManager.Status.Saved)?.let { PilgrimageMapsRowModel.savedLine(resources, it.bytes) }
+            ?: PilgrimageMapsRowModel.label(resources, row.status, row.estimateBytes)
+
+    private fun savingLine(phase: TilesPhase): String =
+        (phase as TilesPhase.Saving).let { PilgrimageMapsRowModel.savingLine(resources, it.done, it.total) }
+
+    private fun installedStages(count: Int): List<TileStage> = PilgrimageTilesCorridor.stages(world.harness.wayStore, ROUTE_ID, count)
+
+    /** The save parked on a pack or region load the test then completes on the tiles thread. */
+    private fun awaitLoad() = waitUntil("the save reaches a load") { world.onTiles { world.tilesLoader.hasPendingWork } }
+
+    /** The page going, by Back or a swipe. */
+    private fun leave(vm: PilgrimageRouteViewModel) = runBlocking { vm.viewModelScope.coroutineContext[Job]!!.cancelAndJoin() }
+
+    /** Every row value the page publishes from here on, each as it is set. */
+    private fun recordRows(vm: PilgrimageRouteViewModel): List<PilgrimageMapsRowState?> {
+        val seen = CopyOnWriteArrayList<PilgrimageMapsRowState?>()
+        vm.viewModelScope.launch(Dispatchers.Unconfined) { vm.mapsRow.collect { seen += it } }
+        return seen
+    }
+
+    /** The Francés at [RELEASE] with 33 stages on the phone, every stage's region and both packs saved, and the store answered. */
+    private fun withAllThirtyThreeSaved() {
+        world.stubIndex(PilgrimageScreensWorld.index(stageCount = 33))
+        world.stubStages(stageCount = 33, release = RELEASE)
+        world.install(entry = world.harness.entry.copy(stageCount = 33))
+        world.onTiles {
+            installedStages(count = 33).forEach { world.tilesLoader.seed(it.id, it.corridorHash) }
+            world.tilesLoader.seedStylePacks()
+            world.tilesLoader.releaseRegions()
+        }
+    }
+
+    /** AE10's release: 30 stages, stage 12 redrawn. */
+    private fun withAnUpdateToThirty() {
+        world.stubIndex(PilgrimageScreensWorld.index(release = "v1.8.0", stageCount = 30))
+        world.stubStages(stageCount = 30, release = "v1.8.0", redrawn = setOf(12))
+    }
+
+    /** No field the page keeps for its row is typed to hold a decoded Way: a `Way`, a `List<Way>`, and so on. */
+    private fun assertKeepsNoWay(type: Class<*>) {
+        val way = Regex("""\b${Regex.escape(Way::class.java.name)}\b""")
+        type.declaredFields.forEach { field ->
+            assertFalse("${type.simpleName}.${field.name} can hold a Way", way.containsMatchIn(field.genericType.typeName))
+        }
+    }
+
     /** The stage Way [action] opens, subscribed before it runs, as the screen subscribes before any tap. */
     private fun openedBy(vm: PilgrimageRouteViewModel, action: () -> Unit): String = runBlocking {
         val opened = async(start = CoroutineStart.UNDISPATCHED) { withTimeout(10_000) { vm.opened.first() } }
         action()
         opened.await()
+    }
+
+    private companion object {
+        /** A save's calibration, a quarter of the seed, so the estimate it gives can't be the seed's. */
+        const val CALIBRATED_BYTES_PER_PACK = 1_000_000L
     }
 }

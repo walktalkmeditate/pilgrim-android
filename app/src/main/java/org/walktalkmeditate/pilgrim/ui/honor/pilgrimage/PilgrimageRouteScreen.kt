@@ -57,6 +57,7 @@ import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageError
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageLedger
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageRouteStage
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageTilesManager
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.ui.honor.DISABLED_ALPHA
 import org.walktalkmeditate.pilgrim.ui.honor.HonorSheetFrame
@@ -82,27 +83,32 @@ class PilgrimageRouteActions(
     val onConfirmRemove: () -> Unit,
     val onConfirmDownloadFirst: () -> Unit,
     val onDismissAlert: () -> Unit,
+    val onSaveMaps: () -> Unit,
+    val onCancelMaps: () -> Unit,
 )
 
 /**
  * iOS `PilgrimageRouteView` (`PilgrimageRouteView.swift:66-401@7c200bf`,
  * pilgrimage-stage spec P4 §4): the route's name in the bar, Back to the
  * catalog leading, and, for the installed route, the overflow's Remove;
- * then three sections: the summary with the download button and the
- * status lines under it, the next row on the installed route, and
- * "Stages", which stands whether or not the route is on the phone.
+ * then three sections: the summary with the download button, the maps
+ * row under it on the installed route ([mapsRow]) and the status lines
+ * under the section, the next row on the installed route, and "Stages",
+ * which stands whether or not the route is on the phone.
  */
 @Composable
 fun PilgrimageRouteContent(
     state: PilgrimageRouteUiState,
     phase: PilgrimagePackageManager.Phase,
+    tilesPhase: PilgrimageTilesManager.Phase,
+    mapsRow: PilgrimageMapsRowState?,
     units: UnitSystem,
     alert: PilgrimageRouteAlert?,
     actions: PilgrimageRouteActions,
     modifier: Modifier = Modifier,
 ) {
     val page = (state as? PilgrimageRouteUiState.Ready)?.page
-    val busy = page != null && PilgrimageRouteModel.isBusy(phase, page.isHeld)
+    val busy = page != null && PilgrimageRouteModel.isBusy(phase, tilesPhase, page.isHeld)
     HonorSheetFrame(
         title = page?.entry?.name.orEmpty(),
         leading = {
@@ -125,7 +131,7 @@ fun PilgrimageRouteContent(
             // The catalog is read again after a process death; the sheet keeps its size meanwhile.
             Box(Modifier.fillMaxSize())
         } else {
-            RouteSections(page, phase, units, busy, actions)
+            RouteSections(page, phase, tilesPhase, mapsRow, units, busy, actions)
         }
     }
     if (page != null && alert != null) RouteAlert(alert, page, actions)
@@ -135,12 +141,14 @@ fun PilgrimageRouteContent(
 private fun RouteSections(
     page: PilgrimageRoutePage,
     phase: PilgrimagePackageManager.Phase,
+    tilesPhase: PilgrimageTilesManager.Phase,
+    mapsRow: PilgrimageMapsRowState?,
     units: UnitSystem,
     busy: Boolean,
     actions: PilgrimageRouteActions,
 ) {
     LazyColumn(modifier = Modifier.fillMaxSize()) {
-        item(key = "header") { HeaderSection(page, phase, units, busy, actions.onDownload) }
+        item(key = "header") { HeaderSection(page, phase, tilesPhase, mapsRow, units, busy, actions) }
         if (page.isInstalled) {
             item(key = "next") {
                 Column {
@@ -177,16 +185,20 @@ private fun RouteSections(
 
 /**
  * The summary (or "<Tradition> · <region>"), the sparse note, the card
- * line (no badge: the button says it), and the button, 8 apart; under the
- * group, the status lines.
+ * line (no badge: the button says it), the button, and the maps row, 8
+ * apart; under the group, the status lines. The maps row's failure line is
+ * its own, inside the group (spec D C4 §1.1). The row is held while a
+ * package downloads or the page holds itself, never by a save.
  */
 @Composable
 private fun HeaderSection(
     page: PilgrimageRoutePage,
     phase: PilgrimagePackageManager.Phase,
+    tilesPhase: PilgrimageTilesManager.Phase,
+    mapsRow: PilgrimageMapsRowState?,
     units: UnitSystem,
     busy: Boolean,
-    onDownload: () -> Unit,
+    actions: PilgrimageRouteActions,
 ) {
     val resources = LocalResources.current
     Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs)) {
@@ -206,7 +218,17 @@ private fun HeaderSection(
                     style = pilgrimType.caption,
                     color = pilgrimColors.fog,
                 )
-                DownloadButton(page, busy, onDownload)
+                DownloadButton(page, busy, actions.onDownload)
+                if (mapsRow != null) {
+                    PilgrimageMapsRow(
+                        estimateBytes = mapsRow.estimateBytes,
+                        status = mapsRow.status,
+                        phase = tilesPhase,
+                        enabled = !PilgrimageRouteModel.mapsRowIsHeld(phase) && !page.isHeld,
+                        onSave = actions.onSaveMaps,
+                        onCancel = actions.onCancelMaps,
+                    )
+                }
             }
         }
         StatusLines(page, phase)
@@ -466,6 +488,8 @@ fun PilgrimageRouteSheet(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val phase by viewModel.phase.collectAsStateWithLifecycle()
+    val tilesPhase by viewModel.tilesPhase.collectAsStateWithLifecycle()
+    val mapsRow by viewModel.mapsRow.collectAsStateWithLifecycle()
     val units by viewModel.units.collectAsStateWithLifecycle()
     val alert by viewModel.alert.collectAsStateWithLifecycle()
     val back by rememberUpdatedState(onBack)
@@ -481,6 +505,8 @@ fun PilgrimageRouteSheet(
         PilgrimageRouteContent(
             state = state,
             phase = phase,
+            tilesPhase = tilesPhase,
+            mapsRow = mapsRow,
             units = units,
             alert = alert,
             actions = PilgrimageRouteActions(
@@ -494,6 +520,8 @@ fun PilgrimageRouteSheet(
                 onConfirmRemove = viewModel::confirmRemove,
                 onConfirmDownloadFirst = viewModel::confirmDownloadFirst,
                 onDismissAlert = viewModel::dismissAlert,
+                onSaveMaps = viewModel::onSaveMaps,
+                onCancelMaps = viewModel::onCancelMaps,
             ),
         )
     }
