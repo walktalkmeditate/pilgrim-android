@@ -21,6 +21,7 @@ import org.walktalkmeditate.pilgrim.data.honor.WayArrival
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageLedgerStore
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageTilesManager
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.honor.WaySweeper
 
@@ -89,9 +90,10 @@ class HonorFinalizer internal constructor(
     /** The UI process's expiry sweep; never resolved in `:tracker`, which never runs [runAtLaunch]. */
     private val expirySweep: suspend () -> Unit = {},
     /**
-     * The pilgrimage packages' launch work ([PilgrimagePackageManager.runAtLaunch]):
-     * UI process only, as [expirySweep] is, and with the release flag off
-     * the manager isn't even built (pilgrimage-stage spec P2 §12, gaps 9 and 14).
+     * The pilgrimage packages' launch work ([launchPilgrimage]): UI process
+     * only, as [expirySweep] is, and with the release flag off neither the
+     * package manager nor the tiles manager is even built (pilgrimage-stage
+     * spec P2 §12, gaps 9 and 14; spec D §C2.10).
      */
     private val packageLaunchWork: suspend () -> Unit = {},
 ) {
@@ -104,6 +106,7 @@ class HonorFinalizer internal constructor(
         waySweeper: Provider<WaySweeper>,
         releaseFlags: ReleaseFlags,
         packageManager: Provider<PilgrimagePackageManager>,
+        tilesManager: Provider<PilgrimageTilesManager>,
     ) : this(
         database,
         wayStore,
@@ -111,7 +114,7 @@ class HonorFinalizer internal constructor(
         Dispatchers.IO,
         ledgers = ledgers,
         expirySweep = { waySweeper.get().sweep() },
-        packageLaunchWork = { if (releaseFlags.honor) packageManager.get().runAtLaunch() },
+        packageLaunchWork = { if (releaseFlags.honor) launchPilgrimage(tilesManager.get(), packageManager) },
     )
 
     /** The Honor step for one walk; throws only what Room throws, and cancellation. */
@@ -256,5 +259,22 @@ class HonorFinalizer internal constructor(
         private const val TAG = "HonorFinalizer"
 
         const val STAGING_GRACE_MILLIS = 24L * 60 * 60 * 1000
+
+        /**
+         * iOS `reconcileTilesAtLaunch` (`AppDelegate.swift:184-192@7c200bf`, spec D
+         * §C2.10), in its order: the tiles first, whose store starts its first
+         * read here so it is warm even if the package read below throws; then
+         * the launch's package read, which finishes a Replace a kill
+         * interrupted; then the sweep of every saved map that read doesn't
+         * account for. The reconcile posts and returns, so the expiry sweep
+         * after this never waits on the tile store. A thrown read skips it.
+         */
+        private suspend fun launchPilgrimage(tiles: PilgrimageTilesManager, packages: Provider<PilgrimagePackageManager>) {
+            tiles.warm()
+            val installed = packages.get().runAtLaunch()
+            tiles.reconcile(installed?.let { PilgrimageTilesManager.InstalledRoute(it.routeId, it.route.stageCount) })
+            // pilgrim-ios #91's launch step goes here, fed by the same read: `restampStageHours(of: installed)`
+            // when something is installed (`AppDelegate.swift:188-199@e551b11`), for the #91 fold-in plan.
+        }
     }
 }

@@ -9,6 +9,11 @@
              (Thought Threads) must never leave the device even if a
              future edit narrows the blanket exclude to specific paths. -->
         <exclude domain="file" path="transcript_contexts/"/>
+        <!-- Mapbox's folder: the tile store with any saved maps, and the
+             map's own cache. Re-downloadable and up to hundreds of MB.
+             Redundant with the blanket exclude above, explicit like
+             transcript_contexts/. -->
+        <exclude domain="file" path=".mapbox/"/>
     </cloud-backup>
     <device-transfer>
         <include domain="database" path="."/>
@@ -25,5 +30,10 @@
              worth carrying to a new device, and it is invalidated by an
              analysisVersion bump anyway. -->
         <exclude domain="file" path="transcript_contexts/"/>
+        <!-- Mapbox's folder (files/.mapbox/): the tile store with any saved
+             maps, and the map's cache. A new phone saves its maps again,
+             as iOS does after a restore (exclude takes precedence over the
+             include above). -->
+        <exclude domain="file" path=".mapbox/"/>
     </device-transfer>
 </data-extraction-rules>

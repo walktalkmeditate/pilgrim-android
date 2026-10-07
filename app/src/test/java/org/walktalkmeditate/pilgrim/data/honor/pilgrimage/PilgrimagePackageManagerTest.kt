@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.data.honor.pilgrimage
 
 import android.app.Application
 import android.content.Context
+import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
 import java.io.File
 import java.io.IOException
@@ -40,7 +41,9 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness.Companion.RELEASE
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness.Companion.ROUTE_ID
@@ -55,13 +58,15 @@ import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarne
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager.Phase
 import org.walktalkmeditate.pilgrim.di.NetworkModule
 import org.walktalkmeditate.pilgrim.domain.honor.WayJson
+import org.walktalkmeditate.pilgrim.honor.HonorBeginsInFlight
 import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.PilgrimageRouteModel
+import org.walktalkmeditate.pilgrim.walk.honor.HonorHarness
 
 /**
  * Port of iOS `PilgrimagePackageManagerTests.swift@7c200bf`, names kept
- * (pilgrimage-stage spec P2, Test inventory): 21 of its 22, since
- * `testRemoveReplaceAndUpdateReachTheTilesManager` waits for Stage 21-3's
- * tiles manager. Every proof that no stage is left reads the store's
+ * (pilgrimage-stage spec P2, Test inventory): all 22, the last,
+ * `testRemoveReplaceAndUpdateReachTheTilesManager`, with Stage 21-3's tiles
+ * manager (spec D §C2.T). Every proof that no stage is left reads the store's
  * stage-id listing, never `list()`, which steps over stages (P2 C-9). Its
  * `+Lifecycle` and `+Streaming` cases, and the guard's, are their own files.
  *
@@ -455,6 +460,91 @@ class PilgrimagePackageManagerTest {
         )
     }
 
+    /**
+     * A real tiles manager on a fake loader, on the main thread as in
+     * production. The package manager calls the hooks on IO under its actor,
+     * and they post, so each step idles the main looper before it asserts;
+     * the fake is seeded on the main thread, the test's (spec D §C2.T).
+     */
+    @Test
+    fun `remove, replace and update reach the tiles manager`() {
+        val escaped = CopyOnWriteArrayList<Throwable>()
+        val tilesScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + recordingHandler(escaped))
+        val tilesLoader = FakeTileRegionLoader()
+        val tiles = PilgrimageTilesManager(tilesLoader, InMemoryTilesCalibration(), h.signals, Dispatchers.Main.immediate, tilesScope)
+        val manager = h.makeManager(tiles)
+        try {
+            manager.download(h.entry, RELEASE).awaitBlocking()
+            tilesLoader.seed("pilgrimage:camino-frances:0", corridorHash = "h")
+            tilesLoader.seed("pilgrimage:camino-frances:1", corridorHash = "h")
+
+            // Update to a one-stage package: index 1 is retired and its region goes.
+            h.stubOneStagePackage("v1.8.0")
+            manager.update(h.entryWithOneStage, "v1.8.0").awaitBlocking()
+            idleMain()
+            assertEquals(listOf("pilgrimage:camino-frances:1"), tilesLoader.removedIds)
+            assertTrue("an update downloads no maps", tilesLoader.regionRequests.isEmpty())
+
+            // Replace with a different route: the outgoing route's own region
+            // goes too, not just its stages and package. Re-seeded so this step
+            // stands on its own rather than on the update's untouched index 0.
+            tilesLoader.seed("pilgrimage:camino-frances:0", corridorHash = "h")
+            h.stubTwoStagePackage("camino-norte")
+            manager.replace(h.entry("camino-norte"), RELEASE).awaitBlocking()
+            idleMain()
+            assertTrue(tilesLoader.removedIds.contains("pilgrimage:camino-frances:0"))
+            assertEquals("camino-norte", manager.installedBlocking()?.routeId)
+
+            val francesRemovals = tilesLoader.removedIds.count { it.startsWith("pilgrimage:camino-frances:") }
+            manager.remove("camino-norte").awaitBlocking()
+            idleMain()
+            assertEquals(
+                "camino-norte's removal touches none of camino-frances's already-removed regions",
+                francesRemovals,
+                tilesLoader.removedIds.count { it.startsWith("pilgrimage:camino-frances:") },
+            )
+            assertTrue("nothing escaped the hooks: $escaped", escaped.isEmpty())
+        } finally {
+            tilesScope.cancel()
+        }
+    }
+
+    /** The injected constructor, as Hilt builds it in the UI process: the tiles manager is resolved with the flag on, never off. */
+    @Test
+    fun `the injected manager holds the tiles manager only with the release flag on`() {
+        val honor = HonorHarness(folder.newFolder("honor"))
+        val tiles = PilgrimageTilesHarness()
+        val resolved = AtomicInteger()
+        fun injected(honorEnabled: Boolean) = PilgrimagePackageManager(
+            ApplicationProvider.getApplicationContext(),
+            h.wayStore,
+            h.ledgers,
+            PilgrimagePackageManager.httpClient(h.server.url("/")),
+            UiPilgrimageWalkSignals(
+                router = { error("the guard isn't read here") },
+                walks = honor.repository,
+                honorDao = honor.db.honorDao(),
+                begins = HonorBeginsInFlight(),
+                finalizer = { error("the guard isn't read here") },
+            ),
+            FixedReleaseFlags(honor = honorEnabled),
+            {
+                resolved.incrementAndGet()
+                tiles.manager
+            },
+        )
+        try {
+            injected(honorEnabled = false)
+            assertEquals("flag off", 0, resolved.get())
+
+            injected(honorEnabled = true)
+            assertEquals(1, resolved.get())
+        } finally {
+            tiles.close()
+            honor.close()
+        }
+    }
+
     // ---- The files a download writes ---------------------------------------------
 
     @Test
@@ -738,6 +828,8 @@ class PilgrimagePackageManagerTest {
     // ---- Helpers -------------------------------------------------------------------------------
 
     private fun routeFile(): File = requireNotNull(h.wayStore.routeFile(ROUTE_ID))
+
+    private fun idleMain() = shadowOf(Looper.getMainLooper()).idle()
 
     private fun releaseFile(): File = requireNotNull(h.wayStore.releaseFile(ROUTE_ID))
 

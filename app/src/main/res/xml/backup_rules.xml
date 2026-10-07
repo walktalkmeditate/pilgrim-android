@@ -6,4 +6,6 @@
     <!-- See data_extraction_rules.xml's cloud-backup domain for why this
          is explicit despite the blanket file-domain exclude above. -->
     <exclude domain="file" path="transcript_contexts/"/>
+    <!-- See data_extraction_rules.xml: Mapbox's tile store and map cache. -->
+    <exclude domain="file" path=".mapbox/"/>
 </full-backup-content>

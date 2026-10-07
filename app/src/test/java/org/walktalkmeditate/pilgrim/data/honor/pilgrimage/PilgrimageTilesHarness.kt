@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.job
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -58,6 +59,12 @@ internal class PilgrimageTilesHarness {
 
     /** Runs what the manager's thread has queued: posted hooks, resumed loads. */
     fun drain() = scheduler.runCurrent()
+
+    /** For a test outside [run]: the scope cancelled, and what that cancels run to its end on the manager's thread. */
+    fun close() {
+        scope.cancel()
+        drain()
+    }
 
     /** iOS's `untilPending()`: the manager's thread drained, and a load waiting for the test to complete it. */
     fun untilPending() {
