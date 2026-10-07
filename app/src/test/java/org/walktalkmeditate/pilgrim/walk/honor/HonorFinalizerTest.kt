@@ -46,7 +46,10 @@ import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.HonorStageOutcome
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageCatalogService
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageLedger
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageLedgerStore
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness.Companion.awaitBlocking
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageTilesHarness
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageStageIdentity
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPhase
@@ -748,13 +751,19 @@ class HonorFinalizerTest {
         assertEquals(listOf("packages", "expiry sweep"), ran)
     }
 
-    /** UI process only: `:tracker` finalizes but never launches, and with the flag off nothing builds the manager. */
+    /**
+     * UI process only: `:tracker` finalizes but never launches, and with the
+     * flag off nothing builds the package manager or the tiles manager, whose
+     * loader is the only code that opens Mapbox's store (spec D C3 §11).
+     */
     @Test
-    fun `the package manager is built only by a launch with the release flag on, never by the tracker's finalize`() =
+    fun `the package and tiles managers are built only by a launch with the release flag on, never by the tracker's finalize`() =
         runBlocking {
             val tempRoot = File(folder.root, "pilgrimage-tmp")
             val killedDownload = File(tempRoot, "pilgrimage-killed").apply { mkdirs() }
             val built = AtomicInteger()
+            val tilesBuilt = AtomicInteger()
+            val tiles = PilgrimageTilesHarness()
             val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
             fun finalizer(honor: Boolean) = HonorFinalizer(
                 h.db,
@@ -767,10 +776,15 @@ class HonorFinalizerTest {
                     built.incrementAndGet()
                     packageManager(tempRoot, managerScope)
                 },
+                tilesManager = Provider {
+                    tilesBuilt.incrementAndGet()
+                    tiles.manager
+                },
             )
 
             finalizer(honor = false).runAtLaunch()
             assertEquals("flag off", 0, built.get())
+            assertEquals("flag off, no tiles", 0, tilesBuilt.get())
             assertTrue(killedDownload.exists())
 
             val withTheFlag = finalizer(honor = true)
@@ -778,12 +792,106 @@ class HonorFinalizerTest {
             withTheFlag.finalize(walk.id)
             withTheFlag.finalizePending()
             assertEquals("the tracker's path", 0, built.get())
+            assertEquals("the tracker's path, no tiles", 0, tilesBuilt.get())
 
             withTheFlag.runAtLaunch()
             assertEquals(1, built.get())
+            assertEquals(1, tilesBuilt.get())
             assertFalse("the launch swept the temp set a kill left", killedDownload.exists())
+            tiles.close()
             managerScope.cancel()
         }
+
+    // The tiles at launch (spec D §C2.10): the store warmed, then the package read, then the reconcile on its answer
+
+    @Test
+    fun `the launch reconciles the saved maps with the route its package read found`() = runBlocking {
+        val packages = PilgrimagePackageHarness(File(folder.root, "packages"))
+        val tiles = PilgrimageTilesHarness()
+        try {
+            packages.makeManager().download(packages.entry, PilgrimagePackageHarness.RELEASE).awaitBlocking()
+            val saved = listOf(0, 1, 2).map { "pilgrimage:camino-frances:$it" } + "pilgrimage:camino-norte:0"
+            saved.forEach { tiles.loader.seed(it, corridorHash = "h") }
+
+            launchFinalizer(tiles, packages.makeManager()).runAtLaunch()
+            tiles.drain()
+            assertTrue("the sweep waits for the store's answer", tiles.loader.removedIds.isEmpty())
+            tiles.loader.releaseRegions()
+
+            assertEquals(
+                "the installed route keeps its two stages' maps",
+                setOf("pilgrimage:camino-frances:2", "pilgrimage:camino-norte:0"),
+                tiles.loader.removedIds.toSet(),
+            )
+        } finally {
+            tiles.close()
+            packages.close()
+        }
+    }
+
+    /** The package read is clean and finds nothing, so every saved map goes, as on iOS (spec D D3, matched). */
+    @Test
+    fun `a launch that finds nothing installed reconciles with nothing, and every saved map goes`() = runBlocking {
+        val tiles = PilgrimageTilesHarness()
+        val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            tiles.loader.seed("pilgrimage:camino-frances:0", corridorHash = "h")
+            tiles.loader.seed("pilgrimage:camino-norte:3", corridorHash = "h")
+
+            launchFinalizer(tiles, packageManager(File(folder.root, "pilgrimage-tmp"), managerScope)).runAtLaunch()
+            tiles.drain()
+            tiles.loader.releaseRegions()
+
+            assertEquals(setOf("pilgrimage:camino-frances:0", "pilgrimage:camino-norte:3"), tiles.loader.removedIds.toSet())
+        } finally {
+            tiles.close()
+            managerScope.cancel()
+        }
+    }
+
+    /** An Android-only path: iOS's launch read can't throw. The store still warms, so "the day" after a restart finds it read. */
+    @Test
+    fun `a package read that throws skips the reconcile, still warms the store, and the expiry sweep still runs`() = runBlocking {
+        val tiles = PilgrimageTilesHarness()
+        val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val sweeps = AtomicInteger()
+        try {
+            tiles.loader.seed("pilgrimage:camino-frances:0", corridorHash = "h")
+            val unreadable = WayStore({ throw IOException("the store's folder is unreadable") })
+            val throwing = packageManager(File(folder.root, "pilgrimage-tmp"), managerScope, store = unreadable)
+
+            launchFinalizer(tiles, throwing, sweeps = sweeps).runAtLaunch()
+            tiles.drain()
+
+            assertEquals("the store's first read was asked for", 1, tiles.loader.firstAnswerRequests)
+            assertEquals("no reconcile asked the store", 0, tiles.loader.regionsReadCount)
+            tiles.loader.releaseRegions()
+            assertTrue("nothing swept", tiles.loader.removedIds.isEmpty())
+            assertEquals(1, sweeps.get())
+        } finally {
+            tiles.close()
+            managerScope.cancel()
+        }
+    }
+
+    /** Through the injected constructor, flag on, as the UI process's launch builds it; [sweeps] counts the expiry sweeps. */
+    private fun launchFinalizer(
+        tiles: PilgrimageTilesHarness,
+        packages: PilgrimagePackageManager,
+        sweeps: AtomicInteger = AtomicInteger(),
+    ) = HonorFinalizer(
+        h.db,
+        h.store,
+        h.clock,
+        ledgers = h.ledgers,
+        waySweeper = Provider {
+            sweeps.incrementAndGet()
+            noSweep()
+        },
+        releaseFlags = FixedReleaseFlags(honor = true),
+        packageManager = Provider { packages },
+        tilesManager = Provider { tiles.manager },
+    )
 
     private fun noSweep() = WaySweeper(
         store = h.store,
@@ -793,11 +901,11 @@ class HonorFinalizerTest {
         ioDispatcher = Dispatchers.IO,
     )
 
-    private fun packageManager(tempRoot: File, scope: CoroutineScope): PilgrimagePackageManager {
+    private fun packageManager(tempRoot: File, scope: CoroutineScope, store: WayStore = h.store): PilgrimagePackageManager {
         val cdn = PilgrimageCatalogService.CDN_ORIGIN.toHttpUrl()
         return PilgrimagePackageManager(
-            store = h.store,
-            ledgers = PilgrimageLedgerStore(h.store),
+            store = store,
+            ledgers = PilgrimageLedgerStore(store),
             client = PilgrimagePackageManager.httpClient(cdn),
             cdn = cdn,
             signals = FakeWalkSignals(),

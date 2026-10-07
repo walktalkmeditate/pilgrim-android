@@ -11,6 +11,7 @@ import java.nio.file.Files
 import java.util.Locale
 import java.util.UUID
 import javax.inject.Inject
+import javax.inject.Provider
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -32,6 +33,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.honor.WayMediaDownloadWorker
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.data.honor.cappedBody
@@ -44,9 +46,10 @@ import org.walktalkmeditate.pilgrim.domain.honor.swiftCompareTo
 
 /**
  * Stage 21-3's offline maps as the package manager reaches them (iOS
- * `PilgrimageTilesManager`, `PilgrimagePackageManager.swift:42-45,248,268,283@7c200bf`).
- * Nothing implements it in Stage 21-2, so the manager holds none. Its calls
- * run inside the manager's own steps, so they must not call back into it.
+ * `PilgrimageTilesManager`, `PilgrimagePackageManager.swift:42-45,248,268,283@7c200bf`):
+ * [PilgrimageTilesManager], which the injected manager holds with the
+ * release flag on. Its calls run inside the manager's own steps, so they
+ * must not call back into it.
  */
 interface PilgrimageTiles {
 
@@ -107,6 +110,7 @@ class PilgrimagePackageManager internal constructor(
     private val ioDispatcher: CoroutineDispatcher,
     private val tiles: PilgrimageTiles? = null,
 ) {
+    /** The tiles manager through a provider, resolved only with the flag on: this manager is built in the UI process alone. */
     @Inject
     constructor(
         @ApplicationContext context: Context,
@@ -114,6 +118,8 @@ class PilgrimagePackageManager internal constructor(
         ledgers: PilgrimageLedgerStore,
         @PilgrimagePackageHttpClient client: OkHttpClient,
         signals: UiPilgrimageWalkSignals,
+        releaseFlags: ReleaseFlags,
+        tiles: Provider<PilgrimageTilesManager>,
     ) : this(
         store = store,
         ledgers = ledgers,
@@ -123,6 +129,7 @@ class PilgrimagePackageManager internal constructor(
         resolveTempRoot = { File(context.noBackupFilesDir, TEMP_DIRECTORY) },
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
         ioDispatcher = Dispatchers.IO,
+        tiles = if (releaseFlags.honor) tiles.get() else null,
     )
 
     /** What is on the phone: a route whose `route.json` and `release.txt` both read and pass. */
@@ -216,12 +223,15 @@ class PilgrimagePackageManager internal constructor(
      * interrupted Replace, then every temp set but the one in flight,
      * which iOS leaves to the OS's purge of `tmp/` (A-6). No repair of a
      * half install (owner decision 3, pilgrim-ios #119).
+     *
+     * @return what that read found, for the tiles reconcile and, later,
+     *   #91's restamp, which iOS feeds from its same launch read (spec D
+     *   §C2.10). A throw means no read: the caller sweeps nothing.
      */
-    suspend fun runAtLaunch() {
-        onActor {
-            installedOnActor()
-            sweepTempSets()
-        }
+    suspend fun runAtLaunch(): Installed? = onActor {
+        val installed = installedOnActor()
+        sweepTempSets()
+        installed
     }
 
     private fun owned(operation: suspend () -> Unit): Deferred<Unit> =

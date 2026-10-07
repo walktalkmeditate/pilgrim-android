@@ -5,15 +5,21 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import com.mapbox.common.TileStore
+import com.mapbox.maps.MapboxMap
+import com.mapbox.maps.OfflineManager
 import dagger.hilt.android.AndroidEntryPoint
 import java.io.File
 import java.time.ZoneId
 import java.util.Locale
 import javax.inject.Inject
+import javax.inject.Provider
+import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.Walk
@@ -24,6 +30,10 @@ import org.walktalkmeditate.pilgrim.data.honor.dismissedAt
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.MapboxTileRegionLoader
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageTilesCalibration
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageTilesManager
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 import org.walktalkmeditate.pilgrim.domain.honor.OwnWalkWayBuilder
@@ -42,8 +52,8 @@ import org.walktalkmeditate.pilgrim.walk.honor.HonorCommand
  * proof runs on them). Debug-only and DUMP-protected, so only adb can send
  * them and release has none of it. Everything logs under `HonorDebug`, and
  * the replay under `WayReplayer`, as local row ids, stage and own-walk Way
- * ids, counts, fracs, and phases only: never titles, coordinates,
- * transcripts, or share ids.
+ * ids, counts, fracs, byte sizes, and phases only: never titles,
+ * coordinates, transcripts, or share ids.
  *
  * `<walk>` is a walk's Room id or its uuid. `-p` addresses the app, so a
  * command reaches it even while it is in the background.
@@ -124,6 +134,24 @@ import org.walktalkmeditate.pilgrim.walk.honor.HonorCommand
  * adb pull /sdcard/Android/data/org.walktalkmeditate.pilgrim.debug/files/honor-gpx/walk-<uuid>.gpx
  * ```
  *
+ * Offline maps (Stage 21-3, spec D C3 §14). Clear both caches a stage can
+ * draw from offline without a saved region: the map's own cache, which
+ * online viewing fills, and the tile store's ambient cache, where a removed
+ * region's tiles go. Run it before every airplane-mode check, so the check
+ * proves the saved region. Refused while a map save runs, since clearing
+ * blocks the store:
+ * ```
+ * adb shell am broadcast -p org.walktalkmeditate.pilgrim.debug -a org.walktalkmeditate.pilgrim.debug.HONOR_TILES_CLEAR_CACHE
+ * ```
+ * Report every saved region (its id, whether complete, its resource counts,
+ * bytes, whether it expires, and the first 8 characters of its corridor
+ * hash), every style pack, the summed region and pack bytes, the installed
+ * route's measured bytes per pack, and the size on disk of `files/.mapbox/`
+ * and each folder in it, the figure spec D2's measurement compares against:
+ * ```
+ * adb shell am broadcast -p org.walktalkmeditate.pilgrim.debug -a org.walktalkmeditate.pilgrim.debug.HONOR_TILES_REPORT
+ * ```
+ *
  * Read the results with `adb logcat -s HonorDebug WayReplayer`.
  */
 @AndroidEntryPoint
@@ -143,6 +171,12 @@ class HonorDebugReceiver : BroadcastReceiver() {
 
     @Inject lateinit var actionPublisher: WalkActionPublisher
 
+    @Inject lateinit var tiles: Provider<PilgrimageTilesManager>
+
+    @Inject lateinit var packages: Provider<PilgrimagePackageManager>
+
+    @Inject lateinit var tilesCalibration: Provider<PilgrimageTilesCalibration>
+
     override fun onReceive(context: Context, intent: Intent) {
         val appContext = context.applicationContext
         val reference = intent.getStringExtra(EXTRA_WALK)
@@ -152,8 +186,76 @@ class HonorDebugReceiver : BroadcastReceiver() {
             ACTION_EXPORT_GPX -> runCommand { exportGpx(appContext, reference) }
             ACTION_DUMP -> runCommand { dump(reference) }
             ACTION_COMMAND -> runCommand { command(intent) }
+            ACTION_TILES_CLEAR_CACHE -> runCommand { clearMapCaches() }
+            ACTION_TILES_REPORT -> runCommand { tilesReport(appContext) }
         }
     }
+
+    /** Both on the main thread, which `clearData` requires; each result logged as it lands. */
+    private suspend fun clearMapCaches() = withContext(Dispatchers.Main) {
+        if (tiles.get().isSaving) {
+            Log.w(TAG, "tiles clear-cache refused: a map save is running; cancel it first")
+            return@withContext
+        }
+        val mapData = mapboxAnswer { done -> MapboxMap.clearData { done(it) } }
+        Log.i(TAG, "tiles clear-cache: map cache " + if (mapData.isValue) "cleared" else "not cleared (${mapData.error})")
+        val ambient = mapboxAnswer { done -> TileStore.create().clearAmbientCache { done(it) } }
+        val cleared = ambient.value
+        Log.i(TAG, "tiles clear-cache: ambient cache " + if (cleared != null) "cleared, $cleared bytes" else "not cleared (${ambient.error?.type})")
+    }
+
+    /** The store's own answers, read on the main thread through the default store the loader and the map use. */
+    private suspend fun tilesReport(context: Context) {
+        val lines = withContext(Dispatchers.Main) { regionLines() + packLines() }
+        val routeId = packages.get().installedRoute()?.routeId
+        val bytesPerPack = routeId?.let { tilesCalibration.get().stored(it) }
+        val disk = withContext(Dispatchers.IO) { diskLines(File(context.filesDir, MAPBOX_DIRECTORY)) }
+        val calibration = when {
+            routeId == null -> "no route installed"
+            bytesPerPack == null -> "$routeId: none measured, the seed applies"
+            else -> "$routeId: $bytesPerPack bytes per pack"
+        }
+        (lines + "  calibration: $calibration" + disk).forEach { Log.i(TAG, it) }
+    }
+
+    private suspend fun regionLines(): List<String> {
+        val store = TileStore.create()
+        val answer = mapboxAnswer { done -> store.getAllTileRegions { done(it) } }
+        val regions = answer.value ?: return listOf("tiles report: the regions read failed (${answer.error?.type})")
+        val lines = mutableListOf("tiles report: ${regions.size} regions")
+        for (region in regions.sortedBy { it.id }) {
+            val metadata = mapboxAnswer { done -> store.getTileRegionMetadata(region.id) { done(it) } }
+            val summary = MapboxTileRegionLoader.summary(region, metadata)
+            lines += "  region ${summary.id} complete=${summary.isComplete} " +
+                "${summary.completedResourceCount}/${summary.requiredResourceCount} resources, " +
+                "${summary.completedResourceSize} bytes, expires=${region.expires != null}, " +
+                "hash=${summary.corridorHash.orEmpty().take(HASH_PREFIX).ifEmpty { "none" }}"
+        }
+        lines += "  regions total: ${regions.sumOf { it.completedResourceSize }} bytes"
+        return lines
+    }
+
+    private suspend fun packLines(): List<String> {
+        val answer = mapboxAnswer { done -> OfflineManager().getAllStylePacks { done(it) } }
+        val packs = answer.value ?: return listOf("  the style packs read failed (${answer.error?.type})")
+        return packs.map { pack ->
+            val complete = MapboxTileRegionLoader.isComplete(pack.completedResourceCount, pack.requiredResourceCount)
+            "  pack ${pack.styleURI} complete=$complete " +
+                "${pack.completedResourceCount}/${pack.requiredResourceCount} resources, ${pack.completedResourceSize} bytes"
+        } + "  packs total: ${packs.sumOf { it.completedResourceSize }} bytes"
+    }
+
+    /** What D2's verdict reads: the folder the store and the map cache share, and each folder in it. */
+    private fun diskLines(mapbox: File): List<String> {
+        fun bytes(file: File) = file.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        if (!mapbox.isDirectory) return listOf("  disk: no files/$MAPBOX_DIRECTORY/ yet")
+        val children = mapbox.listFiles().orEmpty().sortedBy { it.name }.map { "${it.name} ${bytes(it)}" }
+        return listOf("  disk: files/$MAPBOX_DIRECTORY/ ${bytes(mapbox)} bytes; " + children.joinToString("; "))
+    }
+
+    /** A Mapbox callback's answer, which lands on a worker thread, resumed where the caller is. */
+    private suspend fun <T> mapboxAnswer(call: (done: (T) -> Unit) -> Unit): T =
+        suspendCancellableCoroutine { continuation -> call { continuation.resume(it) } }
 
     private suspend fun command(intent: Intent) {
         val command = when (val name = intent.getStringExtra(EXTRA_COMMAND)) {
@@ -297,6 +399,8 @@ class HonorDebugReceiver : BroadcastReceiver() {
         const val ACTION_EXPORT_GPX = "org.walktalkmeditate.pilgrim.debug.HONOR_EXPORT_GPX"
         const val ACTION_DUMP = "org.walktalkmeditate.pilgrim.debug.HONOR_DUMP"
         const val ACTION_COMMAND = "org.walktalkmeditate.pilgrim.debug.HONOR_COMMAND"
+        const val ACTION_TILES_CLEAR_CACHE = "org.walktalkmeditate.pilgrim.debug.HONOR_TILES_CLEAR_CACHE"
+        const val ACTION_TILES_REPORT = "org.walktalkmeditate.pilgrim.debug.HONOR_TILES_REPORT"
         const val ACTION_REPLAY_START = "org.walktalkmeditate.pilgrim.debug.HONOR_REPLAY_START"
         const val ACTION_REPLAY_STOP = "org.walktalkmeditate.pilgrim.debug.HONOR_REPLAY_STOP"
         const val EXTRA_WALK = "walk"
@@ -309,6 +413,8 @@ class HonorDebugReceiver : BroadcastReceiver() {
         internal const val TAG = "HonorDebug"
         private const val GPX_DIRECTORY = "honor-gpx"
         private const val LIST_LIMIT = 20
+        private const val MAPBOX_DIRECTORY = ".mapbox"
+        private const val HASH_PREFIX = 8
     }
 }
 

@@ -67,6 +67,8 @@ no honor link until then.
                 <action android:name="org.walktalkmeditate.pilgrim.debug.HONOR_EXPORT_GPX" />
                 <action android:name="org.walktalkmeditate.pilgrim.debug.HONOR_DUMP" />
                 <action android:name="org.walktalkmeditate.pilgrim.debug.HONOR_COMMAND" />
+                <action android:name="org.walktalkmeditate.pilgrim.debug.HONOR_TILES_CLEAR_CACHE" />
+                <action android:name="org.walktalkmeditate.pilgrim.debug.HONOR_TILES_REPORT" />
             </intent-filter>
         </receiver>
 
