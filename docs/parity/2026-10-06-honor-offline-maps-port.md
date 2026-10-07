@@ -1042,7 +1042,7 @@ Survey D1, D3–D7 and D9 and flow items other than 10 aren't in C1's files; C2 
 | # | Addition | Reason |
 |---|---|---|
 | A1 | The per-stage inputs (rings, hash) are built on IO from decoded Ways, which are then dropped; the estimate and status run off Main | iOS does this work on the main actor (D8); Android ANRs on Main CPU work (Stage 2-E). Same numbers, same order |
-| A2 | The per-stage values and their pack count are cached per installed `(routeId, release)` instead of rebuilt on every reload | Rebuilding means re-decoding up to 33 Ways; a stage Way changes only with a release, so the cache gives iOS's answers. `bytesPerPack` is still re-read per reload |
+| A2 | The per-stage values and their pack count are cached per installed `(routeId, release)` instead of rebuilt on every reload | Rebuilding means re-decoding up to 33 Ways; a stage Way changes only with a release or an install, so the cache, cleared after every successful install (a same-release re-download can restore a missing stage), gives iOS's answers. `bytesPerPack` is still re-read per reload |
 | A3 | The corridor hash and its builders live in a pure `PilgrimageTilesCorridor`, not on the manager | Callers build values before reaching the manager (A1). Placement only |
 | A4 | (Only if the owner declines §19's recommendation) the hash's byte layout differs from iOS's | Device-local value; no cross-device effect |
 | A5 | The per-route bytes-per-pack rides a device transfer but not a cloud backup (iOS's `UserDefaults` rides both) | The app's existing backup rules exclude every file from cloud backup; a lost figure falls back to the seed |
@@ -4792,7 +4792,7 @@ U46 adds no failure string. The plan's enum names (`DISK_FULL`, `MAP_TOO_LARGE`,
 
 ### 5. The flag (R21) and the processes
 
-- **The route row:** reachable only through the Honor sheets, which exist only with the flag on (`honorRoutes` returns at once with it off, `PilgrimNavHost.kt:1033-1034`). No extra check is needed on the row. The VM must still never resolve the tiles `Provider` for a page that isn't installed or with the flag off. Resolve it lazily, at the first per-stage status read.
+- **The route row:** reachable only through the Honor sheets, which exist only with the flag on (`honorRoutes` returns at once with it off, `PilgrimNavHost.kt:1033-1034`). No extra check is needed on the row. The VM must still never resolve the tiles `Provider` with the flag off. With it on, every page resolves it at its opening; a page that isn't installed follows only its phase, so another route's save holds its button and overflow (§1.4's `isBusy`), and reads no store.
 - **The morning card:** only a stage opens it, and stages need the flag. The overview resolves the manager only for a stage Way. "The day" resolves it only for a Way with a stage block.
 - **Settings:** `showsMaps` is false with the flag off (from `WaysAvailability`, whose `shown` is `flowOf(false)` then, or from `ReleaseFlags.honor` if the owner keeps the row ungated by walks). With it false, `MapsRowViewModel` never resolves the tiles `Provider` either, so a flag-off build touches no tiles code from Settings.
 - **The destination:** `Routes.OFFLINE_MAPS` is registered only with the flag on (§3.3).
@@ -4988,7 +4988,7 @@ Android tests beyond the ports (U46, U47): AE10 (§6); latest-wins (a delayed re
 - **`isBusy(phase, tilesPhase, held)`:** call sites `PilgrimageRouteContent` (`busy`), `onDownloadTapped`, `onRemoveTapped`.
 - **`mapsRowIsHeld(phase)`** is the ported pure function; the page holds the row on `mapsRowIsHeld(phase) || page.isHeld`.
 - **Actions:** `onSaveMaps()` hands the current per-stage values to the manager's save in the manager's scope and drops its result. `onCancelMaps()` calls the manager's `cancel()`.
-- **Gating:** resolve the tiles `Provider` lazily, only for an installed page.
+- **Gating:** with the flag on, every route page resolves the tiles `Provider` at its opening and follows its phase, so another route's save holds its button and overflow (§1.4's `isBusy`); only the installed page reads the store (§5). With the flag off it's never resolved.
 
 **U47, the morning card and Settings.**
 - **Card:** `StageMorningCardModel.mapsLine(resources, saved: Boolean): String` (#9 and #10).
