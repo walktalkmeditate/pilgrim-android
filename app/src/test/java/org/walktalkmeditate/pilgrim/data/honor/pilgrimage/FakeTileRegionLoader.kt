@@ -9,9 +9,9 @@ package org.walktalkmeditate.pilgrim.data.honor.pilgrimage
  * completion can still be delivered. Driven on the manager's thread, the
  * test's, as production's callbacks are hopped there.
  *
- * Android additions: [failRegions], the partial completion, and the
- * store's [firstAnswer], which the first [releaseRegions] or [failRegions]
- * gives, and which a call after a failed one asks for again.
+ * Android additions: [failRegions], the partial completion, the store's
+ * [firstAnswer], which the first [releaseRegions] or [failRegions] gives,
+ * and which a call after a failed one asks for again, and [storeOpens].
  */
 internal class FakeTileRegionLoader : TileRegionLoading {
 
@@ -45,6 +45,14 @@ internal class FakeTileRegionLoader : TileRegionLoading {
     override var onChange: ((TileStoreChange) -> Unit)? = null
 
     var stylePacks: Set<StylePackRequest> = emptySet()
+
+    /**
+     * False for a store that can't open, read as [MapboxTileRegionLoader]
+     * answers one (spec D A-C3-11): no regions and no packs, whatever is
+     * seeded. Its failed first answer is still the test's to give
+     * ([failRegions]), as the real one is posted.
+     */
+    var storeOpens = true
 
     private val stored = HashMap<String, TileRegionSummary>()
 
@@ -86,7 +94,7 @@ internal class FakeTileRegionLoader : TileRegionLoading {
     private val firstAnswerWaiters = mutableListOf<(TileStoreRead) -> Unit>()
     private val pendingRegionsCompletions = mutableListOf<() -> Unit>()
 
-    override fun hasStylePack(pack: StylePackRequest): Boolean = pack in stylePacks
+    override fun hasStylePack(pack: StylePackRequest): Boolean = storeOpens && pack in stylePacks
 
     override fun loadStylePack(pack: StylePackRequest, completion: (TileLoadResult<Unit>) -> Unit): TileLoadHandle {
         _packRequests += pack
@@ -108,7 +116,7 @@ internal class FakeTileRegionLoader : TileRegionLoading {
 
     override fun regions(): List<TileRegionSummary> {
         regionsReadCount += 1
-        return stored.values.toList()
+        return if (storeOpens) stored.values.toList() else emptyList()
     }
 
     /**

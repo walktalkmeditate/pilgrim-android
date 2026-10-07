@@ -109,7 +109,7 @@ The plan was written before these reads. Where it disagrees with iOS, iOS as shi
 | The default tile store (`files/.mapbox/`) instead of a dedicated folder; no `MapboxMapsOptions` written; no `tmp/` fallback | Owner decision 2026-10-06; the defaults are the default store and READ_ONLY; 11.24's one store per process | A-C3-1, A-C3-3, A-C3-4 |
 | `.mapbox/` excluded from device transfer and, explicitly, from cloud backup; unflagged | Equivalent of iOS's iCloud exclusion; also stops the ambient map cache travelling | A-C3-2 |
 | The loader's Mapbox objects made on first use, on Main, with a Main check at each entry | Keeps `:tracker` and flag-off builds Mapbox-free; `@MainThread` misuse is undefined, not an exception | A-C3-5, A-C3-6 |
-| A Mapbox call that throws is a failed answer, posted, and logged by type; a store that can't open answers the first answer `FAILED` | Java natives can throw where iOS's calls can't, and a failed Mapbox init throws an `Error`; a waiter is never stranded | A-C3-11 |
+| A Mapbox call that throws is a failed answer, posted, and logged by type, a repeat of the last once; a store that can't open answers as an empty, unread one, the first answer `FAILED` | Java natives can throw where iOS's calls can't, and a failed Mapbox init throws an `Error`; a waiter is never stranded, and no reader throws into a screen | A-C3-11 |
 | The engine on Main, its mutators posted; the package hooks return before they run | iOS's `@MainActor`; the package manager calls the seam on IO under its actor | C2 A |
 | The door's claim before its suspending read; the generation re-checked after every guard read; `walkActive()` at the door and before each real load | Android's walk check is a Room read, and its walk outlives the UI process in `:tracker` | C2 A |
 | A thrown guard read ends the save as `INCOMPLETE`; the loop's catch takes any non-cancellation `Throwable` | iOS's guard can't fail | C2 A |
@@ -1042,7 +1042,7 @@ Survey D1, D3–D7 and D9 and flow items other than 10 aren't in C1's files; C2 
 | # | Addition | Reason |
 |---|---|---|
 | A1 | The per-stage inputs (rings, hash) are built on IO from decoded Ways, which are then dropped; the estimate and status run off Main | iOS does this work on the main actor (D8); Android ANRs on Main CPU work (Stage 2-E). Same numbers, same order |
-| A2 | The per-stage values and their pack count are cached per installed `(routeId, release)` instead of rebuilt on every reload | Rebuilding means re-decoding up to 33 Ways; a stage Way changes only with a release, so the cache gives iOS's answers. `bytesPerPack` is still re-read per reload |
+| A2 | The per-stage values and their pack count are cached per installed `(routeId, release)` instead of rebuilt on every reload | Rebuilding means re-decoding up to 33 Ways; a stage Way changes only with a release or an install, so the cache, cleared after every successful install (a same-release re-download can restore a missing stage), gives iOS's answers. `bytesPerPack` is still re-read per reload |
 | A3 | The corridor hash and its builders live in a pure `PilgrimageTilesCorridor`, not on the manager | Callers build values before reaching the manager (A1). Placement only |
 | A4 | (Only if the owner declines §19's recommendation) the hash's byte layout differs from iOS's | Device-local value; no cross-device effect |
 | A5 | The per-route bytes-per-pack rides a device transfer but not a cloud backup (iOS's `UserDefaults` rides both) | The app's existing backup rules exclude every file from cloud backup; a lost figure falls back to the seed |
@@ -3698,7 +3698,7 @@ Related iOS tests owned elsewhere that exercise this cluster's behavior through 
 | A-C3-8 | `pixelRatio` set explicitly to the screen density | Mirrors the value iOS's SDK fills in; no download changes |
 | A-C3-9 | `networkRestriction(NONE)` set explicitly | The builder's default, written so the test pins it; iOS's default is the same |
 | A-C3-10 | Debug commands: clear both caches; a tiles report with on-disk sizes | U48's airplane rows and D2's measurement; iOS removed its only offline debug aid before the pin. Debug only |
-| A-C3-11 | A Mapbox call that throws (any non-cancellation `Throwable`) is a failed answer, posted, and what it threw goes to the tiles scope's handler, which logs its type: that half of a read; the whole regions read when a metadata read throws partway; `FAILED` for the first answer when the store can't open | Java natives can refuse a call with a throw where iOS's calls can't, and a device whose Mapbox init failed throws an `Error` from the first Mapbox class a call loads. Posted, a waiter is never stranded nor answered before its call returns. A refused metadata read fails the read rather than reading that region's hash as `""` (§9.3) |
+| A-C3-11 | A Mapbox call that throws (any non-cancellation `Throwable`) is a failed answer, posted, and what it threw goes to the tiles scope's handler, which logs its type: that half of a read; the whole regions read when a metadata read throws partway; a load's `failed`; a removal that does nothing. A store that can't open answers as an empty, unread one: `regions()` `[]`, `hasStylePack` false, a refresh's waiter drained, a load `failed`, a removal nothing, the first answer `FAILED`; each call tries the open again. An entry's failure that repeats the last one the handler heard isn't sent again | Java natives can refuse a call with a throw where iOS's calls can't, and a device whose Mapbox init failed throws an `Error` from the first Mapbox class a call loads. Posted, a waiter is never stranded nor answered before its call returns, and a completion still comes last. A reader never throws into a screen's scope, which has no handler. Logged once, a store failing on every call doesn't flood the log. A refused metadata read fails the read rather than reading that region's hash as `""` (§9.3) |
 
 Not an addition: the error map by type only is parity (§9). If the owner chooses the message test (O-C3-1), it becomes an addition and needs an iOS issue first.
 
@@ -4792,7 +4792,7 @@ U46 adds no failure string. The plan's enum names (`DISK_FULL`, `MAP_TOO_LARGE`,
 
 ### 5. The flag (R21) and the processes
 
-- **The route row:** reachable only through the Honor sheets, which exist only with the flag on (`honorRoutes` returns at once with it off, `PilgrimNavHost.kt:1033-1034`). No extra check is needed on the row. The VM must still never resolve the tiles `Provider` for a page that isn't installed or with the flag off. Resolve it lazily, at the first per-stage status read.
+- **The route row:** reachable only through the Honor sheets, which exist only with the flag on (`honorRoutes` returns at once with it off, `PilgrimNavHost.kt:1033-1034`). No extra check is needed on the row. The VM must still never resolve the tiles `Provider` with the flag off. With it on, every page resolves it at its opening; a page that isn't installed follows only its phase, so another route's save holds its button and overflow (§1.4's `isBusy`), and reads no store.
 - **The morning card:** only a stage opens it, and stages need the flag. The overview resolves the manager only for a stage Way. "The day" resolves it only for a Way with a stage block.
 - **Settings:** `showsMaps` is false with the flag off (from `WaysAvailability`, whose `shown` is `flowOf(false)` then, or from `ReleaseFlags.honor` if the owner keeps the row ungated by walks). With it false, `MapsRowViewModel` never resolves the tiles `Provider` either, so a flag-off build touches no tiles code from Settings.
 - **The destination:** `Routes.OFFLINE_MAPS` is registered only with the flag on (§3.3).
@@ -4988,7 +4988,7 @@ Android tests beyond the ports (U46, U47): AE10 (§6); latest-wins (a delayed re
 - **`isBusy(phase, tilesPhase, held)`:** call sites `PilgrimageRouteContent` (`busy`), `onDownloadTapped`, `onRemoveTapped`.
 - **`mapsRowIsHeld(phase)`** is the ported pure function; the page holds the row on `mapsRowIsHeld(phase) || page.isHeld`.
 - **Actions:** `onSaveMaps()` hands the current per-stage values to the manager's save in the manager's scope and drops its result. `onCancelMaps()` calls the manager's `cancel()`.
-- **Gating:** resolve the tiles `Provider` lazily, only for an installed page.
+- **Gating:** with the flag on, every route page resolves the tiles `Provider` at its opening and follows its phase, so another route's save holds its button and overflow (§1.4's `isBusy`); only the installed page reads the store (§5). With the flag off it's never resolved.
 
 **U47, the morning card and Settings.**
 - **Card:** `StageMorningCardModel.mapsLine(resources, saved: Boolean): String` (#9 and #10).
