@@ -191,17 +191,26 @@ class HonorDebugReceiver : BroadcastReceiver() {
         }
     }
 
-    /** Both on the main thread, which `clearData` requires; each result logged as it lands. */
+    /**
+     * Both on the main thread, which `clearData` requires; each result logged
+     * as it lands. The save check runs again before the ambient clear, which
+     * blocks the store (spec D C3 §14.2): a save can start while the map
+     * cache clears.
+     */
     private suspend fun clearMapCaches() = withContext(Dispatchers.Main) {
-        if (tiles.get().isSaving) {
-            Log.w(TAG, "tiles clear-cache refused: a map save is running; cancel it first")
-            return@withContext
-        }
+        if (refusedForASave("refused")) return@withContext
         val mapData = mapboxAnswer { done -> MapboxMap.clearData { done(it) } }
         Log.i(TAG, "tiles clear-cache: map cache " + if (mapData.isValue) "cleared" else "not cleared (${mapData.error})")
+        if (refusedForASave("stopped before the ambient cache")) return@withContext
         val ambient = mapboxAnswer { done -> TileStore.create().clearAmbientCache { done(it) } }
         val cleared = ambient.value
         Log.i(TAG, "tiles clear-cache: ambient cache " + if (cleared != null) "cleared, $cleared bytes" else "not cleared (${ambient.error?.type})")
+    }
+
+    private fun refusedForASave(what: String): Boolean {
+        val saving = tiles.get().isSaving
+        if (saving) Log.w(TAG, "tiles clear-cache $what: a map save is running; cancel it first")
+        return saving
     }
 
     /** The store's own answers, read on the main thread through the default store the loader and the map use. */

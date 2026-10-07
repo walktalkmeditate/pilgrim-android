@@ -781,25 +781,27 @@ class HonorFinalizerTest {
                     tiles.manager
                 },
             )
+            try {
+                finalizer(honor = false).runAtLaunch()
+                assertEquals("flag off", 0, built.get())
+                assertEquals("flag off, no tiles", 0, tilesBuilt.get())
+                assertTrue(killedDownload.exists())
 
-            finalizer(honor = false).runAtLaunch()
-            assertEquals("flag off", 0, built.get())
-            assertEquals("flag off, no tiles", 0, tilesBuilt.get())
-            assertTrue(killedDownload.exists())
+                val withTheFlag = finalizer(honor = true)
+                val walk = finishedHonorWalk(HonorFinishKind.CLEAN)
+                withTheFlag.finalize(walk.id)
+                withTheFlag.finalizePending()
+                assertEquals("the tracker's path", 0, built.get())
+                assertEquals("the tracker's path, no tiles", 0, tilesBuilt.get())
 
-            val withTheFlag = finalizer(honor = true)
-            val walk = finishedHonorWalk(HonorFinishKind.CLEAN)
-            withTheFlag.finalize(walk.id)
-            withTheFlag.finalizePending()
-            assertEquals("the tracker's path", 0, built.get())
-            assertEquals("the tracker's path, no tiles", 0, tilesBuilt.get())
-
-            withTheFlag.runAtLaunch()
-            assertEquals(1, built.get())
-            assertEquals(1, tilesBuilt.get())
-            assertFalse("the launch swept the temp set a kill left", killedDownload.exists())
-            tiles.close()
-            managerScope.cancel()
+                withTheFlag.runAtLaunch()
+                assertEquals(1, built.get())
+                assertEquals(1, tilesBuilt.get())
+                assertFalse("the launch swept the temp set a kill left", killedDownload.exists())
+            } finally {
+                tiles.close()
+                managerScope.cancel()
+            }
         }
 
     // The tiles at launch (spec D §C2.10): the store warmed, then the package read, then the reconcile on its answer
@@ -848,6 +850,57 @@ class HonorFinalizerTest {
             managerScope.cancel()
         }
     }
+
+    /**
+     * The clean path's order. The manager's thread runs only when a test
+     * drains it, so each step drains it and records what the tiles had been
+     * asked by then: the warm before the package read, the reconcile before
+     * the expiry sweep, and the store still unanswered after both.
+     */
+    @Test
+    fun `a clean launch warms the store, then reads the package, then posts the reconcile, then runs the expiry sweep`() =
+        runBlocking {
+            val tiles = PilgrimageTilesHarness()
+            val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            val steps = mutableListOf<String>()
+            try {
+                tiles.loader.seed("pilgrimage:camino-frances:0", corridorHash = "h")
+                val packages = packageManager(File(folder.root, "pilgrimage-tmp"), managerScope)
+                val finalizer = HonorFinalizer(
+                    h.db,
+                    h.store,
+                    h.clock,
+                    ledgers = h.ledgers,
+                    waySweeper = Provider {
+                        tiles.drain()
+                        steps += "expiry sweep after ${tiles.loader.regionsReadCount} reconcile read"
+                        noSweep()
+                    },
+                    releaseFlags = FixedReleaseFlags(honor = true),
+                    packageManager = Provider {
+                        tiles.drain()
+                        steps += "package read after ${tiles.loader.firstAnswerRequests} store request " +
+                            "and ${tiles.loader.regionsReadCount} reconcile reads"
+                        packages
+                    },
+                    tilesManager = Provider { tiles.manager },
+                )
+
+                finalizer.runAtLaunch()
+
+                assertEquals(
+                    listOf(
+                        "package read after 1 store request and 0 reconcile reads",
+                        "expiry sweep after 1 reconcile read",
+                    ),
+                    steps,
+                )
+                assertTrue("the reconcile's sweep still waits for the store", tiles.loader.removedIds.isEmpty())
+            } finally {
+                tiles.close()
+                managerScope.cancel()
+            }
+        }
 
     /** An Android-only path: iOS's launch read can't throw. The store still warms, so "the day" after a restart finds it read. */
     @Test

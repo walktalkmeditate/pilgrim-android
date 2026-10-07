@@ -23,6 +23,7 @@ import com.mapbox.maps.StylePackError
 import com.mapbox.maps.StylePackErrorType
 import com.mapbox.maps.StylePackLoadOptions
 import com.mapbox.maps.TilesetDescriptorOptions
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -54,8 +55,18 @@ import kotlinx.coroutines.launch
  *
  * Errors map by type only (C3 §9.2). A load's progress is never reported:
  * its one caller, the tiles manager, passes iOS's no-op for it.
+ *
+ * A Mapbox call that throws is a failed answer, still posted: a read's half,
+ * or the first answer when the store can't open. Any non-cancellation
+ * `Throwable` counts, since a device whose Mapbox natives didn't load throws
+ * an `Error` there: Mapbox's startup swallows the failure, and the next
+ * Mapbox class to load retries it and throws.
  */
-class MapboxTileRegionLoader internal constructor(private val scope: CoroutineScope) : TileRegionLoading {
+class MapboxTileRegionLoader internal constructor(
+    private val scope: CoroutineScope,
+    /** The first Mapbox object a call makes; a test's throws, as a device's does when Mapbox can't initialize. */
+    private val makeOfflineManager: () -> OfflineManager = { OfflineManager() },
+) : TileRegionLoading {
 
     private class MapboxObjects(val store: TileStore, val offline: OfflineManager, val descriptors: List<TilesetDescriptor>)
 
@@ -145,7 +156,9 @@ class MapboxTileRegionLoader internal constructor(private val scope: CoroutineSc
         checkMainThread()
         try {
             open()
-        } catch (failure: Exception) {
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (failure: Throwable) {
             reportUnrequested(failure) { completion(TileStoreRead.FAILED) }
             return
         }
@@ -155,7 +168,7 @@ class MapboxTileRegionLoader internal constructor(private val scope: CoroutineSc
     private fun open(): MapboxObjects {
         checkMainThread()
         opened?.let { return it }
-        val offline = OfflineManager()
+        val offline = makeOfflineManager()
         val descriptors = descriptorOptions(Resources.getSystem().displayMetrics.density).map(offline::createTilesetDescriptor)
         return MapboxObjects(TileStore.create(), offline, descriptors).also {
             opened = it
@@ -181,7 +194,9 @@ class MapboxTileRegionLoader internal constructor(private val scope: CoroutineSc
                     if (regions == null) cache.regionsAnswered(token, null) else readMetadata(mapbox.store, token, regions)
                 }
             }
-        } catch (failure: Exception) {
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (failure: Throwable) {
             reportUnrequested(failure) { cache.regionsAnswered(token, null) }
         }
         try {
@@ -189,7 +204,9 @@ class MapboxTileRegionLoader internal constructor(private val scope: CoroutineSc
                 // A failed packs read is hopped too, unlike iOS's, so the first answer hears it (C3 §7).
                 onMain { cache.packsAnswered(token, answer.value?.let(::presentPacks)) }
             }
-        } catch (failure: Exception) {
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (failure: Throwable) {
             reportUnrequested(failure) { cache.packsAnswered(token, null) }
         }
     }
@@ -214,7 +231,9 @@ class MapboxTileRegionLoader internal constructor(private val scope: CoroutineSc
                     }
                 }
             }
-        } catch (failure: Exception) {
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (failure: Throwable) {
             // The count can no longer reach the list's size, so this is the read's only answer.
             reportUnrequested(failure) { cache.regionsAnswered(token, null) }
         }
@@ -226,7 +245,7 @@ class MapboxTileRegionLoader internal constructor(private val scope: CoroutineSc
     }
 
     /** [answer] runs posted; [failure] is rethrown inside [scope], whose handler logs it, since nothing in this package does. */
-    private fun reportUnrequested(failure: Exception, answer: () -> Unit) {
+    private fun reportUnrequested(failure: Throwable, answer: () -> Unit) {
         scope.launch(Dispatchers.Main) {
             answer()
             throw failure

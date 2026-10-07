@@ -289,6 +289,45 @@ class TileStoreCacheTest {
         assertEquals(listOf(TileStoreRead.READ), answers)
     }
 
+    /** A load's success moves the generation as a removal does, so the read it overtook answers stale. */
+    @Test
+    fun `a region load while the first answer is pending reads the store again, and that read answers`() {
+        val answers = mutableListOf<TileStoreRead>()
+        cache.firstAnswer { answers += it }
+        val first = latest()
+        cache.regionLoaded(region("a")) {}
+
+        cache.regionsAnswered(first, emptyList())
+        cache.packsAnswered(first, emptySet())
+
+        assertEquals("one more read", 2, reads.size)
+        assertTrue(answers.isEmpty())
+        cache.regionsAnswered(latest(), listOf(region("a")))
+        cache.packsAnswered(latest(), emptySet())
+        assertEquals(listOf(TileStoreRead.READ), answers)
+        assertEquals(listOf("a"), cache.regions().map { it.id })
+    }
+
+    /** The reconcile's sweep removes from inside its waiter; a waiter may also read, or wait again. */
+    @Test
+    fun `a waiter that calls back into the cache mid-drain leaves the other waiters and the first answer whole`() {
+        val seen = mutableListOf<String>()
+        cache.firstAnswer { seen += "first answer $it" }
+        cache.refreshRegions {
+            cache.regionRemoved("a")
+            cache.refreshRegions { seen += "waiter queued mid-drain" }
+            seen += "re-entering waiter"
+        }
+        cache.refreshRegions { seen += "second waiter: ${cache.regions().map { it.id }}" }
+        cache.packsAnswered(latest(), emptySet())
+
+        cache.regionsAnswered(latest(), listOf(region("a"), region("b")))
+
+        assertEquals(listOf("re-entering waiter", "second waiter: [b]", "first answer READ"), seen)
+        cache.regionsAnswered(latest(), listOf(region("b")))
+        assertEquals("waits for the next current answer", "waiter queued mid-drain", seen.last())
+    }
+
     @Test
     fun `a stale answer with a newer read in flight starts no read of its own`() {
         val first = latest()

@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.data.honor.pilgrimage
 
 import android.app.Application
+import android.os.Looper
 import com.mapbox.bindgen.ExpectedFactory
 import com.mapbox.bindgen.Value
 import com.mapbox.common.NetworkRestriction
@@ -30,6 +31,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.domain.honor.WayCoordinate
 
@@ -41,10 +43,11 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayCoordinate
  *
  * Then the Android additions: the region options and the style pack
  * options built as the loader builds them (CLAUDE.md's builder rule), a
- * read's summary and its pack filter from real SDK objects, and the
- * loader's two entry rules. The SDK's natives never load under
- * Robolectric, so the store, the offline manager and their callbacks stay
- * device-only, as iOS's do; the cache they feed is [TileStoreCacheTest]'s.
+ * read's summary and its pack filter from real SDK objects, the loader's
+ * two entry rules, and its answer when the store can't open. The SDK's
+ * natives never load under Robolectric, so the store, the offline manager
+ * and their callbacks stay device-only, as iOS's do; the cache they feed
+ * is [TileStoreCacheTest]'s.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -161,7 +164,7 @@ class MapboxTileRegionLoaderTest {
     }
 
     @Test
-    fun `region options carry every ring as one multipolygon, longitude first, with the hash`() {
+    fun `region options carry every ring as one multipolygon, longitude first, with the hash, and nothing else`() {
         val descriptors = listOf(descriptorStub(), descriptorStub())
 
         val options = MapboxTileRegionLoader.regionLoadOptions(request(acceptExpired = true), descriptors)
@@ -180,6 +183,9 @@ class MapboxTileRegionLoaderTest {
         assertTrue(options.acceptExpired)
         assertEquals("cellular allowed, as on iOS", NetworkRestriction.NONE, options.networkRestriction)
         assertSame("the two descriptors, handed through", descriptors, options.descriptors)
+        assertNull(options.startLocation)
+        assertNull(options.averageBytesPerSecond)
+        assertNull(options.extraOptions)
     }
 
     @Test
@@ -268,6 +274,43 @@ class MapboxTileRegionLoaderTest {
     @Test
     fun `the loader refuses a scope with no exception handler`() {
         assertThrows(IllegalArgumentException::class.java) { MapboxTileRegionLoader(CoroutineScope(SupervisorJob())) }
+    }
+
+    /** Mapbox's startup swallows a failed init, and the next Mapbox class to load retries it: an `Error`, not an `Exception`. */
+    @Test
+    fun `a store that can't open answers the first answer failed, posted, and its error reaches the scope's handler`() {
+        val escaped = mutableListOf<Throwable>()
+        val scope = CoroutineScope(SupervisorJob() + recordingHandler(escaped))
+        val loader = MapboxTileRegionLoader(scope) { throw ExceptionInInitializerError("Mapbox couldn't initialize") }
+        val answers = mutableListOf<TileStoreRead>()
+
+        loader.firstAnswer { answers += it }
+        assertTrue("never answered before the call returns", answers.isEmpty())
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(listOf(TileStoreRead.FAILED), answers)
+        assertTrue("$escaped", escaped.single() is ExceptionInInitializerError)
+        scope.cancel()
+    }
+
+    @Test
+    fun `a call after a store that couldn't open tries the open again`() {
+        val scope = CoroutineScope(SupervisorJob() + recordingHandler(mutableListOf()))
+        var opens = 0
+        val loader = MapboxTileRegionLoader(scope) {
+            opens += 1
+            throw NoClassDefFoundError("com/mapbox/maps/OfflineManager")
+        }
+        val answers = mutableListOf<TileStoreRead>()
+
+        loader.firstAnswer { answers += it }
+        shadowOf(Looper.getMainLooper()).idle()
+        loader.firstAnswer { answers += it }
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(listOf(TileStoreRead.FAILED, TileStoreRead.FAILED), answers)
+        assertEquals(2, opens)
+        scope.cancel()
     }
 
     private companion object {
