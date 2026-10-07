@@ -44,7 +44,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayCoordinate
  * Then the Android additions: the region options and the style pack
  * options built as the loader builds them (CLAUDE.md's builder rule), a
  * read's summary and its pack filter from real SDK objects, the loader's
- * two entry rules, and its answer when the store can't open. The SDK's
+ * two entry rules, and every entry's answer when the store can't open. The SDK's
  * natives never load under Robolectric, so the store, the offline manager
  * and their callbacks stay device-only, as iOS's do; the cache they feed
  * is [TileStoreCacheTest]'s.
@@ -313,8 +313,122 @@ class MapboxTileRegionLoaderTest {
         scope.cancel()
     }
 
+    /** A route page reads the status straight after a `FAILED` first answer; the reads must not throw into its ViewModel. */
+    @Test
+    fun `a store that can't open has no regions and no packs`() {
+        val scope = CoroutineScope(SupervisorJob() + recordingHandler(mutableListOf()))
+        val loader = unopenable(scope)
+
+        assertEquals(emptyList<TileRegionSummary>(), loader.regions())
+        assertFalse(loader.hasStylePack(StylePackRequest.LIGHT))
+        assertFalse(loader.hasStylePack(StylePackRequest.DARK))
+        scope.cancel()
+    }
+
+    @Test
+    fun `a removal from a store that can't open does nothing and signals nothing`() {
+        val scope = CoroutineScope(SupervisorJob() + recordingHandler(mutableListOf()))
+        val loader = unopenable(scope)
+        val signals = mutableListOf<TileStoreChange>()
+        loader.onChange = { signals += it }
+
+        loader.removeRegion("pilgrimage:camino-frances:0")
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(emptyList<TileStoreChange>(), signals)
+        scope.cancel()
+    }
+
+    @Test
+    fun `a refresh from a store that can't open drains its waiter once, after the call returns`() {
+        val scope = CoroutineScope(SupervisorJob() + recordingHandler(mutableListOf()))
+        val loader = unopenable(scope)
+        var drained = 0
+
+        loader.refreshRegions { drained += 1 }
+        assertEquals("never drained before the call returns", 0, drained)
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(1, drained)
+        scope.cancel()
+    }
+
+    @Test
+    fun `a load from a store that can't open completes failed after the call returns, and its handle cancels nothing`() {
+        val scope = CoroutineScope(SupervisorJob() + recordingHandler(mutableListOf()))
+        val loader = unopenable(scope)
+        val results = mutableListOf<TileLoadResult<*>>()
+
+        loader.loadStylePack(StylePackRequest.LIGHT) { results += it }.cancel()
+        loader.loadRegion(request(acceptExpired = true), progress = { _, _ -> }) { results += it }.cancel()
+        assertTrue("never completed before the call returns", results.isEmpty())
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(List(2) { TileLoadResult.Failure(TileRegionLoadingError.FAILED) }, results)
+        scope.cancel()
+    }
+
+    /** The completion is the last step: the handler has heard why by the time a save resumes on it. */
+    @Test
+    fun `a failed load's completion runs after its failure reaches the handler`() {
+        val escaped = mutableListOf<Throwable>()
+        val scope = CoroutineScope(SupervisorJob() + recordingHandler(escaped))
+        val loader = unopenable(scope)
+        var heardByCompletion = -1
+
+        loader.loadRegion(request(acceptExpired = true), progress = { _, _ -> }) { heardByCompletion = escaped.size }
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(1, heardByCompletion)
+        scope.cancel()
+    }
+
+    @Test
+    fun `a store that keeps failing to open reaches the handler once, however many entries ask`() {
+        val escaped = mutableListOf<Throwable>()
+        val scope = CoroutineScope(SupervisorJob() + recordingHandler(escaped))
+        val loader = unopenable(scope)
+
+        repeat(2) {
+            loader.regions()
+            loader.hasStylePack(StylePackRequest.LIGHT)
+            loader.refreshRegions {}
+            loader.removeRegion("pilgrimage:camino-frances:0")
+            loader.loadStylePack(StylePackRequest.LIGHT) {}
+            loader.loadRegion(request(acceptExpired = true), progress = { _, _ -> }) {}
+            loader.firstAnswer {}
+        }
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertTrue("$escaped", escaped.single() is NoClassDefFoundError)
+        scope.cancel()
+    }
+
+    /** A device's sequence: the init's own failure, then the class it left unusable, on every call after. */
+    @Test
+    fun `each distinct open failure reaches the handler once`() {
+        val escaped = mutableListOf<Throwable>()
+        val scope = CoroutineScope(SupervisorJob() + recordingHandler(escaped))
+        var opens = 0
+        val loader = MapboxTileRegionLoader(scope) {
+            opens += 1
+            if (opens == 1) throw ExceptionInInitializerError("Mapbox couldn't initialize")
+            throw NoClassDefFoundError("com/mapbox/maps/OfflineManager")
+        }
+
+        repeat(3) { loader.regions() }
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(listOf(ExceptionInInitializerError::class, NoClassDefFoundError::class), escaped.map { it::class })
+        scope.cancel()
+    }
+
     private companion object {
         const val HASH = "0200000000000000abc"
+
+        /** A device whose Mapbox natives didn't load: every open throws the same `Error`. */
+        fun unopenable(scope: CoroutineScope) =
+            MapboxTileRegionLoader(scope) { throw NoClassDefFoundError("com/mapbox/maps/OfflineManager") }
 
         /** Two closed 5-point rings around the Francés' longitudes, the second east of the first. */
         fun request(acceptExpired: Boolean) = TileRegionRequest(
