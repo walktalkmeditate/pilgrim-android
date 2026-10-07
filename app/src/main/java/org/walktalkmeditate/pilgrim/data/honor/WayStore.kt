@@ -733,7 +733,8 @@ class WayStore(
         private const val LINKS_DIRECTORY = "links"
         private const val STAGING_DIRECTORY = "staging"
         private const val PILGRIMAGE_DIRECTORY = "pilgrimage"
-        private const val STAGE_ID_PREFIX = "pilgrimage:"
+        /** Internal so the tiles' region prefix is built from it and can't drift from [stageWayId]. */
+        internal const val STAGE_ID_PREFIX = "pilgrimage:"
         private const val ROUTE_FILE = "route.json"
         private const val RELEASE_FILE = "release.txt"
         private const val LEDGER_FILE = "ledger.json"

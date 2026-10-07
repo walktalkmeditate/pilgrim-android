@@ -18,7 +18,9 @@ import kotlin.math.sqrt
  * haversine at 6,371,000 m ([distanceMeters]); projecting a point onto the
  * line ([nearest], [lowestFrac]) is a local equirectangular plane,
  * 111,320 m per degree with longitude scaled by the query's latitude.
- * The stage-only corridor, simplify, and ring functions are not ported.
+ * A stage's tile corridor ([corridor], [simplified]) has its own local
+ * metres, from the line's first point, and [ringContains] works in raw
+ * degrees (spec D C1 §2–§4).
  */
 class WayGeometry(val points: List<WayPoint>) {
 
@@ -235,5 +237,156 @@ class WayGeometry(val points: List<WayPoint>) {
             val degrees = atan2(y, x) * 180 / Math.PI
             return (degrees + 360) % 360
         }
+
+        /**
+         * The parts a stage's tile region is loaded for: one rectangle per
+         * segment of the line simplified at 25 m, and one square per vertex,
+         * each [halfWidthMeters] from the line. Convex parts can't
+         * self-intersect, so the geometry stays valid on a hairpin; the tile
+         * store unions them. Every part is a closed, counterclockwise ring of
+         * five coordinates, latitude first.
+         *
+         * Emitted quad-then-square per vertex, in line order, in Swift's
+         * operation order (`WayGeometry.swift:216-262@7c200bf`): the corridor
+         * hash reads these coordinates bit for bit, in this order, so any
+         * other order would read as a redrawn stage and reload every region.
+         */
+        fun corridor(around: List<WayCoordinate>, halfWidthMeters: Double): List<List<WayCoordinate>> {
+            val h = halfWidthMeters
+            val line = simplified(around, toleranceMeters = 25.0)
+            val first = line.firstOrNull() ?: return emptyList()
+            val latScale = METERS_PER_DEGREE
+            val lonScale = METERS_PER_DEGREE * cos(first.lat * Math.PI / 180)
+            // Work in local metres, then back to degrees at the end.
+            val local = line.map {
+                LocalPoint(x = (it.lon - first.lon) * lonScale, y = (it.lat - first.lat) * latScale)
+            }
+            fun geo(x: Double, y: Double) =
+                WayCoordinate(lat = first.lat + y / latScale, lon = first.lon + x / lonScale)
+            fun square(v: LocalPoint) = listOf(
+                geo(v.x - h, v.y - h),
+                geo(v.x + h, v.y - h),
+                geo(v.x + h, v.y + h),
+                geo(v.x - h, v.y + h),
+                geo(v.x - h, v.y - h),
+            )
+            val parts = ArrayList<List<WayCoordinate>>(2 * local.size)
+            for (i in local.indices) {
+                if (i + 1 < local.size) {
+                    val a = local[i]
+                    val b = local[i + 1]
+                    var dx = b.x - a.x
+                    var dy = b.y - a.y
+                    val len = sqrt(dx * dx + dy * dy)
+                    // A zero-length segment has no perpendicular and so no
+                    // rectangle; its endpoints' squares still cover it.
+                    if (len > 0) {
+                        dx /= len
+                        dy /= len
+                        val nx = -dy * h
+                        val ny = dx * h
+                        // Right side forward, left side back: counterclockwise
+                        // like the squares, as RFC 7946 asks of an exterior ring.
+                        parts.add(
+                            listOf(
+                                geo(a.x - nx, a.y - ny),
+                                geo(b.x - nx, b.y - ny),
+                                geo(b.x + nx, b.y + ny),
+                                geo(a.x + nx, a.y + ny),
+                                geo(a.x - nx, a.y - ny),
+                            ),
+                        )
+                    }
+                }
+                parts.add(square(local[i]))
+            }
+            return parts
+        }
+
+        fun corridorContains(rings: List<List<WayCoordinate>>, point: WayCoordinate): Boolean =
+            rings.any { ringContains(it, point) }
+
+        /**
+         * Douglas–Peucker on local metres from the first point
+         * (`WayGeometry.swift:268-305@7c200bf`): both ends kept, an explicit
+         * stack, the distance to the clamped segment (to its start when it
+         * has no length), the first of equally far points, and a point kept
+         * only when strictly farther than [toleranceMeters]. Fewer than three
+         * points come back as the same list; the kept points are the input's
+         * own, never projected copies.
+         */
+        fun simplified(points: List<WayCoordinate>, toleranceMeters: Double): List<WayCoordinate> {
+            if (points.size <= 2) return points
+            val first = points[0]
+            val latScale = METERS_PER_DEGREE
+            val lonScale = METERS_PER_DEGREE * cos(first.lat * Math.PI / 180)
+            val local = points.map {
+                LocalPoint(x = (it.lon - first.lon) * lonScale, y = (it.lat - first.lat) * latScale)
+            }
+            val keep = BooleanArray(points.size)
+            keep[0] = true
+            keep[points.size - 1] = true
+            val stack = ArrayDeque<Pair<Int, Int>>()
+            stack.addLast(0 to points.size - 1)
+            while (stack.isNotEmpty()) {
+                val (a, b) = stack.removeLast()
+                if (b - a <= 1) continue
+                val ax = local[a].x
+                val ay = local[a].y
+                val dx = local[b].x - ax
+                val dy = local[b].y - ay
+                val lenSq = dx * dx + dy * dy
+                var farthest = -1.0
+                var index = a
+                for (i in (a + 1) until b) {
+                    val px = local[i].x - ax
+                    val py = local[i].y - ay
+                    val distance = if (lenSq > 0) {
+                        val u = max(0.0, min(1.0, (px * dx + py * dy) / lenSq))
+                        val cx = px - u * dx
+                        val cy = py - u * dy
+                        sqrt(cx * cx + cy * cy)
+                    } else {
+                        sqrt(px * px + py * py)
+                    }
+                    if (distance > farthest) {
+                        farthest = distance
+                        index = i
+                    }
+                }
+                if (farthest > toleranceMeters) {
+                    keep[index] = true
+                    stack.addLast(a to index)
+                    stack.addLast(index to b)
+                }
+            }
+            return points.filterIndexed { i, _ -> keep[i] }
+        }
+
+        /**
+         * Even-odd ray casting east, in raw degrees, over every edge
+         * including the closing one (`WayGeometry.swift:307-322@7c200bf`).
+         * Good enough for "is this tile centre inside". A ring of three
+         * coordinates or fewer contains nothing.
+         */
+        fun ringContains(ring: List<WayCoordinate>, point: WayCoordinate): Boolean {
+            if (ring.size <= 3) return false
+            var inside = false
+            var j = ring.size - 1
+            for (i in ring.indices) {
+                val yi = ring[i].lat
+                val xi = ring[i].lon
+                val yj = ring[j].lat
+                val xj = ring[j].lon
+                if ((yi > point.lat) != (yj > point.lat)) {
+                    val x = (xj - xi) * (point.lat - yi) / (yj - yi) + xi
+                    if (point.lon < x) inside = !inside
+                }
+                j = i
+            }
+            return inside
+        }
+
+        private class LocalPoint(val x: Double, val y: Double)
     }
 }

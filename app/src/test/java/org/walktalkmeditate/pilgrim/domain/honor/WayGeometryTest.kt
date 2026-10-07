@@ -11,9 +11,8 @@ import org.walktalkmeditate.pilgrim.domain.haversineMeters
  * Ports iOS `UnitTests/Honor/WayGeometryTests.swift@7c200bf` test for test
  * (the first seven), then pins the edge cases parity spec A §4–§7 lists
  * for each function: empty, one point, plateaus, loops, windows, and the
- * first-run rule of `lowestFrac`. The stage-only corridor, simplify, and
- * ring functions are not ported (Stage 21-2/21-3), so neither are
- * `WayGeometryCorridorTests`.
+ * first-run rule of `lowestFrac`. The stage corridor's tests,
+ * `WayGeometryCorridorTests`, are [WayGeometryCorridorTest].
  */
 class WayGeometryTest {
 
