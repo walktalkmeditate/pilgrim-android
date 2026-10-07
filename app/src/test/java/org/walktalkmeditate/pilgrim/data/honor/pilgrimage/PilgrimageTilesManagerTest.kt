@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.job
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -909,7 +910,8 @@ class PilgrimageTilesManagerTest {
 
             assertEquals("read back before the disk write lands", expected, stored.bytesPerPack("camino-frances"))
             val key = longPreferencesKey("pilgrimage.tiles.bytesPerPack.camino-frances")
-            assertEquals(expected, dataStore.data.first { key in it }[key])
+            writeScope.coroutineContext.job.children.toList().joinAll()
+            assertEquals(expected, dataStore.data.first()[key])
             dataStore.edit {
                 it[longPreferencesKey("pilgrimage.tiles.bytesPerPack.camino-norte")] = 0L
                 it[longPreferencesKey("pilgrimage.tiles.bytesPerPack.kumano-kodo-nakahechi")] = -1L
