@@ -14,10 +14,11 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.MainActivity
 import org.walktalkmeditate.pilgrim.service.WalkTrackingService
 
 /**
- * What the flag-off release build ships, checked by the release-variant CI
+ * What the release build ships, checked by the release-variant CI
  * job. Robolectric reads the release manifest from the test resource APK,
  * which AGP packages from the app's own merged release manifest.
  */
@@ -60,14 +61,15 @@ class ReleaseBuildContentsTest {
     }
 
     @Test
-    fun `release claims no honor links before the 2_0_0 flip`() {
-        val launcher = Intent(Intent.ACTION_MAIN)
-            .addCategory(Intent.CATEGORY_LAUNCHER)
-            .setPackage(context.packageName)
-        // Guard: intent resolution works here, so an empty honor answer means unclaimed.
-        assertTrue(context.packageManager.queryIntentActivities(launcher, 0).isNotEmpty())
+    fun `release ships with the Honor flag on, since the 2_0_0 flip`() {
+        assertTrue(BuildConfigReleaseFlags().honor)
+    }
 
-        assertEquals(emptyList<Any>(), context.packageManager.queryIntentActivities(BuildContents.honorLink(context), 0))
+    @Test
+    fun `release claims honor links for MainActivity`() {
+        val handlers = context.packageManager.queryIntentActivities(BuildContents.honorLink(context), 0)
+
+        assertEquals(listOf(MainActivity::class.java.name), handlers.map { it.activityInfo.name })
     }
 
     @Test

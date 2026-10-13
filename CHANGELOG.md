@@ -3,6 +3,42 @@
 All notable changes to Pilgrim are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [2.0.0] — 2026-10-13
+
+iOS v2.0.0 parity (anchor `7c200bf`): Honor, the third way to walk. Android's
+major and minor versions now track the iOS release they match.
+
+### Honor
+- Follow a Way, the line another walk laid down, drawn faint beneath your own:
+  one of your own walks again, a walk someone shared with you, or a stage of a
+  real pilgrimage.
+- A shared walk opens from its honor.pilgrimapp.org link (or a pasted walk
+  link). A faint companion keeps the sharer's pace; their voices arrive where
+  they were spoken and their photos wait where they were taken. You can answer
+  them in the same place, and your answers stay on your phone.
+- Walking one of your own walks again meets what you said the first time, at
+  the spot you said it.
+- Voices, cards, captions, haptics and arrival keep working with the screen
+  off, in a pocket, across app switches, and when Android reclaims the app
+  mid-walk; the finished walk still lands linked to its Way.
+
+### Pilgrimages
+- The open-pilgrimages catalog (the Camino de Santiago, the Kumano Kodō,
+  Shikoku's eighty-eight temples): download a route and walk it a stage at a
+  time, with a morning card, water announced a few hundred metres ahead,
+  service marks on the map from zoom 13, an arrival reflection you can answer,
+  and a per-route ledger of what you've walked.
+
+### Offline maps
+- "Save maps for the way" on a route page saves every stage's corridor for
+  the light and dark maps, sized before you tap. The morning card says
+  whether today's maps are saved; Settings → Data → Maps shows and deletes
+  them. Saved maps stay out of cloud backup and device-to-device transfer.
+
+### Seek
+- Seek's sonar and haptics now run beside the walk in its own process, so they
+  keep arriving with the screen off and after Android reclaims the app.
+
 ## [1.3.0] — 2026-07-27
 
 iOS v1.9.0 parity (anchor `9a418e4`): route rotation, whisper base, map glyphs.

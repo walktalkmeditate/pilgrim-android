@@ -41,7 +41,7 @@ class DebugBuildContentsTest {
     }
 
     @Test
-    fun `the honor link check sees the debug filter take honor links to MainActivity, and the walk host stays unclaimed`() {
+    fun `honor links go to MainActivity, and the walk host stays unclaimed`() {
         val claimed = context.packageManager.queryIntentActivities(BuildContents.honorLink(context), 0)
             .map { it.activityInfo.name }
 
