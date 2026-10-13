@@ -33,8 +33,8 @@ android {
         applicationId = "org.walktalkmeditate.pilgrim"
         minSdk = 28
         targetSdk = 36
-        versionCode = 733
-        versionName = "1.5.0"
+        versionCode = 912
+        versionName = "2.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
