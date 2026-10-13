@@ -107,7 +107,21 @@
                  the 9 `<activity-alias>` entries below. Exactly ONE
                  alias is enabled at a time; switching is implemented in
                  `IconSwitcher` via `PackageManager.setComponentEnabledSetting`.
-                 The Default alias starts enabled. -->
+                 The Default alias starts enabled.
+
+                 Honor links (plan U27, in every build since the 2.0.0 flip):
+                 iOS associates only the honor host, every path
+                 (`applinks:honor.pilgrimapp.org`, the worker's `"/*"`): a path
+                 that doesn't parse opens the app and does nothing. The walk
+                 host is never claimed, so a tapped walk link opens the
+                 browser and imports only when pasted (AE4). -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:host="honor.pilgrimapp.org" />
+            </intent-filter>
         </activity>
 
         <!-- iOS parity `AboutView.swift:73-82@db4196e` — 9 alternate app

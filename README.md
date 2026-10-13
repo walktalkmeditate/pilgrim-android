@@ -3,7 +3,7 @@
 
 # Pilgrim
 
-A pilgrimage app for Android. Track your walks, capture voice reflections, sit in meditation. No accounts. No servers. No leaderboards. Everything stays on your device.
+A pilgrimage app for Android. Walk three ways: wander, seek the unknown, or honor a path someone else laid down. Capture voice reflections, sit in meditation. No accounts. No leaderboards. Your walks stay on your device.
 
 [pilgrimapp.org](https://pilgrimapp.org)
 
@@ -32,6 +32,23 @@ That's the whole thing. No more, no less.
 **The walk itself**
 
 GPS tracking with live pace sparkline, step counting, altitude gain, and waypoint marking. Three-way time breakdown shows how each walk split between walking, talking, and meditating — because those are genuinely different states of attention. A foreground service keeps tracking alive with the screen off for the length of a long walk, flushing data to disk on every significant sample so nothing is lost if the app is interrupted. Live weather via Open-Meteo is logged with each walk.
+
+**Three ways to walk**
+
+*Wander* has no aim: walk, talk, meditate. *Seek* follows the unknown. *Honor* follows a path someone else laid down.
+
+**Seek**
+
+Pick a duration and Seek shapes a one-way journey to fit it, then hides clearings in fog around you. They aren't random and aren't chosen: they grow from a one-way seed of your intention exactly as you typed it, the moment you set out, the ground you stood on, and a throw of entropy, so nothing about you can be read back out of it. As you near one, a sonar ping quickens, the haptic pulse rises, and a crescent of light on your position leans toward the hidden place. Reach the fog and be still, and the way continues. Found places return on the summary map as halos in the light of the hour you reached them.
+
+**Honor**
+
+Follow a Way: the line another walk laid down, drawn faint beneath your own. Voices, cards, and arrival keep working with the screen off and the phone in a pocket.
+
+- *A walk someone shared.* Open a walk.pilgrimapp.org link and walk the same ground, a faint companion keeping the sharer's pace beside you. Their voices arrive where they were spoken, their photos wait where they were taken, and you can answer them in the same place. Your answers stay on your phone.
+- *Your own walk, again.* Walk one of your own walks a second time and meet what you said the first time, at the spot you said it.
+- *A pilgrimage, a stage at a time.* The Camino de Santiago, the Kumano Kodō, and Shikoku's eighty-eight temples, downloaded from the open [open-pilgrimages](https://github.com/walktalkmeditate/open-pilgrimages) dataset. Each morning a stage opens with its own words, its distance, and its climb; at its end it closes with a line you can answer. Water announces itself a few hundred metres ahead, at most once an hour. Shelter, food, and a way out sit on the map as quiet pins that appear only when you zoom in close.
+- *Maps with no signal.* Save the maps for a pilgrimage before you go and every stage renders with no reception at all: paths, water, place names, and contours. The route page says how much it will take before you tap. Settings → Data → Maps shows and removes what's saved.
 
 **Voice**
 
@@ -88,10 +105,11 @@ Every feature that could require a network call has been built to work without o
 - Transcription: on-device via whisper.cpp (JNI)
 - Writing prompts: generated on-device from walk context, copy into your own AI
 - Image understanding: on-device via ML Kit
-- Maps: Mapbox with no user-identifying requests
+- Maps: Mapbox with no user-identifying requests; saved pilgrimage maps render with no network at all
 - Weather: Open-Meteo (no personal account, approximate location only)
 - Walk data: stored in a local Room database on the device
 - Collective counter: opt-in, sends only anonymous totals (walk count, distance, meditation time)
+- Honor: a shared walk is fetched by its link from walk.pilgrimapp.org, and pilgrimages come from the public open-pilgrimages dataset on jsDelivr. Your answers to a shared walk stay on your device. A link tapped before the app was installed reaches it once, through the Play install referrer
 
 There is no backend that knows who you are. There is no account to create. The Play Store data safety form declares every data type the app touches and why.
 
@@ -169,10 +187,10 @@ scripts/release-notes.sh            # buckets feat/fix/style since the last tag 
 - **Jetpack Compose + StateFlow** — UI and reactive state throughout (Material 3, heavily themed)
 - **MVVM** — `ViewModel` + `StateFlow`, the direct analogue of the iOS `@Published` model
 - **Hilt** — dependency injection
-- **Room** — a single baseline schema (no migration chain); local persistence
+- **Room** — local persistence, with its own migration chain
 - **DataStore (Preferences)** — settings
 - **whisper.cpp via JNI** — on-device speech recognition
-- **Mapbox Android SDK** — maps
+- **Mapbox Android SDK** — maps, and the offline tile regions saved for pilgrimages
 - **ML Kit** — on-device image labeling, text, and face detection for prompt context
 - **Media3 / ExoPlayer + AudioRecord** — soundscapes, voice guides, recording
 - **Jetpack Glance** — home-screen widget
@@ -184,7 +202,8 @@ scripts/release-notes.sh            # buckets feat/fix/style since the last tag 
 app/src/main/java/org/walktalkmeditate/pilgrim/
 ├── ui/
 │   ├── home/         — journal scroll, walk list, ink/calligraphy path renderer
-│   ├── walk/         — active walk, waypoints, intention, live stats
+│   ├── walk/         — active walk, waypoints, intention, live stats, Seek and Honor on the walk
+│   ├── honor/        — Ways, shared-walk import, pilgrimage catalog and routes, stage overview
 │   ├── meditation/   — breathing circle, rhythm picker
 │   ├── goshuin/      — seal collection + generative renderer
 │   ├── settings/     — preferences, data export, voice guides, soundscapes
@@ -195,8 +214,9 @@ app/src/main/java/org/walktalkmeditate/pilgrim/
 │   ├── navigation/   — Navigation Compose graph (single Activity)
 │   ├── theme/        — seasonal color engine, typography
 │   └── design/       — shared components, design system
-├── walk/             — WalkController + recording orchestration
-├── data/             — Room entities/DAOs, .pilgrim package import/export
+├── walk/             — WalkController + recording orchestration; walk/honor: the Honor session in :tracker
+├── honor/            — Honor links, the install-referrer handoff, the Ways sweep
+├── data/             — Room entities/DAOs, .pilgrim package import/export; data/honor: the Ways store, pilgrimage packages, offline tiles
 ├── domain/           — use cases, models
 ├── audio/            — capture + playback primitives
 ├── location/         — GPS source, foreground tracking
@@ -220,7 +240,7 @@ Colors: stone (accent), ink, parchment, moss, rust, fog, dawn. Seasonal vignette
 
 ### Long-session reliability
 
-The hardest part of this app is surviving a 45–90 minute walk with the screen off, battery saver on, and the device in a backpack. The tracking pipeline is built with explicit teardown: a `START_STICKY` foreground service with an ongoing notification, a battery-optimization exemption flow, structured concurrency scoped to the service lifecycle, writes flushed to Room on every significant sample, and exhaustive audio-session cleanup.
+The hardest part of this app is surviving a 45–90 minute walk with the screen off, battery saver on, and the device in a backpack. The tracking pipeline is built with explicit teardown: a `START_REDELIVER_INTENT` foreground service in its own `:tracker` process, with an ongoing notification, a battery-optimization exemption flow, structured concurrency scoped to the service lifecycle, writes flushed to Room on every significant sample, and exhaustive audio-session cleanup.
 
 ---
 

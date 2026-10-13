@@ -93,8 +93,8 @@ android {
             versionNameSuffix = "-debug"
             isMinifyEnabled = false
             // The 2.0.0 release flag (ReleaseFlags): Honor, and every change
-            // that ships dark with it, is on in debug and off in release until
-            // the 2.0.0 flip.
+            // that shipped dark with it, is on in both build types since the
+            // 2.0.0 flip.
             buildConfigField("boolean", "HONOR", "true")
             // Debug builds target the dev devices only (OnePlus 13 + any
             // arm64 emulator). Skipping armeabi-v7a + x86_64 cuts the
@@ -107,7 +107,7 @@ android {
         getByName("release") {
             isMinifyEnabled = true
             isShrinkResources = true
-            buildConfigField("boolean", "HONOR", "false")
+            buildConfigField("boolean", "HONOR", "true")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
