@@ -945,7 +945,8 @@ class HonorFinalizerTest {
             packages.rewriteInstalledRouteFile(stampHoursJson("08:00", "17:00"))
             val manager = packages.makeManager()
             manager.saveStage = { id, wayJson ->
-                steps += "restamp $id"
+                tiles.drain()
+                steps += "restamp $id after ${tiles.loader.regionsReadCount} reconcile read"
                 packages.wayStore.saveEncoded(id, wayJson)
             }
             val finalizer = HonorFinalizer(
@@ -965,7 +966,11 @@ class HonorFinalizerTest {
             finalizer.runAtLaunch()
 
             assertEquals(
-                listOf("restamp pilgrimage:camino-frances:0", "restamp pilgrimage:camino-frances:1", "expiry sweep"),
+                listOf(
+                    "restamp pilgrimage:camino-frances:0 after 1 reconcile read",
+                    "restamp pilgrimage:camino-frances:1 after 1 reconcile read",
+                    "expiry sweep",
+                ),
                 steps.toList(),
             )
             (0..1).forEach { index ->
