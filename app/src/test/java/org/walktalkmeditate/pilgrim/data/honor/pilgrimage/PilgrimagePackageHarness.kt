@@ -123,6 +123,18 @@ internal class PilgrimagePackageHarness(root: File) {
         listOf("route.json", "stage-00.json", "stage-01.json").forEach { stub(it, fixture(it), release) }
     }
 
+    /**
+     * Re-stubs [routeId]'s `route.json` as the fixture with [stampHours], a raw JSON value (see
+     * [SHIKOKU_HOURS_JSON]), spliced in where the dataset writes it; null leaves the file as the fixture has it.
+     */
+    fun rewriteRouteFile(routeId: String = ROUTE_ID, stampHours: String?, release: String = RELEASE) {
+        val text = when (stampHours) {
+            null -> fixtureText("route.json")
+            else -> routeTextWith(""""stampHours": $stampHours,""")
+        }
+        stub("route.json", text.replace(ROUTE_ID, routeId).toByteArray(), release, routeId)
+    }
+
     /** iOS `stubNorte`: the same two stages, re-slugged by text as a second route. */
     fun stubNorte(release: String = RELEASE) {
         listOf("route.json", "stage-00.json", "stage-01.json").forEach { file ->
@@ -225,6 +237,9 @@ internal class PilgrimagePackageHarness(root: File) {
         const val ROUTE_ID = "camino-frances"
         const val NORTE_ID = "camino-norte"
         const val THIRD_STAGE_NAME = "Zubiri to Pamplona"
+
+        /** Shikoku's `stampHours` as the dataset writes it. */
+        const val SHIKOKU_HOURS_JSON = """{ "opens": "08:00", "closes": "17:00" }"""
         val WALKED_AT: Instant = Instant.ofEpochSecond(1_800_000_000)
 
         fun fixture(name: String): ByteArray =
@@ -233,6 +248,14 @@ internal class PilgrimagePackageHarness(root: File) {
             }.use { it.readBytes() }
 
         fun fixtureText(name: String): String = fixture(name).toString(Charsets.UTF_8)
+
+        /** The fixture `route.json` with [block] spliced in where the dataset writes `stampHours`, before `"cover"`. */
+        fun routeTextWith(block: String): String {
+            val base = fixtureText("route.json")
+            val text = base.replace("\"cover\": \"cover.jpg\",", "$block\n  \"cover\": \"cover.jpg\",")
+            check(text != base) { "route.json has no cover member to splice before" }
+            return text
+        }
 
         fun fixtureJson(name: String): JsonObject = Json.parseToJsonElement(fixtureText(name)).jsonObject
 

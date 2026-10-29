@@ -42,6 +42,7 @@ import org.walktalkmeditate.pilgrim.data.honor.fetchCapped
 import org.walktalkmeditate.pilgrim.data.honor.plainGet
 import org.walktalkmeditate.pilgrim.di.PilgrimagePackageHttpClient
 import org.walktalkmeditate.pilgrim.domain.honor.WayJson
+import org.walktalkmeditate.pilgrim.domain.honor.WayStampHours
 import org.walktalkmeditate.pilgrim.domain.honor.swiftCompareTo
 
 /**
@@ -290,7 +291,13 @@ class PilgrimagePackageManager internal constructor(
             for (index in 0 until fetched.route.stageCount) {
                 val stageUrl = PilgrimageCatalogService.packageUrl(release, entry.id, stageFileName(index))
                     ?: throw refusal(PilgrimageError.NOT_WALKABLE)
-                val plan = StagePlan(entry.id, stageUrl, fetched.route.stageCount, fetched.route.stages[index])
+                val plan = StagePlan(
+                    routeId = entry.id,
+                    url = stageUrl,
+                    stageCount = fetched.route.stageCount,
+                    expected = fetched.route.stages[index],
+                    stampHours = fetched.route.stampHours,
+                )
                 packageBytes += offActor { stageOneStage(plan, temp) }
                 checkBudget(packageBytes, cap)
                 _phase.value = Phase.Downloading(done = index + 2, total = total)
@@ -338,7 +345,12 @@ class PilgrimagePackageManager internal constructor(
     private suspend fun stageOneStage(plan: StagePlan, temp: File): Int {
         val index = plan.expected.index
         val data = fetch(plan.url, PilgrimageWayImporter.MAX_STAGE_BYTES.toLong())
-        val way = PilgrimageWayImporter.way(from = data, routeId = plan.routeId, stageIndex = index)
+        val way = PilgrimageWayImporter.way(
+            from = data,
+            routeId = plan.routeId,
+            stageIndex = index,
+            stampHours = plan.stampHours,
+        )
         val stage = way.stage
         if (stage == null || stage.count != plan.stageCount || stage.name.swiftCompareTo(plan.expected.name) != 0) {
             throw refusal(PilgrimageError.NOT_WALKABLE)
@@ -542,8 +554,18 @@ class PilgrimagePackageManager internal constructor(
 
     private class FetchedRoute(val route: PilgrimageRoute, val bytes: Int)
 
-    /** [expected] is `route.json`'s row at this index, safe by position: the rows are exactly `0 until count`. */
-    private class StagePlan(val routeId: String, val url: HttpUrl, val stageCount: Int, val expected: PilgrimageRouteStage)
+    /**
+     * [expected] is `route.json`'s row at this index, safe by position: the rows are exactly `0 until count`.
+     * [stampHours] is `route.json`'s, copied onto the stage Way here, the one place that holds both files
+     * (`PilgrimagePackageManager.swift:363-366@e551b11`).
+     */
+    private class StagePlan(
+        val routeId: String,
+        val url: HttpUrl,
+        val stageCount: Int,
+        val expected: PilgrimageRouteStage,
+        val stampHours: WayStampHours?,
+    )
 
     /** [previousStageCount] is what this route had installed before, so a rollback reaches past what it wrote. */
     private class CommitPlan(val routeId: String, val release: String, val stageCount: Int, val previousStageCount: Int)

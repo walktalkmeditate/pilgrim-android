@@ -25,6 +25,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -33,6 +34,8 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness.Companion.SHIKOKU_HOURS_JSON
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness.Companion.routeTextWith
 import org.walktalkmeditate.pilgrim.data.honor.WayError
 import org.walktalkmeditate.pilgrim.data.honor.WayImporter
 import org.walktalkmeditate.pilgrim.domain.honor.Way
@@ -44,6 +47,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.domain.honor.WayPoint
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
+import org.walktalkmeditate.pilgrim.domain.honor.WayStampHours
 import org.walktalkmeditate.pilgrim.honor.HonorImportCopy
 import org.walktalkmeditate.pilgrim.honor.HonorImportState
 
@@ -281,6 +285,7 @@ class PilgrimageWayImporterTest {
         assertEquals(listOf(0, 1), route.stages.map { it.index })
         assertEquals("hard", route.stages[0].difficulty)
         assertEquals(WayStageHours(min = 5.0, max = 7.0), route.stages[1].hours)
+        assertNull("the Camino declares no stamp office hours", route.stampHours)
     }
 
     @Test
@@ -863,7 +868,7 @@ class PilgrimageWayImporterTest {
     // ---- The live dataset's shapes (P1 §12, C14, C18) ---------------------
 
     @Test
-    fun `a stage and a route carrying schemaVersion and stampHours decode, the keys ignored`() {
+    fun `a stage file's stampHours and schemaVersion are ignored, and a route file's stampHours is read`() {
         val stampHours = buildJsonObject {
             put("opens", "08:00")
             put("closes", "17:00")
@@ -876,7 +881,10 @@ class PilgrimageWayImporterTest {
             .edited(listOf("stampHours"), stampHours)
 
         assertEquals(stage00(), stage(stageFile.toString()))
-        assertEquals(route(fixtureText("route.json")), route(routeFile.toString()))
+        assertEquals(
+            route(fixtureText("route.json")).copy(stampHours = WayStampHours(opensMinutes = 480, closesMinutes = 1020)),
+            route(routeFile.toString()),
+        )
     }
 
     // All four Shikoku sections ship `"difficulty": ""`; skipping it is the facts line's job (C18, U37).
@@ -1063,6 +1071,125 @@ class PilgrimageWayImporterTest {
         sources.forEach { file ->
             assertTrue("${file.name} logs", logging.find(file.readText()) == null)
         }
+    }
+
+    // ---- iOS PR #91: stamp hours (`PilgrimageWayImporterTests.swift:294-410@e551b11`), names kept ----
+
+    /** Shikoku's `route.json` writes `"08:00"`; the phone keeps minutes. */
+    @Test
+    fun testARoutesStampHoursAreReadAsMinutesSinceMidnight() {
+        val route = route(routeTextWith(""""stampHours": $SHIKOKU_HOURS_JSON,"""))
+
+        assertEquals(WayStampHours(opensMinutes = 480, closesMinutes = 1020), route.stampHours)
+    }
+
+    /**
+     * A walker told the wrong closing time is worse off than one told
+     * nothing, so an hour this build cannot read is dropped whole, and the
+     * route stays walkable regardless.
+     */
+    @Test
+    fun testAnUnreadableStampHourLeavesTheRouteWalkableAndSilent() {
+        val unreadable = listOf(
+            """"stampHours": { "opens": "08:00", "closes": "5pm" },""",
+            """"stampHours": { "opens": "8:00", "closes": "17:00" },""",
+            """"stampHours": { "opens": "08:00", "closes": "24:00" },""",
+            """"stampHours": { "opens": "08:00", "closes": "17:60" },""",
+            """"stampHours": { "opens": "08:00", "closes": "" },""",
+        )
+        for (block in unreadable) {
+            val route = route(routeTextWith(block))
+            assertNull(block, route.stampHours)
+            assertEquals("the route is still walkable: $block", 2, route.stageCount)
+        }
+    }
+
+    /**
+     * The same promise for a value that isn't even the right shape, a later
+     * dataset writing a season's two windows as an array, say: it costs the
+     * notice and never the route, nor `installed()`, whose null would let the
+     * launch's tile sweep take every saved map.
+     */
+    @Test
+    fun testAMisShapedStampHoursLeavesTheRouteWalkableAndSilent() {
+        val misShaped = listOf(
+            """"stampHours": { "opens": "08:00" },""",
+            """"stampHours": { "opens": 8, "closes": 17 },""",
+            """"stampHours": "08:00-17:00",""",
+            """"stampHours": { "opens": null, "closes": "17:00" },""",
+            """"stampHours": null,""",
+            """"stampHours": [ { "opens": "08:00", "closes": "12:00" }, { "opens": "13:00", "closes": "17:00" } ],""",
+        )
+        for (block in misShaped) {
+            val route = route(routeTextWith(block))
+            assertNull(block, route.stampHours)
+            assertEquals("the route is still walkable: $block", 2, route.stageCount)
+            assertEquals(block, 2, route.stages.size)
+        }
+    }
+
+    /**
+     * Leniency is for `stampHours` alone: a route file whose required
+     * members are mis-shaped is still refused whole. iOS's own case,
+     * `"stageCount": "2"`, is one kotlinx reads as 2 (A9, pinned above for a
+     * stage's count), so the refusal is shown with a mis-shape both decoders
+     * refuse, and iOS's case beside it as the divergence it is.
+     */
+    @Test
+    fun testARequiredMemberMisShapedIsStillNotWalkable() {
+        val base = fixtureText("route.json")
+        val numberForName = base.replace("\"name\": \"Camino de Santiago (Francés)\"", "\"name\": 5")
+        assertNotEquals(base, numberForName)
+        assertNotWalkable("a number for the route's name") { route(numberForName) }
+
+        val quotedCount = base.replace("\"stageCount\": 2", "\"stageCount\": \"2\"")
+        assertNotEquals(base, quotedCount)
+        assertEquals("A9: kotlinx reads a quoted number, where iOS refuses one", 2, route(quotedCount).stageCount)
+    }
+
+    /** The two files come down separately and only the package manager holds both, so the hours ride each stage Way. */
+    @Test
+    fun testAStageCarriesItsRoutesStampHoursAndSurvivesTheStoresEncoding() {
+        val hours = WayStampHours(opensMinutes = 480, closesMinutes = 1020)
+        val way = PilgrimageWayImporter.way(
+            from = fixture("stage-00.json"),
+            routeId = "camino-frances",
+            stageIndex = 0,
+            stampHours = hours,
+        )
+
+        assertEquals(hours, way.stampHours)
+        assertEquals(way, WayJson.decode(WayJson.encode(way)))
+    }
+
+    /** Every route but Shikoku's, and every `way.json` Android 2.0.0 staged. */
+    @Test
+    fun testAStageWithoutStampHoursCarriesNoneAndAnOlderWayJsonStillDecodes() {
+        assertNull("a route that declares no hours hands its stages none", stage00().stampHours)
+
+        val stamped = PilgrimageWayImporter.way(
+            from = fixture("stage-00.json"),
+            routeId = "camino-frances",
+            stageIndex = 0,
+            stampHours = WayStampHours(opensMinutes = 480, closesMinutes = 1020),
+        )
+        val tree = Json.parseToJsonElement(WayJson.encode(stamped)).jsonObject
+        assertNotNull("written when the route has them", tree["stampHours"])
+
+        val older = WayJson.decode(JsonObject(tree - "stampHours").toString())
+        assertNull("a way.json written before the field existed still decodes", older.stampHours)
+    }
+
+    /** Swift's `Int(_:)` reads a sign and only ASCII digits (A.1.2, probed); Kotlin's own parse takes both further. */
+    @Test
+    fun `an hour reads a sign as Swift does, and refuses digits that aren't ASCII`() {
+        val plus = route(routeTextWith(""""stampHours": { "opens": "+8:00", "closes": "17:00" },"""))
+        val minusZero = route(routeTextWith(""""stampHours": { "opens": "-0:00", "closes": "17:00" },"""))
+        val arabicIndic = route(routeTextWith(""""stampHours": { "opens": "٠٨:٠٠", "closes": "17:00" },"""))
+
+        assertEquals(480, plus.stampHours?.opensMinutes)
+        assertEquals(0, minusZero.stampHours?.opensMinutes)
+        assertNull(arabicIndic.stampHours)
     }
 
     // ---- Helpers -----------------------------------------------------------
