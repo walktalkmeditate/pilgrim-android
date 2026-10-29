@@ -686,6 +686,13 @@ class PilgrimageRouteViewModel internal constructor(
 
     companion object {
         const val ARG_ROUTE_ID = "routeId"
+
+        /** The 0-based stage a link brings into view; absent on the catalog's page (stage-links spec Q4). */
+        const val ARG_FOCUS = "focus"
+
+        /** The `focus` argument's default: no stage to bring into view. */
+        const val NO_FOCUS = -1
+
         internal const val KEY_REDRAW_NOTICE = "showRedrawNotice"
     }
 }

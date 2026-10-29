@@ -16,6 +16,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -24,7 +25,9 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.domain.WalkMode
+import org.walktalkmeditate.pilgrim.honor.HonorRouteLink
 import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
+import org.walktalkmeditate.pilgrim.honor.caminoFrancesEntry
 import org.walktalkmeditate.pilgrim.ui.honor.HonorOverviewViewModel
 import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.PilgrimageRouteViewModel
 import org.walktalkmeditate.pilgrim.ui.walk.WalkSummaryViewModel
@@ -457,7 +460,7 @@ class PilgrimNavHostTest {
         val nav = productionHonorGraph(honorEnabled = false)
 
         onMain {
-            listOf(Routes.HONOR_WAYS, Routes.HONOR_PILGRIMAGES, Routes.HONOR_PILGRIMAGE_PATTERN, Routes.OFFLINE_MAPS).forEach {
+            listOf(Routes.HONOR_WAYS, Routes.HONOR_PILGRIMAGES, Routes.HONOR_PILGRIMAGE_PATTERN, Routes.HONOR_ROUTE_LINK_PATTERN, Routes.OFFLINE_MAPS).forEach {
                 assertNull(it, nav.graph.findNode(it))
             }
         }
@@ -468,10 +471,195 @@ class PilgrimNavHostTest {
         val nav = productionHonorGraph(honorEnabled = true)
 
         onMain {
-            listOf(Routes.HONOR_WAYS, Routes.HONOR_PILGRIMAGES, Routes.HONOR_PILGRIMAGE_PATTERN, Routes.OFFLINE_MAPS).forEach {
+            listOf(Routes.HONOR_WAYS, Routes.HONOR_PILGRIMAGES, Routes.HONOR_PILGRIMAGE_PATTERN, Routes.HONOR_ROUTE_LINK_PATTERN, Routes.OFFLINE_MAPS).forEach {
                 assertTrue(it, nav.graph.findNode(it) != null)
             }
         }
+    }
+
+    // Stage links (stage-links spec Q1, Q4): the link page, a sheet of its own over Path.
+
+    @Test
+    fun `a link page names its route and its focus, and no focus when the link has none`() {
+        assertEquals("honor_route_link/{routeId}?focus={focus}", Routes.HONOR_ROUTE_LINK_PATTERN)
+        assertEquals("honor_route_link/camino-frances?focus=13", Routes.honorRouteLink("camino-frances", 13))
+        assertEquals("honor_route_link/camino-frances", Routes.honorRouteLink("camino-frances", null))
+    }
+
+    @Test
+    fun `a link page opens over the Path tab from another tab, and Close leaves only Path`() {
+        val nav = honorBackStack(start = Routes.PATH)
+        onMain { nav.navigateToTab(Routes.HOME) }
+
+        onMain { nav.openLinkedRoutePage(link(13)) }
+
+        onMain {
+            val page = nav.currentBackStackEntry!!
+            assertEquals(Routes.HONOR_ROUTE_LINK_PATTERN, page.destination.route)
+            assertEquals("camino-frances", page.arguments?.getString(PilgrimageRouteViewModel.ARG_ROUTE_ID))
+            assertEquals(13, page.arguments?.getInt(PilgrimageRouteViewModel.ARG_FOCUS))
+            assertEquals(Routes.PATH, nav.previousBackStackEntry?.destination?.route)
+        }
+        onMain { nav.closeRouteLinkPage(nav.currentBackStackEntry!!.id) }
+        onMain {
+            assertEquals(Routes.PATH, nav.currentBackStackEntry?.destination?.route)
+            assertNull(nav.previousBackStackEntry)
+        }
+    }
+
+    @Test
+    fun `a link page takes the place of the Ways sheet, the catalog and a route page`() {
+        val nav = pilgrimageSheets()
+
+        onMain { nav.openLinkedRoutePage(link(13)) }
+
+        onMain { assertEquals(Routes.HONOR_ROUTE_LINK_PATTERN, nav.currentBackStackEntry?.destination?.route) }
+        assertOnlyPathBeneath(nav)
+    }
+
+    @Test
+    fun `a link page takes the place of an overview up over the Journal`() {
+        val nav = honorBackStack(start = Routes.PATH)
+        onMain { nav.navigateToTab(Routes.HOME) }
+        onMain { nav.navigate(Routes.walkSummary(7L, walkAgainDoor = true)) }
+        onMain { nav.openHonorOverviewFromSummary(7L) }
+
+        onMain { nav.openLinkedRoutePage(link(13)) }
+
+        onMain { assertEquals(Routes.HONOR_ROUTE_LINK_PATTERN, nav.currentBackStackEntry?.destination?.route) }
+        assertOnlyPathBeneath(nav)
+    }
+
+    // iOS `testASecondStageLinkSwapsTheOpenRouteSheet`; Review Focus 3.
+    @Test
+    fun `the same link twice keeps the page and its entry, and another stage replaces it`() {
+        val nav = honorBackStack(start = Routes.PATH)
+        onMain { nav.openLinkedRoutePage(link(13)) }
+        val first = composeRule.runOnIdle { nav.currentBackStackEntry!!.id }
+
+        onMain { nav.openLinkedRoutePage(link(13)) }
+        onMain { assertEquals("same entry, same ViewModel", first, nav.currentBackStackEntry!!.id) }
+
+        onMain { nav.openLinkedRoutePage(link(19)) }
+        onMain {
+            val second = nav.currentBackStackEntry!!
+            assertNotEquals(first, second.id)
+            assertEquals(19, second.arguments?.getInt(PilgrimageRouteViewModel.ARG_FOCUS))
+            assertEquals(Routes.PATH, nav.previousBackStackEntry?.destination?.route)
+        }
+        onMain { nav.openLinkedRoutePage(link(null)) }
+        onMain {
+            assertEquals(
+                PilgrimageRouteViewModel.NO_FOCUS,
+                nav.currentBackStackEntry?.arguments?.getInt(PilgrimageRouteViewModel.ARG_FOCUS),
+            )
+        }
+    }
+
+    /** Q4's risk: a slide-down that finishes after a newer link replaced its page must not close the new one. */
+    @Test
+    fun `a Close from a page a newer link replaced closes nothing`() {
+        val nav = honorBackStack(start = Routes.PATH)
+        onMain { nav.openLinkedRoutePage(link(13)) }
+        val stale = composeRule.runOnIdle { nav.currentBackStackEntry!!.id }
+        onMain { nav.openLinkedRoutePage(link(19)) }
+
+        onMain { nav.closeRouteLinkPage(stale) }
+
+        onMain { assertEquals(19, nav.currentBackStackEntry?.arguments?.getInt(PilgrimageRouteViewModel.ARG_FOCUS)) }
+    }
+
+    // iOS `testChoosingAStageInsideTheRouteSheetParksTheWay`.
+    @Test
+    fun `choosing a stage on a link page opens its overview in the page's place, over Path`() {
+        val nav = honorBackStack(start = Routes.PATH)
+        onMain { nav.openLinkedRoutePage(link(13)) }
+
+        onMain { nav.openStoredWayOverview(STAGE_WAY) }
+
+        onMain { assertEquals(STAGE_WAY, nav.currentBackStackEntry?.arguments?.getString(HonorOverviewViewModel.ARG_WAY_ID)) }
+        assertOnlyPathBeneath(nav)
+    }
+
+    @Test
+    fun `a Way a link fetched takes a link page's place`() {
+        val nav = honorBackStack(start = Routes.PATH)
+        onMain { nav.openLinkedRoutePage(link(13)) }
+
+        onMain { nav.openFetchedWayOverview(SHARED_WAY) }
+
+        onMain { assertEquals(SHARED_WAY, nav.currentBackStackEntry?.arguments?.getString(HonorOverviewViewModel.ARG_WAY_ID)) }
+        assertOnlyPathBeneath(nav)
+    }
+
+    /** Q10: pushing a composable pops dialogs, with no `popUpTo` of its own, so no Replace or Remove is left reachable over a walk. */
+    @Test
+    fun `the walk screen opening takes a link page away with it`() {
+        val nav = honorBackStack(start = Routes.PATH)
+        onMain { nav.openLinkedRoutePage(link(13)) }
+
+        onMain { nav.navigate(Routes.activeWalk(WalkMode.Wander)) }
+
+        onMain {
+            assertEquals(Routes.ACTIVE_WALK, nav.currentBackStackEntry?.destination?.route)
+            assertFalse(nav.holds(Routes.HONOR_ROUTE_LINK_PATTERN))
+        }
+    }
+
+    // Review Focus 5.
+    @Test
+    fun `a link page from deep in Settings opens over Path, and Settings keeps its place`() {
+        val nav = honorBackStack(start = Routes.PATH)
+        onMain { nav.navigateToTab(Routes.SETTINGS) }
+        onMain { nav.navigate(Routes.OFFLINE_MAPS) }
+
+        onMain { nav.openLinkedRoutePage(link(13)) }
+        onMain { assertEquals(Routes.PATH, nav.previousBackStackEntry?.destination?.route) }
+        onMain { nav.closeRouteLinkPage(nav.currentBackStackEntry!!.id) }
+        onMain { nav.navigateToTab(Routes.SETTINGS) }
+
+        onMain { assertEquals(Routes.OFFLINE_MAPS, nav.currentBackStackEntry?.destination?.route) }
+    }
+
+    /** Q1: every landing leaves one Honor surface at most: the Ways sheet's stack, an overview, or a link page. */
+    @Test
+    fun `after any landing the back stack holds one Honor surface at most`() {
+        val nav = honorBackStack(start = Routes.PATH)
+        val starts: List<(NavHostController) -> Unit> = listOf(
+            { it.navigate(Routes.HONOR_WAYS) },
+            {
+                it.navigate(Routes.HONOR_WAYS)
+                it.navigate(Routes.HONOR_PILGRIMAGES)
+                it.navigate(Routes.honorPilgrimage("camino-frances"))
+            },
+            { it.openStoredWayOverview(SHARED_WAY) },
+            { it.openLinkedRoutePage(link(13)) },
+        )
+        val landings: List<(NavHostController) -> Unit> = listOf(
+            { it.openLinkedRoutePage(link(19)) },
+            { it.openFetchedWayOverview(SHARED_WAY) },
+            { it.openStoredWayOverview(STAGE_WAY) },
+        )
+        starts.forEach { start ->
+            landings.forEach { land ->
+                onMain { start(nav) }
+                onMain { land(nav) }
+                onMain {
+                    val up = listOf(Routes.HONOR_WAYS, Routes.HONOR_OVERVIEW_PATTERN, Routes.HONOR_ROUTE_LINK_PATTERN).count { nav.holds(it) }
+                    assertEquals(1, up)
+                }
+                onMain { nav.popBackStack(Routes.PATH, inclusive = false) }
+            }
+        }
+    }
+
+    private fun link(focus: Int?) = HonorRouteLink(caminoFrancesEntry, release = "v1.12.0", focus = focus)
+
+    private fun NavHostController.holds(route: String): Boolean = try {
+        getBackStackEntry(route)
+        true
+    } catch (_: IllegalArgumentException) {
+        false
     }
 
     /** Path → Ways sheet → catalog → a route page. */
@@ -517,6 +705,9 @@ class PilgrimNavHostTest {
                 honorSheet(Routes.HONOR_OWN_WALKS) {}
                 honorSheet(Routes.HONOR_PILGRIMAGES) {}
                 honorSheet(Routes.HONOR_PILGRIMAGE_PATTERN, arguments = honorPilgrimageArguments) {}
+                honorSheet(Routes.HONOR_ROUTE_LINK_PATTERN, arguments = honorRouteLinkArguments) {}
+                composable(Routes.SETTINGS) {}
+                composable(Routes.OFFLINE_MAPS) {}
                 composable(
                     route = Routes.WALK_SUMMARY_PATTERN,
                     arguments = listOf(

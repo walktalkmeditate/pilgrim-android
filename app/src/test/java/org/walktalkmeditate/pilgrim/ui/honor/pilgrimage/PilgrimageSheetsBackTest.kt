@@ -5,10 +5,13 @@ import android.app.Application
 import android.view.KeyEvent
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.lifecycle.SavedStateHandle
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -20,6 +23,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -28,10 +32,13 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowDialog
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness
 import org.walktalkmeditate.pilgrim.ui.navigation.Routes
+import org.walktalkmeditate.pilgrim.ui.navigation.closeRouteLinkPage
 import org.walktalkmeditate.pilgrim.ui.navigation.closePilgrimageRoute
 import org.walktalkmeditate.pilgrim.ui.navigation.closePilgrimages
 import org.walktalkmeditate.pilgrim.ui.navigation.honorPilgrimageArguments
+import org.walktalkmeditate.pilgrim.ui.navigation.honorRouteLinkArguments
 import org.walktalkmeditate.pilgrim.ui.navigation.honorSheet
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
 
@@ -89,6 +96,67 @@ class PilgrimageSheetsBackTest {
             decor.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK))
             decor.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK))
         }
+    }
+
+    // Stage-links spec Q4: the link page's Close, Back and swipe close it alone, to Path.
+
+    @Test
+    fun `a link page shows Close in the back arrow's place, and Close leaves only Path`() {
+        val nav = linkPageSheets()
+        composeRule.runOnIdle { nav.navigate(Routes.honorRouteLink(PilgrimagePackageHarness.ROUTE_ID, null)) }
+        composeRule.waitUntil(WAIT_MILLIS) { nav.currentBackStackEntry?.destination?.route == Routes.HONOR_ROUTE_LINK_PATTERN }
+        composeRule.onNodeWithText("Download").assertIsDisplayed()
+        composeRule.onAllNodesWithContentDescription("Pilgrimages").assertCountEquals(0)
+
+        composeRule.onNodeWithText("Close").performClick()
+
+        composeRule.waitUntil(WAIT_MILLIS) { nav.currentBackStackEntry?.destination?.route == Routes.PATH }
+        composeRule.runOnIdle { assertNull(nav.previousBackStackEntry) }
+    }
+
+    @Test
+    fun `system Back on a link page closes it alone, to Path`() {
+        val nav = linkPageSheets()
+        composeRule.runOnIdle { nav.navigate(Routes.honorRouteLink(PilgrimagePackageHarness.ROUTE_ID, null)) }
+        composeRule.waitUntil(WAIT_MILLIS) { nav.currentBackStackEntry?.destination?.route == Routes.HONOR_ROUTE_LINK_PATTERN }
+        composeRule.onNodeWithText("Download").assertIsDisplayed()
+
+        pressBackOnTheTopWindow()
+
+        composeRule.waitUntil(WAIT_MILLIS) { nav.currentBackStackEntry?.destination?.route == Routes.PATH }
+        composeRule.runOnIdle { assertNull(nav.previousBackStackEntry) }
+    }
+
+    /** Path and the link page wired as the app's host wires it, the page's ViewModel built on the world. */
+    private fun linkPageSheets(): NavHostController {
+        world.holdCatalog()
+        var nav: NavHostController? = null
+        composeRule.setContent {
+            PilgrimTheme {
+                val controller = rememberNavController()
+                SideEffect { nav = controller }
+                NavHost(navController = controller, startDestination = Routes.PATH) {
+                    composable(Routes.PATH) {}
+                    honorSheet(Routes.HONOR_ROUTE_LINK_PATTERN, arguments = honorRouteLinkArguments) { entry ->
+                        val routeId = requireNotNull(entry.arguments?.getString(PilgrimageRouteViewModel.ARG_ROUTE_ID))
+                        val focus = entry.arguments?.getInt(PilgrimageRouteViewModel.ARG_FOCUS) ?: PilgrimageRouteViewModel.NO_FOCUS
+                        PilgrimageRouteLinkSheet(
+                            onClose = { controller.closeRouteLinkPage(entry.id) },
+                            onOpenStage = {},
+                            viewModel = remember(entry.id) {
+                                world.routeViewModel(
+                                    saved = SavedStateHandle(
+                                        mapOf(PilgrimageRouteViewModel.ARG_ROUTE_ID to routeId, PilgrimageRouteViewModel.ARG_FOCUS to focus),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                }
+            }
+        }
+        composeRule.waitForIdle()
+        return requireNotNull(nav)
     }
 
     /** Path, the Ways sheet's route with nothing drawn, and the two pilgrimage sheets wired as the app's host wires them. */

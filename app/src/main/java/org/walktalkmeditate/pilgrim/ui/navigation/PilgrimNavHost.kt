@@ -47,6 +47,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.honor.HonorLinkScreen
+import org.walktalkmeditate.pilgrim.honor.HonorRouteLink
 import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.permissions.AppSettings
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
@@ -150,6 +151,19 @@ object Routes {
     private const val HONOR_PILGRIMAGE_PREFIX = "honor_pilgrimage"
     const val HONOR_PILGRIMAGE_PATTERN = "$HONOR_PILGRIMAGE_PREFIX/{${PilgrimageRouteViewModel.ARG_ROUTE_ID}}"
     fun honorPilgrimage(routeId: String): String = "$HONOR_PILGRIMAGE_PREFIX/${Uri.encode(routeId)}"
+
+    /**
+     * A route's page opened by a stage link: a sheet of its own over the
+     * Path tab, iOS's route sheet keyed by `entry.id:focus`
+     * (`StageLink.swift:11@3b78728`, `MainTabView.swift:79-91@3b78728`).
+     * The focus is the 0-based stage to bring into view, absent for none.
+     */
+    private const val HONOR_ROUTE_LINK_PREFIX = "honor_route_link"
+    const val HONOR_ROUTE_LINK_PATTERN =
+        "$HONOR_ROUTE_LINK_PREFIX/{${PilgrimageRouteViewModel.ARG_ROUTE_ID}}" +
+            "?${PilgrimageRouteViewModel.ARG_FOCUS}={${PilgrimageRouteViewModel.ARG_FOCUS}}"
+    fun honorRouteLink(routeId: String, focus: Int?): String =
+        "$HONOR_ROUTE_LINK_PREFIX/${Uri.encode(routeId)}" + (focus?.let { "?${PilgrimageRouteViewModel.ARG_FOCUS}=$it" } ?: "")
 
     const val SETTINGS = "settings"
     const val VOICE_GUIDE_PICKER = "voice_guides"
@@ -875,6 +889,7 @@ private val HONOR_TRACKED_ROUTES = listOf(
     Routes.HONOR_WAYS,
     Routes.WALK_SUMMARY_PATTERN,
     Routes.HONOR_OVERVIEW_PATTERN,
+    Routes.HONOR_ROUTE_LINK_PATTERN,
 )
 
 /**
@@ -1063,6 +1078,12 @@ internal fun androidx.navigation.NavGraphBuilder.honorRoutes(navController: NavH
             onOpenStage = navController::openStoredWayOverview,
         )
     }
+    honorSheet(Routes.HONOR_ROUTE_LINK_PATTERN, arguments = honorRouteLinkArguments) { entry ->
+        org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.PilgrimageRouteLinkSheet(
+            onClose = { navController.closeRouteLinkPage(entry.id) },
+            onOpenStage = navController::openStoredWayOverview,
+        )
+    }
     honorSheet(Routes.HONOR_OWN_WALKS) {
         org.walktalkmeditate.pilgrim.ui.honor.OwnWalkPickerRoute(
             onClosed = { navController.popBackStack(Routes.HONOR_OWN_WALKS, inclusive = true) },
@@ -1110,6 +1131,15 @@ internal val honorPilgrimageArguments = listOf(
     navArgument(PilgrimageRouteViewModel.ARG_ROUTE_ID) { type = NavType.StringType },
 )
 
+/** The link page's route id, required, and its focus, [PilgrimageRouteViewModel.NO_FOCUS] when the link names none. */
+internal val honorRouteLinkArguments = listOf(
+    navArgument(PilgrimageRouteViewModel.ARG_ROUTE_ID) { type = NavType.StringType },
+    navArgument(PilgrimageRouteViewModel.ARG_FOCUS) {
+        type = NavType.IntType
+        defaultValue = PilgrimageRouteViewModel.NO_FOCUS
+    },
+)
+
 /**
  * The catalog's Close and swipe, and the route page's swipe, which closes
  * both as iOS's swipe takes the one sheet holding both: the Ways sheet
@@ -1122,6 +1152,53 @@ internal fun NavController.closePilgrimages() {
 /** The route page's Back, system or its own: the catalog shows again (P4 §1.3). */
 internal fun NavController.closePilgrimageRoute() {
     popBackStack(Routes.HONOR_PILGRIMAGE_PATTERN, inclusive = true)
+}
+
+/**
+ * A stage link's route page over the Path tab (stage-links spec Q1, Q4;
+ * iOS `openRouteLink`, `MainCoordinatorView.swift:332-348@3b78728`). The
+ * same route at the same focus already on top stays, as iOS keeps a sheet
+ * whose item has the same id. Otherwise an overview, the Ways sheet with
+ * whatever is over it, and a link page already up give up their place in
+ * this one step, so no two Honor surfaces stand together. Two explicit
+ * calls, never `launchSingleTop`, which would keep the old entry and its
+ * focus.
+ */
+internal fun NavHostController.openLinkedRoutePage(link: HonorRouteLink) {
+    if (showsLinkedRoutePage(link)) return
+    clearHonorSurfacesForPath()
+    navigate(Routes.honorRouteLink(link.entry.id, link.focus))
+}
+
+/** The page on top is [link]'s route at [link]'s focus: iOS's `HonorRouteLink.id` (`StageLink.swift:11@3b78728`). */
+internal fun NavController.showsLinkedRoutePage(link: HonorRouteLink): Boolean {
+    val entry = currentBackStackEntry ?: return false
+    val arguments = entry.arguments ?: return false
+    return entry.destination.route == Routes.HONOR_ROUTE_LINK_PATTERN &&
+        arguments.getString(PilgrimageRouteViewModel.ARG_ROUTE_ID) == link.entry.id &&
+        arguments.getInt(PilgrimageRouteViewModel.ARG_FOCUS, PilgrimageRouteViewModel.NO_FOCUS) ==
+        (link.focus ?: PilgrimageRouteViewModel.NO_FOCUS)
+}
+
+/**
+ * The link page's Close, swipe and system Back, which land on Path: only
+ * [entryId]'s page goes, so a slide-down that ends after a newer link
+ * replaced the page closes nothing.
+ */
+internal fun NavController.closeRouteLinkPage(entryId: String) {
+    if (currentBackStackEntry?.id == entryId) popBackStack()
+}
+
+/**
+ * Gives up an overview, the Ways sheet with whatever is over it, and a
+ * link page, unsaved and before any tab switch so `saveState` never saves
+ * a dialog into Path's state, then leaves Path showing.
+ */
+private fun NavHostController.clearHonorSurfacesForPath() {
+    popBackStack(Routes.HONOR_OVERVIEW_PATTERN, inclusive = true)
+    popBackStack(Routes.HONOR_WAYS, inclusive = true)
+    popBackStack(Routes.HONOR_ROUTE_LINK_PATTERN, inclusive = true)
+    if (currentDestination?.route != Routes.PATH) navigateToTab(Routes.PATH)
 }
 
 /** "walk this again" built a Way: the overview takes the summary's place over its host (F §6.2). */
@@ -1139,13 +1216,15 @@ internal fun NavController.closeHonorOverview() {
 
 /**
  * A listed Way's overview, from its "Shared with you" row, a route page's
- * stage, or a finished import: it takes the place of the Ways sheet (and
- * the picker, or the catalog and route page, over it), or of an overview
- * already up, as iOS swaps the overview's Way (S1 §8.16); anywhere else it
- * opens over the screen showing.
+ * stage (the catalog's page or a link's), or a finished import: it takes
+ * the place of the Ways sheet (and the picker, or the catalog and route
+ * page, over it), of a link page, or of an overview already up, as iOS
+ * swaps the overview's Way (S1 §8.16); anywhere else it opens over the
+ * screen showing.
  */
 internal fun NavController.openStoredWayOverview(wayId: String) {
-    val replaces = listOf(Routes.HONOR_WAYS, Routes.HONOR_OVERVIEW_PATTERN).firstOrNull(::hasBackStackEntry)
+    val replaces = listOf(Routes.HONOR_WAYS, Routes.HONOR_ROUTE_LINK_PATTERN, Routes.HONOR_OVERVIEW_PATTERN)
+        .firstOrNull(::hasBackStackEntry)
     navigate(Routes.honorOverview(HonorWayChoice.Stored(wayId))) {
         replaces?.let { popUpTo(it) { inclusive = true } }
         launchSingleTop = true
@@ -1155,13 +1234,12 @@ internal fun NavController.openStoredWayOverview(wayId: String) {
 /**
  * A Way a link or a paste fetched opens over the Path tab, so Close lands
  * there, as it does on iOS, whose link switched the tab beneath (S2 §4.1).
- * An overview already up, or the Ways sheet with its picker, gives up its
- * place unsaved; any other screen is left as a tab tap leaves it.
+ * An overview already up, the Ways sheet with its picker, or a link page
+ * gives up its place unsaved; any other screen is left as a tab tap
+ * leaves it.
  */
 internal fun NavHostController.openFetchedWayOverview(wayId: String) {
-    popBackStack(Routes.HONOR_OVERVIEW_PATTERN, inclusive = true)
-    popBackStack(Routes.HONOR_WAYS, inclusive = true)
-    if (currentDestination?.route != Routes.PATH) navigateToTab(Routes.PATH)
+    clearHonorSurfacesForPath()
     navigate(Routes.honorOverview(HonorWayChoice.Stored(wayId))) { launchSingleTop = true }
 }
 
