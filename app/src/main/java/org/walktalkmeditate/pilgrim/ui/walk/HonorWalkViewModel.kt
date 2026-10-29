@@ -204,8 +204,7 @@ data class HonorListening(val elapsedSeconds: Double, val paused: Boolean)
 /**
  * The walk screen's one caption line, in the minimized bar's third stat for
  * 20 s (iOS `softTapCaption`; pilgrimage-stage spec P3 §7, P5 §6). A model
- * rather than a string, so iOS PR #91's temple notice adds a case (Annex
- * A.4.2); the sheet writes the words when it draws them.
+ * rather than a string; the sheet writes the words when it draws them.
  */
 sealed interface HonorCaption {
     /** The soft tap's "off the way · N m", always metres (pilgrim-ios #109, matched); dark while nothing sets the preference. */
@@ -215,6 +214,33 @@ sealed interface HonorCaption {
     /** A stage's "water in <distance>", in the walker's unit, as the engine measured it along the line. */
     @Immutable
     data class Water(val meters: Double) : HonorCaption
+
+    /** A Shikoku stage's "temple 10 stamps until 5 · 3.2 km" (iOS PR #91): the number and close from the Way, the metres from the row. */
+    @Immutable
+    data class Stamp(val templeNumber: Int, val closesMinutes: Int, val meters: Double) : HonorCaption
+
+    companion object {
+
+        /**
+         * What [notice] says on [way] (iOS `showMarkCaption` and
+         * `showStampCaption`, `ActiveWalkViewModel+MarkPins.swift:62-73@e551b11`).
+         * A temple's number and closing time are read from the walk's Way,
+         * never the row, and with either missing the line says nothing: the
+         * guard `:tracker` applied before it wrote the row, made again here.
+         */
+        fun of(notice: HonorNoticeEntity?, way: Way?): HonorCaption? {
+            if (notice == null) return null
+            return when (notice.kind) {
+                HonorNoticeKind.WATER -> Water(notice.meters)
+                HonorNoticeKind.STAMP -> {
+                    val number = way?.moments?.firstOrNull { it.id == notice.refId }?.templeNumber
+                    val closes = way?.stampHours?.closesMinutes
+                    if (number != null && closes != null) Stamp(number, closes, notice.meters) else null
+                }
+                HonorNoticeKind.UNKNOWN -> null
+            }
+        }
+    }
 }
 
 /** The minimized sheet's Honor parts (parity spec E §10). */
@@ -222,7 +248,7 @@ sealed interface HonorCaption {
 data class HonorSheetStats(
     /** The Way's distance left; null before Begin, which reads "--". */
     val remainingMeters: Double?,
-    /** Water's while it shows, else the soft tap's; a stage has no soft tap, so they never meet. */
+    /** The latest notice's while it shows, else the soft tap's; a stage has no soft tap, so they never meet. */
     val caption: HonorCaption?,
     val listening: HonorListening?,
 )
@@ -309,7 +335,7 @@ class HonorWalkViewModel internal constructor(
     @Volatile
     private var latestQueue: HonorCardQueue? = null
 
-    /** The walk's latest notice as the water caption last read it. */
+    /** The walk's latest notice as the caption last read it. */
     @Volatile
     private var lastNotice: HonorNoticeEntity? = null
 
@@ -408,11 +434,11 @@ class HonorWalkViewModel internal constructor(
     val sheet: StateFlow<HonorSheetStats?> = if (!enabled) {
         MutableStateFlow(null)
     } else {
-        combine(state, live, voiceNow, softTapMeters(), waterCaption()) { state, live, voice, softTap, water ->
+        combine(state, live, voiceNow, softTapMeters(), shownNotice()) { state, live, voice, softTap, notice ->
             if (state == null) return@combine null
             HonorSheetStats(
                 remainingMeters = live?.let { (1 - it.session.progressFrac) * it.loaded.geometry.totalMeters },
-                caption = water ?: softTap?.let(HonorCaption::OffWay),
+                caption = HonorCaption.of(notice, live?.loaded?.way) ?: softTap?.let(HonorCaption::OffWay),
                 listening = voice?.view?.takeIf { it.playingMomentId != null }
                     ?.let { HonorListening(elapsedSeconds = voice.elapsedSeconds, paused = it.paused) },
             )
@@ -973,41 +999,42 @@ class HonorWalkViewModel internal constructor(
     }.distinctUntilChanged()
 
     /**
-     * Water ahead (iOS `showMarkCaption`, pilgrimage-stage spec P3 §7.3, P5
-     * §6): the walk's latest notice, which `:tracker` writes in the step
-     * that fires it, before its haptic. It shows while
-     * `0 ≤ now − firedAt < 20 s`, so a restarted UI shows what is left of it,
-     * and a wall clock set back can't stretch it. A revived `:tracker` never
-     * writes it again, so it never replays (P5 A2). A kind this build doesn't
-     * know shows nothing.
+     * The walk's latest notice while its caption shows (iOS `showMarkCaption`
+     * and `showStampCaption`; pilgrimage-stage spec P3 §7.3, P5 §6): the row
+     * `:tracker` writes in the step that fires it, before its haptic, shown
+     * while `0 ≤ now − firedAt < 20 s`, so a restarted UI shows what is left
+     * of it, and a wall clock set back can't stretch it. A revived `:tracker`
+     * never writes it again, so it never replays (P5 A2). A kind this build
+     * doesn't know shows nothing; [HonorCaption.of] reads the rest against
+     * the walk's Way.
      *
      * A screen back from the background starts from the last notice read,
      * worked out against the clock at once, so the sheet never waits on
      * Room with an expired caption still drawn.
      */
-    private fun waterCaption(): Flow<HonorCaption.Water?> =
+    private fun shownNotice(): Flow<HonorNoticeEntity?> =
         live.map { it?.walkId }.distinctUntilChanged()
             .flatMapLatest { walkId -> if (walkId == null) flowOf(null) else honorDao.observeLatestNotice(walkId) }
             .distinctUntilChanged()
             .onEach { lastNotice = it }
-            .flatMapLatest(::noticeCaption)
-            .onStart { emit(waterCaptionAt(lastNotice, clock.now())) }
+            .flatMapLatest(::whileShown)
+            .onStart { emit(shownAt(lastNotice, clock.now())) }
             .distinctUntilChanged()
 
-    private fun noticeCaption(notice: HonorNoticeEntity?): Flow<HonorCaption.Water?> = flow {
+    private fun whileShown(notice: HonorNoticeEntity?): Flow<HonorNoticeEntity?> = flow {
         val now = clock.now()
-        val caption = waterCaptionAt(notice, now)
-        emit(caption)
-        if (caption == null || notice == null) return@flow
-        delay(SOFT_TAP_CAPTION_MILLIS - (now - notice.firedAt))
+        val shown = shownAt(notice, now)
+        emit(shown)
+        if (shown == null) return@flow
+        delay(SOFT_TAP_CAPTION_MILLIS - (now - shown.firedAt))
         emit(null)
     }
 
-    /** What [notice] shows at [now]: water, fired less than 20 s before it and not after it. */
-    private fun waterCaptionAt(notice: HonorNoticeEntity?, now: Long): HonorCaption.Water? {
-        if (notice == null || notice.kind != HonorNoticeKind.WATER) return null
+    /** [notice] at [now]: a kind this build knows, fired less than 20 s before it and not after it. */
+    private fun shownAt(notice: HonorNoticeEntity?, now: Long): HonorNoticeEntity? {
+        if (notice == null || notice.kind == HonorNoticeKind.UNKNOWN) return null
         val age = now - notice.firedAt
-        return if (age in 0 until SOFT_TAP_CAPTION_MILLIS) HonorCaption.Water(notice.meters) else null
+        return notice.takeIf { age in 0 until SOFT_TAP_CAPTION_MILLIS }
     }
 
     /** The walk's Start and end, its fixes, and the Way on screen, as they reach the marks. */

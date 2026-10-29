@@ -21,6 +21,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
@@ -96,6 +97,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.domain.honor.WayStage
 import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
 import org.walktalkmeditate.pilgrim.domain.honor.WayStagePlace
+import org.walktalkmeditate.pilgrim.domain.honor.WayStampHours
 import org.walktalkmeditate.pilgrim.domain.wgs84MidLatitudeMeters
 import org.walktalkmeditate.pilgrim.honor.HonorReplies
 import org.walktalkmeditate.pilgrim.honor.HonorStageHandoff
@@ -1305,7 +1307,14 @@ class HonorWalkViewModelTest {
         assertEquals("the first fix anchors the selection", 1, published.size - 1)
         assertEquals("nearest to the walker comes first", "m0", vm.marks.value.first().markId)
         val caption = vm.sheet.awaitValue { it?.caption != null }!!.caption!!
-        assertTrue(HonorCaptionCopy.text(context.resources, caption, UnitSystem.Metric).startsWith("water in "))
+        assertTrue(
+            HonorCaptionCopy.text(
+                context.resources,
+                caption,
+                UnitSystem.Metric,
+                twelveHour = false,
+            ).startsWith("water in "),
+        )
 
         walkerAt(50.0 / 111_320)
         assertEquals("50 m is inside the 200 m throttle", 1, published.size - 1)
@@ -1488,7 +1497,7 @@ class HonorWalkViewModelTest {
         val caption = vm.sheet.awaitValue { it?.caption != null }!!.caption!!
         assertEquals(
             "water in ${WayRelation.distance(280.0, UnitSystem.Metric)}",
-            HonorCaptionCopy.text(context.resources, caption, UnitSystem.Metric),
+            HonorCaptionCopy.text(context.resources, caption, UnitSystem.Metric, twelveHour = false),
         )
         assertNull("a mark is never a card", vm.cards.value?.place)
     }
@@ -1563,15 +1572,136 @@ class HonorWalkViewModelTest {
     fun `water reads in the walker's unit, where the off-way caption is always metres`() {
         val resources = context.resources
 
-        assertEquals("water in 280 m", HonorCaptionCopy.text(resources, HonorCaption.Water(280.0), UnitSystem.Metric))
-        assertEquals("water in 0.2 mi", HonorCaptionCopy.text(resources, HonorCaption.Water(280.0), UnitSystem.Imperial))
-        assertEquals("water in 492 ft", HonorCaptionCopy.text(resources, HonorCaption.Water(150.0), UnitSystem.Imperial))
-        assertEquals("off the way · 250 m", HonorCaptionCopy.text(resources, HonorCaption.OffWay(250L), UnitSystem.Imperial))
+        assertEquals(
+            "water in 280 m",
+            HonorCaptionCopy.text(
+                resources,
+                HonorCaption.Water(280.0),
+                UnitSystem.Metric,
+                twelveHour = false,
+            ),
+        )
+        assertEquals(
+            "water in 0.2 mi",
+            HonorCaptionCopy.text(
+                resources,
+                HonorCaption.Water(280.0),
+                UnitSystem.Imperial,
+                twelveHour = false,
+            ),
+        )
+        assertEquals(
+            "water in 492 ft",
+            HonorCaptionCopy.text(
+                resources,
+                HonorCaption.Water(150.0),
+                UnitSystem.Imperial,
+                twelveHour = false,
+            ),
+        )
+        assertEquals(
+            "off the way · 250 m",
+            HonorCaptionCopy.text(
+                resources,
+                HonorCaption.OffWay(250L),
+                UnitSystem.Imperial,
+                twelveHour = false,
+            ),
+        )
     }
 
     @Test
     fun `a water distance that isn't a number reads 0 m`() {
-        assertEquals("water in 0 m", HonorCaptionCopy.text(context.resources, HonorCaption.Water(Double.NaN), UnitSystem.Metric))
+        assertEquals(
+            "water in 0 m",
+            HonorCaptionCopy.text(
+                context.resources,
+                HonorCaption.Water(Double.NaN),
+                UnitSystem.Metric,
+                twelveHour = false,
+            ),
+        )
+    }
+
+    // The temple caption (iOS PR #91; stamp-closing spec, UI)
+
+    /** iOS `testTheStampNoticeBorrowsTheCaptionLineAndNothingElse` (`PilgrimageStageWalkTests.swift:375-394@e551b11`), the caption's half. */
+    @Test
+    fun testTheStampNoticeBorrowsTheCaptionLineAndNothingElse() = runTest(dispatcher) {
+        startStageWalk(templeStageWay(HonorHarness.SHIKOKU_HOURS))
+        val vm = viewModel()
+        collectCards(vm)
+        vm.state.awaitValue { it?.session != null }
+
+        db.honorDao().insertNotice(stampNotice(meters = 3200.0, firedAt = clock.now()))
+
+        val caption = vm.sheet.awaitValue { it?.caption != null }!!.caption!!
+        assertEquals(HonorCaption.Stamp(templeNumber = 10, closesMinutes = 17 * 60, meters = 3200.0), caption)
+        assertEquals(
+            "temple 10 stamps until 5 · 3.2 km",
+            HonorCaptionCopy.text(context.resources, caption, UnitSystem.Metric, twelveHour = true),
+        )
+        assertNull("a notice is never a card", vm.cards.value?.place)
+    }
+
+    /** iOS `testAWayWithoutStampHoursPutsNothingOnTheLineAndTapsNothing` (`:396-412@e551b11`), the caption's half. */
+    @Test
+    fun testAWayWithoutStampHoursPutsNothingOnTheLine() = runTest(dispatcher) {
+        startStageWalk(templeStageWay(stampHours = null))
+        val seen = MutableStateFlow<HonorNoticeEntity?>(null)
+        val watched = object : HonorDao by db.honorDao() {
+            override fun observeLatestNotice(walkId: Long): Flow<HonorNoticeEntity?> =
+                db.honorDao().observeLatestNotice(walkId).onEach { seen.value = it }
+        }
+        val vm = viewModel(honorDao = watched)
+        collectCards(vm)
+        vm.state.awaitValue { it?.session != null }
+
+        db.honorDao().insertNotice(stampNotice(meters = 3200.0, firedAt = clock.now()))
+        withTimeout(5_000L) { seen.first { it?.kind == HonorNoticeKind.STAMP } }
+        runCurrent()
+
+        assertNull(vm.sheet.value?.caption)
+    }
+
+    /** Review Focus 3: a UI restart inside the 20 s shows what is left of them, then nothing. */
+    @Test
+    fun `after a UI restart a temple caption shows for what is left of its 20 s`() = runTest(dispatcher) {
+        startStageWalk(templeStageWay(HonorHarness.SHIKOKU_HOURS))
+        db.honorDao().insertNotice(stampNotice(meters = 3200.0, firedAt = clock.now()))
+        advanceTimeBy(15_000L)
+        val vm = viewModel()
+        collectCards(vm)
+
+        val shown = vm.sheet.awaitValue { it?.caption != null }!!.caption
+        advanceTimeBy(4_999L)
+        runCurrent()
+        val stillShown = vm.sheet.value!!.caption
+        advanceTimeBy(1L)
+        runCurrent()
+
+        val stamp = HonorCaption.Stamp(templeNumber = 10, closesMinutes = 1020, meters = 3200.0)
+        assertEquals(stamp, shown)
+        assertEquals(stamp to null, stillShown to vm.sheet.value!!.caption)
+    }
+
+    @Test
+    fun `a temple reads in the walker's clock and unit, a distance that isn't a number reading 0`() {
+        val resources = context.resources
+        val stamp = HonorCaption.Stamp(templeNumber = 88, closesMinutes = 17 * 60, meters = 18_244.0)
+
+        assertEquals(
+            "temple 88 stamps until 5 · 11.3 mi",
+            HonorCaptionCopy.text(resources, stamp, UnitSystem.Imperial, twelveHour = true),
+        )
+        assertEquals(
+            "temple 88 stamps until 17 · 18.2 km",
+            HonorCaptionCopy.text(resources, stamp, UnitSystem.Metric, twelveHour = false),
+        )
+        assertEquals(
+            "temple 88 stamps until 5 · 0 m",
+            HonorCaptionCopy.text(resources, stamp.copy(meters = Double.NaN), UnitSystem.Metric, twelveHour = true),
+        )
     }
 
     // The stage's cards and arrival (P5 §7, §8)
@@ -1833,6 +1963,16 @@ class HonorWalkViewModelTest {
     /** `:tracker`'s water notice, as it writes it before the haptic. */
     private fun waterNotice(refId: String, meters: Double, firedAt: Long) = HonorNoticeEntity(
         walkId = liveWalkId, kind = HonorNoticeKind.WATER, refId = refId, meters = meters, firedAt = firedAt,
+    )
+
+    /** [stageWay] with the harness's numbered temple 900 m along its line, on Way hours of [stampHours]. */
+    private fun templeStageWay(stampHours: WayStampHours?) = stageWay().let {
+        it.copy(moments = it.moments + HonorHarness.temple(10, lon = 900.0 / 111_320), stampHours = stampHours)
+    }
+
+    /** `:tracker`'s temple notice, as it writes it before the tap. */
+    private fun stampNotice(meters: Double, firedAt: Long) = HonorNoticeEntity(
+        walkId = liveWalkId, kind = HonorNoticeKind.STAMP, refId = "temple-10", meters = meters, firedAt = firedAt,
     )
 
     private suspend fun startPlayingVoiceOne() {
