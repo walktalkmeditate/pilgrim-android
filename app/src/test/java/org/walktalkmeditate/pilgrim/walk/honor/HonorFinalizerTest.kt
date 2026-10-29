@@ -6,6 +6,7 @@ import java.io.File
 import java.io.IOException
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Provider
 import kotlinx.coroutines.CoroutineScope
@@ -15,6 +16,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonArray
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -48,12 +50,14 @@ import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageLedger
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageLedgerStore
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness.Companion.awaitBlocking
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness.Companion.stampHoursJson
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageTilesHarness
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageStageIdentity
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPhase
 import org.walktalkmeditate.pilgrim.domain.honor.Way
+import org.walktalkmeditate.pilgrim.domain.honor.WayStampHours
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.honor.WaySweeper
 import org.walktalkmeditate.pilgrim.walk.honor.HonorHarness.Companion.STAGE_ID
@@ -924,6 +928,112 @@ class HonorFinalizerTest {
         } finally {
             tiles.close()
             managerScope.cancel()
+        }
+    }
+
+    // The stamp hours at launch (iOS PR #91, `AppDelegate.swift:188-199@e551b11`): fed by the package read, after
+    // the reconcile. "Nothing installed hands nothing down" has no test: `restampStageHours` takes a non-null
+    // `Installed`, so the type enforces it.
+
+    @Test
+    fun `the launch hands the route's stamp hours down to its stages, before the expiry sweep`() = runBlocking {
+        val packages = PilgrimagePackageHarness(File(folder.root, "packages"))
+        val tiles = PilgrimageTilesHarness()
+        val steps = CopyOnWriteArrayList<String>()
+        try {
+            packages.makeManager().download(packages.entry, PilgrimagePackageHarness.RELEASE).awaitBlocking()
+            packages.rewriteInstalledRouteFile(stampHoursJson("08:00", "17:00"))
+            val manager = packages.makeManager()
+            manager.saveStage = { id, wayJson ->
+                steps += "restamp $id"
+                packages.wayStore.saveEncoded(id, wayJson)
+            }
+            val finalizer = HonorFinalizer(
+                h.db,
+                h.store,
+                h.clock,
+                ledgers = h.ledgers,
+                waySweeper = Provider {
+                    steps += "expiry sweep"
+                    noSweep()
+                },
+                releaseFlags = FixedReleaseFlags(honor = true),
+                packageManager = Provider { manager },
+                tilesManager = Provider { tiles.manager },
+            )
+
+            finalizer.runAtLaunch()
+
+            assertEquals(
+                listOf("restamp pilgrimage:camino-frances:0", "restamp pilgrimage:camino-frances:1", "expiry sweep"),
+                steps.toList(),
+            )
+            (0..1).forEach { index ->
+                assertEquals(
+                    WayStampHours(opensMinutes = 480, closesMinutes = 1020),
+                    packages.wayStore.load(WayStore.stageWayId("camino-frances", index))?.stampHours,
+                )
+            }
+        } finally {
+            tiles.close()
+            packages.close()
+        }
+    }
+
+    /** Review Focus 1: a later dataset's shape costs the notice, never the route, so the sweep leaves its maps. */
+    @Test
+    fun `a launch whose installed route json reshapes its stamp hours keeps the route's saved maps`() = runBlocking {
+        val packages = PilgrimagePackageHarness(File(folder.root, "packages"))
+        val tiles = PilgrimageTilesHarness()
+        try {
+            packages.makeManager().download(packages.entry, PilgrimagePackageHarness.RELEASE).awaitBlocking()
+            packages.rewriteInstalledRouteFile(
+                JsonArray(listOf(stampHoursJson("08:00", "12:00"), stampHoursJson("13:00", "17:00"))),
+            )
+            listOf("pilgrimage:camino-frances:0", "pilgrimage:camino-frances:1", "pilgrimage:camino-norte:0")
+                .forEach { tiles.loader.seed(it, corridorHash = "h") }
+
+            launchFinalizer(tiles, packages.makeManager()).runAtLaunch()
+            tiles.drain()
+            tiles.loader.releaseRegions()
+
+            assertEquals(
+                "only the map no installed route owns goes",
+                setOf("pilgrimage:camino-norte:0"),
+                tiles.loader.removedIds.toSet(),
+            )
+            assertNull("and its stages stay silent", packages.wayStore.load("pilgrimage:camino-frances:0")?.stampHours)
+        } finally {
+            tiles.close()
+            packages.close()
+        }
+    }
+
+    /** The XCTest guard's counterpart (`AppDelegate.swift:189@e551b11`): with the flag off, no launch work runs. */
+    @Test
+    fun `with the release flag off the launch hands nothing down`() = runBlocking {
+        val packages = PilgrimagePackageHarness(File(folder.root, "packages"))
+        val tiles = PilgrimageTilesHarness()
+        try {
+            packages.makeManager().download(packages.entry, PilgrimagePackageHarness.RELEASE).awaitBlocking()
+            packages.rewriteInstalledRouteFile(stampHoursJson("08:00", "17:00"))
+            val finalizer = HonorFinalizer(
+                h.db,
+                h.store,
+                h.clock,
+                ledgers = h.ledgers,
+                waySweeper = Provider { noSweep() },
+                releaseFlags = FixedReleaseFlags(honor = false),
+                packageManager = Provider { packages.makeManager() },
+                tilesManager = Provider { tiles.manager },
+            )
+
+            finalizer.runAtLaunch()
+
+            assertNull(packages.wayStore.load("pilgrimage:camino-frances:0")?.stampHours)
+        } finally {
+            tiles.close()
+            packages.close()
         }
     }
 

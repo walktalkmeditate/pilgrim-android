@@ -3,8 +3,11 @@ package org.walktalkmeditate.pilgrim.data.honor.pilgrimage
 
 import android.app.Application
 import java.io.File
+import java.io.IOException
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonArray
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -25,9 +28,11 @@ import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarne
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness.Companion.assertRefused
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness.Companion.awaitBlocking
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness.Companion.fixture
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness.Companion.stampHoursJson
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager.Phase
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
+import org.walktalkmeditate.pilgrim.domain.honor.WayStampHours
 import org.walktalkmeditate.pilgrim.honor.HonorWalkRecord
 import org.walktalkmeditate.pilgrim.ui.walk.summary.HonorSummaryModel
 
@@ -376,6 +381,168 @@ class PilgrimagePackageManagerLifecycleTest {
         replace.awaitBlocking()
         assertFalse("the Replace cleared it", marker.exists())
         assertEquals(NORTE_ID, manager.installedBlocking()?.routeId)
+    }
+
+    // ---- iOS PR #91: a route file this build only partly reads, and the launch hand-down ----
+    // (`PilgrimagePackageManagerTests+Lifecycle.swift:158-316@e551b11`, names kept)
+
+    private val stageZeroId = WayStore.stageWayId(ROUTE_ID, 0)
+    private val stageOneId = WayStore.stageWayId(ROUTE_ID, 1)
+    private val shikokuMinutes = WayStampHours(opensMinutes = 480, closesMinutes = 1020)
+
+    /** What open-pilgrimages v1.12.0 writes on every Shikoku `route.json`. */
+    private val shikokuHours = stampHoursJson("08:00", "17:00")
+
+    /** iOS `countingSaves(on:)`: every write the manager makes to a stage Way, counted on its way to the store. */
+    private fun countingSaves(manager: PilgrimagePackageManager): AtomicInteger {
+        val saves = AtomicInteger()
+        manager.saveStage = { id, wayJson ->
+            saves.incrementAndGet()
+            h.wayStore.saveEncoded(id, wayJson)
+        }
+        return saves
+    }
+
+    private fun PilgrimagePackageManager.restamp(installed: PilgrimagePackageManager.Installed) =
+        runBlocking { restampStageHours(installed) }
+
+    /** `installed()` reads `route.json` through the download's decode; an unreadable shape must not lose the route. */
+    @Test
+    fun testAnInstalledRouteWhoseStampHoursAreMisShapedStillReadsAsInstalled() {
+        val manager = h.makeManager()
+        manager.download(h.entry, RELEASE).awaitBlocking()
+        h.rewriteInstalledRouteFile(
+            JsonArray(listOf(stampHoursJson("08:00", "12:00"), stampHoursJson("13:00", "17:00"))),
+        )
+
+        val installed = requireNotNull(manager.installedBlocking()) { "still on the phone" }
+
+        assertEquals(ROUTE_ID, installed.routeId)
+        assertEquals(2, installed.route.stageCount)
+        assertNull("a shape this build cannot read states no hours", installed.route.stampHours)
+    }
+
+    /**
+     * A Shikoku leg downloaded under 2.0.0: `route.json` holds the hours,
+     * its stages don't, and an Update compares releases only. The pass
+     * hands them down and touches nothing else a walker has made of the stage.
+     */
+    @Test
+    fun testAStageInstalledWithoutItsRoutesStampHoursLearnsThemAtLaunch() {
+        val manager = h.makeManager()
+        manager.download(h.entry, RELEASE).awaitBlocking()
+        h.rewriteInstalledRouteFile(shikokuHours)
+        val walk = UUID.randomUUID().toString()
+        h.wayStore.link(walk, stageZeroId, arrival = null)
+        h.wayStore.setReply(
+            stageZeroId,
+            originN = HonorPersistence.STAGE_REFLECTION_ORIGIN,
+            relativePath = "Recordings/reply.m4a",
+        )
+        val acceptedAt = h.wayStore.acceptedAt(stageZeroId)
+        val before = requireNotNull(h.wayStore.load(stageZeroId))
+        assertNull("the state a 2.0.0 install leaves", before.stampHours)
+
+        manager.restamp(requireNotNull(manager.installedBlocking()))
+
+        val stamped = requireNotNull(h.wayStore.load(stageZeroId))
+        assertEquals(shikokuMinutes, stamped.stampHours)
+        assertEquals(shikokuMinutes, h.wayStore.load(stageOneId)?.stampHours)
+        assertEquals("nothing but the hours is rewritten", before, stamped.copy(stampHours = null))
+        assertEquals(
+            "a saved map region still matches its stage",
+            PilgrimageTilesCorridor.stage(before).corridorHash,
+            PilgrimageTilesCorridor.stage(stamped).corridorHash,
+        )
+        assertEquals(acceptedAt, h.wayStore.acceptedAt(stageZeroId))
+        assertEquals("Recordings/reply.m4a", h.wayStore.replies(stageZeroId)[HonorPersistence.STAGE_REFLECTION_ORIGIN])
+        assertEquals(stageZeroId, h.wayStore.wayLink(walk)?.wayId)
+        assertEquals("the package itself is left as it was", RELEASE, manager.installedBlocking()?.release)
+    }
+
+    /** Compare, then save: every launch runs the pass, and only the first after the update has anything to write. */
+    @Test
+    fun testASecondLaunchPassWritesNothing() {
+        val manager = h.makeManager()
+        manager.download(h.entry, RELEASE).awaitBlocking()
+        h.rewriteInstalledRouteFile(shikokuHours)
+        val saves = countingSaves(manager)
+
+        manager.restamp(requireNotNull(manager.installedBlocking()))
+        assertEquals("both stages lacked them", 2, saves.get())
+
+        manager.restamp(requireNotNull(manager.installedBlocking()))
+        assertEquals("the second pass found nothing to change", 2, saves.get())
+    }
+
+    @Test
+    fun testARouteThatStatesNoStampHoursIsLeftAlone() {
+        val manager = h.makeManager()
+        manager.download(h.entry, RELEASE).awaitBlocking()
+        val saves = countingSaves(manager)
+
+        manager.restamp(requireNotNull(manager.installedBlocking()))
+
+        assertEquals(0, saves.get())
+        assertNull(h.wayStore.load(stageZeroId)?.stampHours)
+    }
+
+    /** A launch pass never fails the launch: a stage the disk refuses stays silent, and the rest learn their hours. */
+    @Test
+    fun testAStageThatCannotBeWrittenLeavesTheRestStamped() {
+        val manager = h.makeManager()
+        manager.download(h.entry, RELEASE).awaitBlocking()
+        h.rewriteInstalledRouteFile(shikokuHours)
+        manager.saveStage = { id, wayJson ->
+            if (id == stageZeroId) throw IOException("No space left on device")
+            h.wayStore.saveEncoded(id, wayJson)
+        }
+
+        manager.restamp(requireNotNull(manager.installedBlocking()))
+
+        assertNull("left as it was", h.wayStore.load(stageZeroId)?.stampHours)
+        assertNotNull(h.wayStore.load(stageOneId)?.stampHours)
+    }
+
+    /**
+     * An Update's commit writes the same stage files from off the actor; a
+     * pass that loaded a stage before the commit and saved it after would put
+     * the old stage back. The Update is held open on `route.json`, so the
+     * precondition is proved, not timed (spec, Edge cases, last row).
+     */
+    @Test
+    fun testThePassStandsAsideWhileADownloadIsInFlight() {
+        val manager = h.makeManager()
+        manager.download(h.entry, RELEASE).awaitBlocking()
+        h.rewriteInstalledRouteFile(shikokuHours)
+        val installed = requireNotNull(manager.installedBlocking())
+        h.stubWholePackage("v1.8.0")
+        val routeFile = h.hold("route.json", "v1.8.0")
+        val saves = countingSaves(manager)
+        val update = manager.update(h.entry, "v1.8.0")
+        routeFile.awaitArrival()
+        assertTrue("the Update is in flight, or this proves nothing", manager.phase.value is Phase.Downloading)
+
+        manager.restamp(installed)
+
+        assertEquals("nothing written while the download holds the stages", 0, saves.get())
+        routeFile.release()
+        update.awaitBlocking()
+        assertEquals("the commit's own two writes", 2, saves.get())
+    }
+
+    /** Review Focus 2: a stage `way.json` that no longer decodes is stepped over, its bytes as they were. */
+    @Test
+    fun `a stage whose way json no longer loads is skipped, its bytes untouched, and the rest are stamped`() {
+        val manager = h.makeManager()
+        manager.download(h.entry, RELEASE).awaitBlocking()
+        h.rewriteInstalledRouteFile(shikokuHours)
+        val broken = File(h.waysDir, "$stageZeroId/way.json").apply { writeText("{\"id\":") }
+
+        manager.restamp(requireNotNull(manager.installedBlocking()))
+
+        assertEquals("{\"id\":", broken.readText())
+        assertEquals(shikokuMinutes, h.wayStore.load(stageOneId)?.stampHours)
     }
 
     private companion object {

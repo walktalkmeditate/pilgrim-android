@@ -20,8 +20,10 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -135,6 +137,16 @@ internal class PilgrimagePackageHarness(root: File) {
         stub("route.json", text.replace(ROUTE_ID, routeId).toByteArray(), release, routeId)
     }
 
+    /**
+     * iOS `rewriteInstalledRouteFile(stampHours:)`: the INSTALLED `route.json` with its `stampHours` replaced, as a
+     * later dataset release would leave it on the phone. [rewriteRouteFile] re-stubs the server's file instead.
+     */
+    fun rewriteInstalledRouteFile(stampHours: JsonElement, routeId: String = ROUTE_ID) {
+        val file = requireNotNull(wayStore.routeFile(routeId)) { "no installed route.json for $routeId" }
+        val route = Json.parseToJsonElement(file.readText()).jsonObject
+        file.writeText(JsonObject(route + ("stampHours" to stampHours)).toString())
+    }
+
     /** iOS `stubNorte`: the same two stages, re-slugged by text as a second route. */
     fun stubNorte(release: String = RELEASE) {
         listOf("route.json", "stage-00.json", "stage-01.json").forEach { file ->
@@ -241,6 +253,12 @@ internal class PilgrimagePackageHarness(root: File) {
         /** Shikoku's `stampHours` as the dataset writes it. */
         const val SHIKOKU_HOURS_JSON = """{ "opens": "08:00", "closes": "17:00" }"""
         val WALKED_AT: Instant = Instant.ofEpochSecond(1_800_000_000)
+
+        /** One `{ "opens", "closes" }` hours object, as `route.json` states them. */
+        fun stampHoursJson(opens: String, closes: String): JsonObject = buildJsonObject {
+            put("opens", opens)
+            put("closes", closes)
+        }
 
         fun fixture(name: String): ByteArray =
             requireNotNull(PilgrimagePackageHarness::class.java.classLoader?.getResourceAsStream("honor/pilgrimage/$name")) {

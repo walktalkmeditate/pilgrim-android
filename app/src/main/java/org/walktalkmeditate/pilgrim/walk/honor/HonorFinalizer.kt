@@ -261,20 +261,22 @@ class HonorFinalizer internal constructor(
         const val STAGING_GRACE_MILLIS = 24L * 60 * 60 * 1000
 
         /**
-         * iOS `reconcileTilesAtLaunch` (`AppDelegate.swift:184-192@7c200bf`, spec D
-         * §C2.10), in its order: the tiles first, whose store starts its first
-         * read here so it is warm even if the package read below throws; then
-         * the launch's package read, which finishes a Replace a kill
+         * iOS `reconcilePilgrimageAtLaunch` (`AppDelegate.swift:188-199@e551b11`,
+         * spec D §C2.10), in its order: the tiles first, whose store starts its
+         * first read here so it is warm even if the package read below throws;
+         * then the launch's package read, which finishes a Replace a kill
          * interrupted; then the sweep of every saved map that read doesn't
-         * account for. The reconcile posts and returns, so the expiry sweep
-         * after this never waits on the tile store. A thrown read skips it.
+         * account for, which posts and returns, so nothing after it waits on
+         * the tile store; then, from that same read, the route's stamp hours
+         * handed down to any stage staged without them (pilgrim-ios #91), on
+         * the package manager's actor and IO. A thrown read skips both.
          */
         private suspend fun launchPilgrimage(tiles: PilgrimageTilesManager, packages: Provider<PilgrimagePackageManager>) {
             tiles.warm()
-            val installed = packages.get().runAtLaunch()
+            val manager = packages.get()
+            val installed = manager.runAtLaunch()
             tiles.reconcile(installed?.let { PilgrimageTilesManager.InstalledRoute(it.routeId, it.route.stageCount) })
-            // pilgrim-ios #91's launch step goes here, fed by the same read: `restampStageHours(of: installed)`
-            // when something is installed (`AppDelegate.swift:188-199@e551b11`), for the #91 fold-in plan.
+            if (installed != null) manager.restampStageHours(installed)
         }
     }
 }

@@ -225,14 +225,49 @@ class PilgrimagePackageManager internal constructor(
      * which iOS leaves to the OS's purge of `tmp/` (A-6). No repair of a
      * half install (owner decision 3, pilgrim-ios #119).
      *
-     * @return what that read found, for the tiles reconcile and, later,
-     *   #91's restamp, which iOS feeds from its same launch read (spec D
-     *   §C2.10). A throw means no read: the caller sweeps nothing.
+     * @return what that read found, for the tiles reconcile and
+     *   [restampStageHours], which iOS feeds from its same launch read
+     *   (spec D §C2.10; `AppDelegate.swift:188-199@e551b11`). A throw means
+     *   no read: the caller sweeps and restamps nothing.
      */
     suspend fun runAtLaunch(): Installed? = onActor {
         val installed = installedOnActor()
         sweepTempSets()
         installed
+    }
+
+    /**
+     * iOS `restampStageHours(of:)` (`PilgrimagePackageManager.swift@e551b11`):
+     * a route installed by a build whose stages carry no stamp hours
+     * (Android 2.0.0) has them in its `route.json`, committed byte for byte,
+     * and an Update compares releases only, so nothing else would ever hand
+     * them down. Each stage Way whose hours differ from the route's is saved
+     * with the route's through [saveStage], and nothing else about it
+     * changes; the store keeps its `accepted.json`. Compare, then save, so
+     * every launch after the first writes nothing. It never clears hours.
+     *
+     * On the actor and IO, never the main thread, where iOS runs it. It
+     * stands aside while a download is in flight: that download's commit
+     * writes these same files from [offActor], and [isDownloading] covers
+     * that window. A route that states no hours is never touched.
+     */
+    suspend fun restampStageHours(installed: Installed) = onActor {
+        val hours = installed.route.stampHours
+        if (isDownloading || hours == null) return@onActor
+        for (index in 0 until installed.route.stageCount) {
+            val id = WayStore.stageWayId(installed.routeId, index)
+            val way = store.load(id)
+            if (way == null || way.stampHours == hours) continue
+            try {
+                saveStage(id, WayJson.encode(way.copy(stampHours = hours)))
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (_: Exception) {
+                // That stage stays silent and the next launch tries again: a
+                // notice is never a reason to fail a launch. iOS prints the
+                // failure; nothing in this package logs.
+            }
+        }
     }
 
     private fun owned(operation: suspend () -> Unit): Deferred<Unit> =
