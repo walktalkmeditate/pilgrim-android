@@ -6,6 +6,8 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import java.io.File
 import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneId
 import java.util.Collections
 import java.util.UUID
 import kotlinx.coroutines.CoroutineDispatcher
@@ -39,6 +41,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.domain.honor.WayStage
 import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
 import org.walktalkmeditate.pilgrim.domain.honor.WayStagePlace
+import org.walktalkmeditate.pilgrim.domain.honor.WayStampHours
 import org.walktalkmeditate.pilgrim.sensor.fakeStepCounter
 import org.walktalkmeditate.pilgrim.walk.HonorSettings
 import org.walktalkmeditate.pilgrim.walk.HonorStart
@@ -245,6 +248,32 @@ internal class HonorHarness(private val folder: File) {
                 ),
             )
         }
+
+        /** What the importer reads from Shikoku's `{"opens":"08:00","closes":"17:00"}`. */
+        val SHIKOKU_HOURS = WayStampHours(opensMinutes = 480, closesMinutes = 1020)
+
+        /** A numbered fudasho at [lon], its number in `text` as the dataset writes it. */
+        fun temple(number: Int, lon: Double) = WayMoment(
+            id = "temple-$number",
+            frac = lon / END_LON,
+            at = WayCoordinate(lat = 0.0, lon = lon),
+            kind = WayMomentKind.Waypoint(label = "Kirihata-ji", icon = "seal"),
+            text = "Temple $number · Koyasan Shingon · stamp available (¥500)",
+        )
+
+        /**
+         * [stage] on Shikoku's clock: temple 10 at 0.95 of the line, 1,057 m from the trailhead, no
+         * water, Tokyo's zone.
+         */
+        fun templeStage(stampHours: WayStampHours? = SHIKOKU_HOURS) = stage(marks = emptyList()).copy(
+            tzIdentifier = "Asia/Tokyo",
+            moments = listOf(temple(10, 0.0095)),
+            stampHours = stampHours,
+        )
+
+        /** [hour]:[minute] on 2026-04-12 in Tokyo, the temple's own clock. */
+        fun tokyoMillis(hour: Int, minute: Int): Long =
+            LocalDateTime.of(2026, 4, 12, hour, minute).atZone(ZoneId.of("Asia/Tokyo")).toInstant().toEpochMilli()
 
         fun fix(
             lon: Double,

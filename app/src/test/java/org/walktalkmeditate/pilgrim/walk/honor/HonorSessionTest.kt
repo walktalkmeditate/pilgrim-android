@@ -36,6 +36,7 @@ import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.honor.HonorFinishKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorMomentStateEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorNoticeEntity
+import org.walktalkmeditate.pilgrim.data.honor.HonorNoticeKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorVoiceEnd
@@ -690,6 +691,185 @@ class HonorSessionTest {
 
         val notice = notices(second).single()
         assertEquals("wp-osm-water-node1" to h.clock.millis, notice.refId to notice.firedAt)
+        assertEquals(2, ports.calls.count { it == "haptic water" })
+    }
+
+    // iOS PR #91: a temple ahead on a Shikoku stage (stamp-closing spec, Behavior, "Android split")
+
+    private val templeStage = HonorHarness.templeStage()
+
+    /**
+     * 15:30 in Tokyo, inside the office's last two hours; the stage names Tokyo, so nothing leans on
+     * the JVM's zone.
+     */
+    private fun atHalfPastThreeInTokyo() {
+        h.clock.millis = HonorHarness.tokyoMillis(15, 30)
+    }
+
+    /** The engine clock at exactly [seconds] into [walk], ticked in before the next fix moves the wall clock on. */
+    private suspend fun HonorSession.tickAt(walk: Walk, seconds: Long) {
+        h.clock.millis = walk.startTimestamp + seconds * 1_000
+        tickNow()
+        awaitIdle()
+    }
+
+    /**
+     * iOS `testTheStampNoticeBorrowsTheCaptionLineAndNothingElse`
+     * (`PilgrimageStageWalkTests.swift:375-394@e551b11`), its tap.
+     */
+    @Test
+    fun `a temple ahead commits its STAMP row, then taps once with the water's tap, and writes nothing else`() =
+        runBlocking {
+            atHalfPastThreeInTokyo()
+            val walk = h.startHonorWalk(templeStage)
+            val ports = FakePorts()
+            var noticesAtHaptic: List<HonorNoticeEntity>? = null
+            ports.onWaterAhead = { runBlocking { noticesAtHaptic = notices(walk) } }
+            val session = h.newSession(ports)
+
+            session.begin(walk, trailhead())
+
+            val notice = noticesAtHaptic!!.single()
+            assertEquals(
+                listOf<Any>(HonorNoticeKind.STAMP, "temple-10", h.clock.millis),
+                listOf(notice.kind, notice.refId, notice.firedAt),
+            )
+            assertEquals(0.95 * WayGeometry(templeStage.route).totalMeters, notice.meters, 1e-6)
+            assertEquals(listOf("haptic water"), ports.calls.filter { it.startsWith("haptic") })
+            val row = dao.getSession(walk.id)!!
+            assertEquals(
+                "the shared minute and the temples' ten minutes start at Begin; water's hour is still free",
+                listOf<Double?>(0.0, null, 0.0),
+                listOf(row.lastNoticeSeconds, row.lastWaterSeconds, row.lastStampSeconds),
+            )
+            assertTrue("a notice is never a card", dao.getCardStates(walk.id).isEmpty())
+        }
+
+    /** iOS `testAWayWithoutStampHoursPutsNothingOnTheLineAndTapsNothing` (`:396-412@e551b11`): no caption, no tap. */
+    @Test
+    fun `a temple on a Way without stamp hours writes no row and taps nothing`() = runBlocking {
+        atHalfPastThreeInTokyo()
+        val walk = h.startHonorWalk(HonorHarness.templeStage(stampHours = null))
+        val ports = FakePorts()
+
+        h.newSession(ports).begin(walk, trailhead())
+
+        assertTrue(notices(walk).isEmpty())
+        assertTrue(ports.calls.none { it.startsWith("haptic") })
+    }
+
+    /** Review Focus 3: a `:tracker` death after the row commits never speaks or taps the temple again. */
+    @Test
+    fun `a revival keeps the temple spoken and its clocks, so temple 10 never speaks twice`() = runBlocking {
+        atHalfPastThreeInTokyo()
+        val walk = h.startHonorWalk(templeStage)
+        val firstProcess = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        h.newSession(FakePorts()).begin(walk, trailhead(), scope = firstProcess)
+        val spoken = notices(walk).single()
+        firstProcess.coroutineContext[Job]!!.cancelAndJoin()
+        val revivedController = h.newController().also { it.restoreActiveWalk() }
+        val ports = FakePorts()
+        val revived = h.newSession(ports, arrivalRecorder = revivedController)
+        assertEquals(HonorSessionStart.Started(revived = true), revived.begin(walk, trailhead(), revivedController))
+
+        h.clock.millis += 700_000
+        revived.tickNow()
+        revived.walkTo(0.0)
+
+        assertEquals("still 1,057 m ahead and past its ten minutes, but already named", listOf(spoken), notices(walk))
+        assertTrue(ports.calls.none { it.startsWith("haptic") })
+        val row = dao.getSession(walk.id)!!
+        assertEquals(
+            listOf<Double?>(0.0, null, 0.0),
+            listOf(row.lastNoticeSeconds, row.lastWaterSeconds, row.lastStampSeconds),
+        )
+    }
+
+    /**
+     * Temple 10 named at Begin (0 s), node 1 at 70 s, and `:tracker` killed.
+     * The revival lands at 200 s, past the shared minute and inside both
+     * notices' own clocks, with temple 11 and node 2 both due: a lost clock
+     * lets its notice speak there. Then the edges: the temples' clock read
+     * from water's or the minute's 70 would hold temple 11 past 640 s, and
+     * water's read from the temples' 0 would let node 2 speak at 3,669 s.
+     * Temple 10's fired state decides only while it is the next temple a
+     * kilometre on, which this walk has left behind by then; the test above
+     * holds it.
+     */
+    @Test
+    fun `a revival past the shared minute holds water to its own hour and the next temple to its own ten minutes`() =
+        runBlocking {
+            atHalfPastThreeInTokyo()
+            val nodeOne = water("wp-osm-water-node1", 0.002)
+            val nodeTwo = water("wp-osm-water-node2", 0.003)
+            val walk = h.startHonorWalk(
+                templeStage.copy(
+                    moments = listOf(HonorHarness.temple(10, 0.0095), HonorHarness.temple(11, 0.0099)),
+                    marks = listOf(nodeOne, nodeTwo),
+                ),
+            )
+            val firstProcess = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            val first = h.newSession(FakePorts())
+            first.begin(walk, trailhead(), scope = firstProcess)
+            first.tickAt(walk, 70)
+            first.walkTo(0.0004)
+            assertEquals(listOf("temple-10", nodeOne.id), notices(walk).map { it.refId })
+            firstProcess.coroutineContext[Job]!!.cancelAndJoin()
+            val revivedController = h.newController().also { it.restoreActiveWalk() }
+            val ports = FakePorts()
+            val revived = h.newSession(ports, arrivalRecorder = revivedController)
+            revived.begin(walk, trailhead(), revivedController)
+
+            revived.tickAt(walk, 200)
+            revived.walkTo(0.0008)
+
+            assertEquals(
+                "temple 11 1,013 m on, node 2 245 m on, and the line free: each held by its own clock",
+                listOf("temple-10", nodeOne.id),
+                notices(walk).map { it.refId },
+            )
+            assertTrue(ports.calls.none { it.startsWith("haptic") })
+
+            revived.tickAt(walk, 640)
+            revived.walkTo(0.0008)
+
+            assertEquals(listOf("temple-10", nodeOne.id, "temple-11"), notices(walk).map { it.refId })
+            val afterTemple = dao.getSession(walk.id)!!
+            assertEquals(
+                listOf<Double?>(640.0, 70.0, 640.0),
+                listOf(afterTemple.lastNoticeSeconds, afterTemple.lastWaterSeconds, afterTemple.lastStampSeconds),
+            )
+
+            revived.tickAt(walk, 3_669)
+            revived.walkTo(0.0008)
+            assertEquals("a second short of node 1's hour", 3, notices(walk).size)
+            revived.tickAt(walk, 3_670)
+            revived.walkTo(0.0008)
+
+            assertEquals(listOf("temple-10", nodeOne.id, "temple-11", nodeTwo.id), notices(walk).map { it.refId })
+            assertEquals(2, ports.calls.count { it == "haptic water" })
+            val afterWater = dao.getSession(walk.id)!!
+            assertEquals(
+                listOf<Double?>(3_670.0, 3_670.0, 640.0),
+                listOf(afterWater.lastNoticeSeconds, afterWater.lastWaterSeconds, afterWater.lastStampSeconds),
+            )
+        }
+
+    @Test
+    fun `a cached tracker's second walk on the same stage starts with no temple spoken`() = runBlocking {
+        atHalfPastThreeInTokyo()
+        val ports = FakePorts()
+        val session = h.newSession(ports)
+        val first = h.startHonorWalk(templeStage)
+        session.begin(first, trailhead())
+        h.controller.finishWalk()
+        session.awaitIdle()
+        assertTrue("the finalize took the notices with the live rows", notices(first).isEmpty())
+
+        val second = h.startHonorWalk(templeStage)
+        session.begin(second, trailhead())
+
+        assertEquals(listOf("temple-10"), notices(second).map { it.refId })
         assertEquals(2, ports.calls.count { it == "haptic water" })
     }
 

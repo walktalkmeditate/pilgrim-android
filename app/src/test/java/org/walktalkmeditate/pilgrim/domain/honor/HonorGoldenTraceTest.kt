@@ -616,6 +616,7 @@ class HonorGoldenTraceTest {
             is HonorEngineEvent.VoiceDropped -> GoldenEvent("voiceDropped", id = moment.id)
             is HonorEngineEvent.SoftTap -> GoldenEvent("softTap", offWayMeters = offWayMeters)
             is HonorEngineEvent.MarkAhead -> GoldenEvent("markAhead", id = mark.id, meters = meters)
+            is HonorEngineEvent.StampAhead -> GoldenEvent("stampAhead", id = temple.id, meters = meters)
             is HonorEngineEvent.Arrived ->
                 GoldenEvent("arrived", theirSeconds = theirSeconds, yourSeconds = yourSeconds)
         }

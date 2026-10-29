@@ -60,7 +60,15 @@ class ConvertersTest {
     }
 
     @Test
+    fun `a temple notice's kind round trips through storage`() {
+        assertEquals(
+            HonorNoticeKind.STAMP,
+            converters.stringToHonorNoticeKind(converters.honorNoticeKindToString(HonorNoticeKind.STAMP)),
+        )
+    }
+
+    @Test
     fun `a notice kind a later build wrote reads as unknown instead of throwing`() {
-        assertEquals(HonorNoticeKind.UNKNOWN, converters.stringToHonorNoticeKind("STAMP"))
+        assertEquals(HonorNoticeKind.UNKNOWN, converters.stringToHonorNoticeKind("SHRINE"))
     }
 }

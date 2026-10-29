@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.domain.honor
 
 import java.time.Instant
+import java.time.ZoneId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -13,7 +14,9 @@ import org.walktalkmeditate.pilgrim.domain.honor.HonorEngineEvent.Arrived
 import org.walktalkmeditate.pilgrim.domain.honor.HonorEngineEvent.MarkAhead
 import org.walktalkmeditate.pilgrim.domain.honor.HonorEngineEvent.MomentReached
 import org.walktalkmeditate.pilgrim.domain.honor.HonorEngineEvent.SoftTap
+import org.walktalkmeditate.pilgrim.domain.honor.HonorEngineEvent.StampAhead
 import org.walktalkmeditate.pilgrim.domain.honor.HonorEngineEvent.VoiceStart
+import org.walktalkmeditate.pilgrim.walk.honor.HonorHarness
 
 /**
  * Ports iOS `UnitTests/Honor/HonorEngineTests.swift@7c200bf` test for test
@@ -28,7 +31,8 @@ import org.walktalkmeditate.pilgrim.domain.honor.HonorEngineEvent.VoiceStart
  * qualifiers of the spec's resolutions. Last, a pilgrimage stage: iOS's
  * `testTheEngineReportsWhetherItEverAnchoredOnTheWay`
  * (`PilgrimageStageWalkTests.swift@7c200bf`) and the water event's place
- * in a fix (pilgrimage-stage spec P3 §4–§5).
+ * in a fix (pilgrimage-stage spec P3 §4–§5); then a stage's stamp office,
+ * its zone and its event (iOS PR #91).
  */
 class HonorEngineTest {
 
@@ -888,6 +892,101 @@ class HonorEngineTest {
             engine.process(fix(lon = 0.000898 * i, at = i * 60.0))
         }
         assertTrue(events.none { it is MarkAhead })
+    }
+
+    // iOS PR #91: a stage's stamp office (`HonorEngine.swift:90-105,335@e551b11`)
+
+    /** 10 km east along the equator, temple 10 at its middle, and [tz] the Way's zone. */
+    private fun templeWay(
+        tz: String?,
+        hours: WayStampHours? = HonorHarness.SHIKOKU_HOURS,
+        moments: List<WayMoment> = emptyList(),
+    ) = way(
+        "pilgrimage:shikoku-88-awa:0",
+        (0..10).map { i -> WayPoint(lat = 0.0, lon = i * 0.00898, alt = null, t = i * 600.0) },
+        moments + WayMoment(
+            id = "temple-10",
+            frac = 0.5,
+            at = WayCoordinate(lat = 0.0, lon = 5000.0 / 111_320),
+            kind = WayMomentKind.Waypoint(label = "Kirihata-ji", icon = "seal"),
+            text = "Temple 10 · Koyasan Shingon · stamp available (¥500)",
+        ),
+    ).copy(
+        source = WaySource.Pilgrimage(routeId = "shikoku-88-awa", stageIndex = 0),
+        tzIdentifier = tz,
+        stampHours = hours,
+    )
+
+    /** 06:30 UTC on 2026-04-12: 15:30 in Tokyo, the office's window there, and nobody's in UTC. */
+    private fun atHalfPastSixUtc() {
+        nowMillis = Instant.parse("2026-04-12T06:30:00Z").toEpochMilli()
+    }
+
+    private fun templeEngine(way: Way, fallbackZone: ZoneId) = HonorEngine(
+        way = way,
+        softTapEnabled = false,
+        voicesEnabled = false,
+        clock = clock,
+        fallbackZone = fallbackZone,
+    )
+
+    private fun temples(): List<String> = events.filterIsInstance<StampAhead>().map { it.temple.id }
+
+    /** Review Focus 5: the Way's own zone wins over the engine's. */
+    @Test
+    fun `a stage's stamp hours open the office in the Way's own zone, over the engine's`() {
+        atHalfPastSixUtc()
+        templeEngine(templeWay(tz = "Asia/Tokyo"), fallbackZone = ZoneId.of("UTC")).process(fix(lon = 0.0, at = 0.0))
+        assertEquals(listOf("temple-10"), temples())
+
+        events.clear()
+        templeEngine(templeWay(tz = null), fallbackZone = ZoneId.of("UTC")).process(fix(lon = 0.0, at = 0.0))
+        assertEquals("06:30 in the engine's UTC is nowhere near five", emptyList<String>(), temples())
+    }
+
+    /**
+     * iOS `way.tzIdentifier.flatMap(TimeZone.init(identifier:)) ?? .current`: a missing or unreadable
+     * zone is the phone's.
+     */
+    @Test
+    fun `a Way with no zone, or one Java can't read, keeps the engine's fallback zone`() {
+        atHalfPastSixUtc()
+        for (tz in listOf(null, "Mars/Olympus_Mons")) {
+            events.clear()
+            templeEngine(templeWay(tz = tz), fallbackZone = ZoneId.of("Asia/Tokyo")).process(fix(lon = 0.0, at = 0.0))
+            assertEquals("$tz", listOf("temple-10"), temples())
+        }
+    }
+
+    /** No hours, no office: every Way but a Shikoku stage's, whatever its temples say. */
+    @Test
+    fun `a Way without stamp hours never builds an office`() {
+        atHalfPastSixUtc()
+        val engine = templeEngine(templeWay(tz = "Asia/Tokyo", hours = null), fallbackZone = ZoneId.of("Asia/Tokyo"))
+
+        engine.process(fix(lon = 0.0, at = 0.0))
+
+        assertEquals(emptyList<String>(), temples())
+    }
+
+    @Test
+    fun `the temple's event comes after the places a fix reaches, carrying its metres`() {
+        atHalfPastSixUtc()
+        val trailhead = WayMoment(
+            id = "wp-trailhead",
+            frac = 0.0,
+            at = WayCoordinate(lat = 0.0, lon = 0.0),
+            kind = WayMomentKind.Waypoint(label = "Ryozen-ji gate", icon = "mappin"),
+        )
+        val engine = templeEngine(
+            templeWay(tz = "Asia/Tokyo", moments = listOf(trailhead)),
+            fallbackZone = ZoneId.of("UTC"),
+        )
+
+        engine.process(fix(lon = 0.0, at = 0.0))
+
+        assertEquals(listOf(MomentReached::class, StampAhead::class), events.map { it::class })
+        assertEquals(0.5 * engine.geometry.totalMeters, (events.last() as StampAhead).meters, 1.0)
     }
 
     @Test
