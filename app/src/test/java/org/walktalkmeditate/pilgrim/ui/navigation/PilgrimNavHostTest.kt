@@ -4,6 +4,11 @@ package org.walktalkmeditate.pilgrim.ui.navigation
 import android.app.Application
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -29,6 +34,7 @@ import org.walktalkmeditate.pilgrim.honor.HonorRouteLink
 import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.honor.caminoFrancesEntry
 import org.walktalkmeditate.pilgrim.ui.honor.HonorOverviewViewModel
+import org.walktalkmeditate.pilgrim.ui.honor.WalkAgainResult
 import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.PilgrimageRouteViewModel
 import org.walktalkmeditate.pilgrim.ui.walk.WalkSummaryViewModel
 
@@ -136,6 +142,137 @@ class PilgrimNavHostTest {
 
         assertEquals(FetchedWayLanding.DROP, fetchedWayLanding(walkAgain, parkedBehindSummary = true))
         assertEquals(FetchedWayLanding.PRESENT, fetchedWayLanding(listOf(Routes.PATH, Routes.HOME), parkedBehindSummary = true))
+    }
+
+    // Stage-links spec Q1, Q2: where a route link a stage link resolved to lands.
+
+    @Test
+    fun `a route link opens over any screen, the Ways sheet included, parks behind a summary, and a walk drops it`() {
+        listOf(
+            listOf(Routes.PATH),
+            listOf(Routes.PATH, Routes.HOME),
+            listOf(Routes.PATH, Routes.HOME, Routes.GOSHUIN),
+            listOf(Routes.PATH, Routes.HONOR_WAYS),
+            listOf(Routes.PATH, Routes.HONOR_WAYS, Routes.HONOR_OWN_WALKS),
+            listOf(Routes.PATH, Routes.HONOR_WAYS, Routes.HONOR_PILGRIMAGES, Routes.HONOR_PILGRIMAGE_PATTERN),
+            listOf(Routes.PATH, Routes.HONOR_ROUTE_LINK_PATTERN),
+            listOf(Routes.PATH, Routes.HOME, Routes.HONOR_OVERVIEW_PATTERN),
+        ).forEach { assertEquals(it.toString(), FetchedWayLanding.PRESENT, routeLinkLanding(it)) }
+        listOf(listOf(Routes.WELCOME), listOf(Routes.PERMISSIONS), listOf(Routes.BREATH), emptyList()).forEach {
+            assertEquals(it.toString(), FetchedWayLanding.WAIT, routeLinkLanding(it))
+        }
+        listOf(
+            listOf(Routes.PATH, Routes.WALK_SUMMARY_PATTERN),
+            listOf(Routes.PATH, Routes.HOME, Routes.GOSHUIN, Routes.WALK_SUMMARY_PATTERN),
+            listOf(Routes.PATH, Routes.WALK_SUMMARY_PATTERN, Routes.WALK_SHARE_PATTERN),
+        ).forEach { assertEquals(it.toString(), FetchedWayLanding.PARK, routeLinkLanding(it)) }
+        assertEquals(FetchedWayLanding.DROP, routeLinkLanding(listOf(Routes.PATH, Routes.ACTIVE_WALK)))
+        assertEquals(FetchedWayLanding.DROP, routeLinkLanding(listOf(Routes.PATH, Routes.ACTIVE_WALK, Routes.MEDITATION)))
+    }
+
+    // iOS `testStageLinkOverASummaryParksUntilItCloses`, `testAWayParkedBehindAWalkAgainOverviewIsNotStranded`.
+    @Test
+    fun `a route link parked behind a summary opens once the summary goes, from any host, unless walk this again took its place`() {
+        listOf(
+            listOf(Routes.PATH),
+            listOf(Routes.PATH, Routes.HOME),
+            listOf(Routes.PATH, Routes.HOME, Routes.GOSHUIN),
+        ).forEach { assertEquals(it.toString(), FetchedWayLanding.PRESENT, routeLinkLanding(it, parkedBehindSummary = true)) }
+        assertEquals(
+            FetchedWayLanding.DROP,
+            routeLinkLanding(listOf(Routes.PATH, Routes.HOME, Routes.HONOR_OVERVIEW_PATTERN), parkedBehindSummary = true),
+        )
+    }
+
+    // iOS `testWalkAgainOnAWalkTooShortToBuildKeepsAParkedRouteLink` (`MainCoordinatorView.swift:420-424@3b78728`).
+    @Test
+    fun `walk this again with no Way built only closes the summary and opens nothing in its place`() {
+        val opened = mutableListOf<Long>()
+        var closed = 0
+
+        summaryWalkAgain(WalkAgainResult(sourceWalkId = 7L, built = false), openOverview = { opened += it }, closeSummary = { closed++ })
+
+        assertEquals(1, closed)
+        assertTrue("nothing opens in the summary's place", opened.isEmpty())
+    }
+
+    @Test
+    fun `walk this again with a Way built opens its overview in the summary's place`() {
+        val opened = mutableListOf<Long>()
+        var closed = 0
+
+        summaryWalkAgain(WalkAgainResult(sourceWalkId = 7L, built = true), openOverview = { opened += it }, closeSummary = { closed++ })
+
+        assertEquals(listOf(7L), opened)
+        assertEquals(0, closed)
+    }
+
+    // Controller ruling 1, preflight F14: the landing itself, on a real NavController.
+
+    @Test
+    fun `a route link parked behind a summary shows its page over Path when the summary closes by Done`() {
+        val landing = landingHarness()
+        onMain { landing.nav.navigate(Routes.walkSummary(7L)) }
+        onMain { landing.routeLink = link(13) }
+        composeRule.waitForIdle()
+
+        onMain { assertEquals("parked, the summary stays", Routes.WALK_SUMMARY_PATTERN, landing.nav.currentBackStackEntry?.destination?.route) }
+        assertEquals(emptyList<HonorRouteLink>(), landing.consumedLinks)
+
+        onMain { landing.nav.popBackStack(Routes.WALK_SUMMARY_PATTERN, inclusive = true) }
+        composeRule.waitForIdle()
+
+        onMain {
+            assertEquals(Routes.HONOR_ROUTE_LINK_PATTERN, landing.nav.currentBackStackEntry?.destination?.route)
+            assertEquals(Routes.PATH, landing.nav.previousBackStackEntry?.destination?.route)
+        }
+        assertEquals(listOf(link(13)), landing.consumedLinks)
+    }
+
+    @Test
+    fun `a route link arriving while a Way is parked behind the summary keeps its own park, and opens once the summary closes`() {
+        val landing = landingHarness()
+        onMain { landing.nav.navigate(Routes.walkSummary(7L)) }
+        onMain { landing.fetched = SHARED_WAY }
+        composeRule.waitForIdle()
+
+        onMain {
+            landing.fetched = null
+            landing.routeLink = link(13)
+        }
+        composeRule.waitForIdle()
+
+        onMain { assertEquals(Routes.WALK_SUMMARY_PATTERN, landing.nav.currentBackStackEntry?.destination?.route) }
+        assertEquals(emptyList<HonorRouteLink>(), landing.consumedLinks)
+
+        onMain { landing.nav.popBackStack(Routes.WALK_SUMMARY_PATTERN, inclusive = true) }
+        composeRule.waitForIdle()
+
+        onMain { assertEquals(Routes.HONOR_ROUTE_LINK_PATTERN, landing.nav.currentBackStackEntry?.destination?.route) }
+        assertEquals(listOf(link(13)), landing.consumedLinks)
+        assertEquals(emptyList<String>(), landing.consumedWays)
+    }
+
+    @Test
+    fun `a route link parked behind a summary still gives way to the overview walk this again opens, after a Way was parked there first`() {
+        val landing = landingHarness()
+        onMain { landing.nav.navigate(Routes.walkSummary(7L)) }
+        onMain { landing.fetched = SHARED_WAY }
+        composeRule.waitForIdle()
+        onMain {
+            landing.fetched = null
+            landing.routeLink = link(13)
+        }
+        composeRule.waitForIdle()
+
+        onMain { landing.nav.openHonorOverviewFromSummary(7L) }
+        composeRule.waitForIdle()
+
+        onMain {
+            assertEquals(Routes.HONOR_OVERVIEW_PATTERN, landing.nav.currentBackStackEntry?.destination?.route)
+            assertFalse(landing.nav.holds(Routes.HONOR_ROUTE_LINK_PATTERN))
+        }
+        assertEquals(listOf(link(13)), landing.consumedLinks)
     }
 
     @Test
@@ -684,6 +821,52 @@ class PilgrimNavHostTest {
         }
         composeRule.waitForIdle()
         return requireNotNull(nav)
+    }
+
+    private class LandingHarness(val nav: NavHostController) {
+        var fetched by mutableStateOf<String?>(null)
+        var routeLink by mutableStateOf<HonorRouteLink?>(null)
+        val consumedWays = mutableListOf<String>()
+        val consumedLinks = mutableListOf<HonorRouteLink>()
+    }
+
+    /** [honorBackStack]'s routes with the production [StageLinkLandings] composed over them, over the Path tab. */
+    private fun landingHarness(): LandingHarness {
+        var captured: LandingHarness? = null
+        composeRule.setContent {
+            val controller = rememberNavController()
+            val harness = remember { LandingHarness(controller) }
+            SideEffect { captured = harness }
+            val entry by controller.currentBackStackEntryAsState()
+            NavHost(navController = controller, startDestination = Routes.PATH) {
+                composable(Routes.PATH) {}
+                composable(Routes.HOME) {}
+                honorSheet(Routes.HONOR_WAYS) {}
+                honorSheet(Routes.HONOR_ROUTE_LINK_PATTERN, arguments = honorRouteLinkArguments) {}
+                composable(
+                    route = Routes.WALK_SUMMARY_PATTERN,
+                    arguments = listOf(
+                        navArgument(WalkSummaryViewModel.ARG_WALK_ID) { type = NavType.LongType },
+                        navArgument(Routes.WALK_SUMMARY_ARG_WALK_AGAIN) {
+                            type = NavType.BoolType
+                            defaultValue = false
+                        },
+                    ),
+                ) {}
+                composable(route = Routes.HONOR_OVERVIEW_PATTERN, arguments = honorOverviewArguments) {}
+            }
+            StageLinkLandings(
+                navController = controller,
+                backStack = controller.honorBackStack(entry?.destination?.route),
+                fetched = harness.fetched,
+                routeLink = harness.routeLink,
+                consumeFetched = { harness.consumedWays += it; harness.fetched = null },
+                consumeRouteLink = { harness.consumedLinks += it; harness.routeLink = null },
+                gatherShownAgain = {},
+            )
+        }
+        composeRule.waitForIdle()
+        return requireNotNull(captured)
     }
 
     private fun onMain(block: () -> Unit) = composeRule.runOnIdle(block)

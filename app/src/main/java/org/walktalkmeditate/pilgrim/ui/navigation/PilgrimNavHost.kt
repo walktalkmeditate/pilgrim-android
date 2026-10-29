@@ -53,6 +53,7 @@ import org.walktalkmeditate.pilgrim.permissions.AppSettings
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
 import org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinScreen
+import org.walktalkmeditate.pilgrim.ui.honor.WalkAgainResult
 import org.walktalkmeditate.pilgrim.ui.honor.HonorImportHostViewModel
 import org.walktalkmeditate.pilgrim.ui.honor.HonorOverviewViewModel
 import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.PilgrimageRouteViewModel
@@ -614,21 +615,17 @@ fun PilgrimNavHost(
                             launchSingleTop = true
                         }
                     },
-                    // iOS `walkAgain`: the summary closes, then the overview
-                    // opens over whatever hosted it, never over the summary;
-                    // a walk with no Way only closes it (F §6.2, F-1 matched).
-                    // Either way it overwrites a link's Way parked behind the
-                    // summary, nil included, so that Way never opens.
                     onWalkAgain = if (hostOffersWalkAgain) {
                         { result ->
-                            if (result.built) {
-                                sheetScope.launch { sheetState.hide() }.invokeOnCompletion {
-                                    navController.openHonorOverviewFromSummary(result.sourceWalkId)
-                                }
-                            } else {
-                                honorHost?.dropParkedWay()
-                                dismissAndDone()
-                            }
+                            summaryWalkAgain(
+                                result,
+                                openOverview = { sourceWalkId ->
+                                    sheetScope.launch { sheetState.hide() }.invokeOnCompletion {
+                                        navController.openHonorOverviewFromSummary(sourceWalkId)
+                                    }
+                                },
+                                closeSummary = dismissAndDone,
+                            )
                         }
                     } else {
                         null
@@ -897,7 +894,7 @@ private val HONOR_TRACKED_ROUTES = listOf(
  * list [honorLinkScreen] and [fetchedWayLanding] read. The full back stack
  * is a restricted API; [NavController.getBackStackEntry] answers per route.
  */
-private fun NavController.honorBackStack(currentRoute: String?): List<String> =
+internal fun NavController.honorBackStack(currentRoute: String?): List<String> =
     HONOR_TRACKED_ROUTES.filter(::hasBackStackEntry) + listOfNotNull(currentRoute)
 
 /**
@@ -918,7 +915,7 @@ internal fun honorLinkScreen(backStack: List<String>): HonorLinkScreen {
     )
 }
 
-/** What a Way an import just listed does on the screen showing now. */
+/** What a Way an import just listed, or a stage link's route page, does on the screen showing now. */
 internal enum class FetchedWayLanding {
     /** Its overview opens over the Path tab. */
     PRESENT,
@@ -951,6 +948,24 @@ internal fun fetchedWayLanding(backStack: List<String>, parkedBehindSummary: Boo
 }
 
 /**
+ * iOS `openRouteLink` (`MainCoordinatorView.swift:332-348@3b78728`) over
+ * [backStack]: [fetchedWayLanding]'s answers, except that a route link never
+ * waits on the Ways sheet, which takes only Ways; the page takes its place.
+ * One parked behind a summary gives way to the overview "walk this again"
+ * opens in the summary's place, as iOS's `walkAgain` clears it.
+ */
+internal fun routeLinkLanding(backStack: List<String>, parkedBehindSummary: Boolean = false): FetchedWayLanding {
+    val screen = honorLinkScreen(backStack)
+    return when {
+        screen.walkScreenUp -> FetchedWayLanding.DROP
+        screen.inSetup -> FetchedWayLanding.WAIT
+        screen.summaryUp -> FetchedWayLanding.PARK
+        parkedBehindSummary && screen.overviewUp -> FetchedWayLanding.DROP
+        else -> FetchedWayLanding.PRESENT
+    }
+}
+
+/**
  * Whether the app-wide toast shows over [backStack]'s screen. During a
  * walk only the walk screen shows it: not meditation (owner decision 3,
  * matching iOS's toast hidden under the meditation cover), nor anything
@@ -976,9 +991,8 @@ private fun LinkToastHost(host: HonorImportHostViewModel, shows: Boolean) {
  * The app's end of the links and a shared walk's import: the back stack
  * goes to the link routing, which holds a link through setup and cancels
  * an import as the walk screen opens; the Path switch it asks for is made
- * here; and a Way the import listed with no Ways sheet up to take it opens
- * its overview over the Path tab, or waits behind a summary. Its own
- * overview already showing stays, and gathers again.
+ * here; and the Way or route page the links resolved to lands through
+ * [StageLinkLandings].
  */
 @Composable
 private fun HonorLinksLanding(
@@ -998,24 +1012,72 @@ private fun HonorLinksLanding(
     }
 
     val fetched by host.fetched.collectAsState()
-    var parkedBehindSummary by remember { mutableStateOf(false) }
+    val routeLink by host.routeLink.collectAsState()
+    StageLinkLandings(
+        navController = navController,
+        backStack = backStack,
+        fetched = fetched,
+        routeLink = routeLink,
+        consumeFetched = host::consumeFetched,
+        consumeRouteLink = host::consumeRouteLink,
+        gatherShownAgain = host::gatherShownAgain,
+    )
+}
+
+/**
+ * A Way an import listed with no Ways sheet up to take it opens its
+ * overview over the Path tab, or waits behind a summary, its own overview
+ * already showing staying and gathering again; a stage link's route page
+ * opens over Path or waits behind a summary the same way. Each has a park
+ * of its own, since publishing one clears the other's slot and must not
+ * clear its park. Each runs again on every back-stack change, so a summary
+ * closing from any host is what promotes a parked one (stage-links spec
+ * Q2): there is no dismiss callback to forget.
+ */
+@Composable
+internal fun StageLinkLandings(
+    navController: NavHostController,
+    backStack: List<String>,
+    fetched: String?,
+    routeLink: HonorRouteLink?,
+    consumeFetched: (String) -> Unit,
+    consumeRouteLink: (HonorRouteLink) -> Unit,
+    gatherShownAgain: (String) -> Unit,
+) {
+    var wayParkedBehindSummary by remember { mutableStateOf(false) }
     LaunchedEffect(fetched, backStack) {
-        val wayId = fetched
-        if (wayId == null) {
-            parkedBehindSummary = false
+        if (fetched == null) {
+            wayParkedBehindSummary = false
             return@LaunchedEffect
         }
-        when (fetchedWayLanding(backStack, parkedBehindSummary)) {
+        when (fetchedWayLanding(backStack, wayParkedBehindSummary)) {
             FetchedWayLanding.WAIT -> Unit
-            FetchedWayLanding.PARK -> parkedBehindSummary = true
-            FetchedWayLanding.DROP -> host.consumeFetched(wayId)
+            FetchedWayLanding.PARK -> wayParkedBehindSummary = true
+            FetchedWayLanding.DROP -> consumeFetched(fetched)
             FetchedWayLanding.PRESENT -> {
-                host.consumeFetched(wayId)
-                if (navController.showsStoredOverview(wayId)) {
-                    host.gatherShownAgain(wayId)
+                consumeFetched(fetched)
+                if (navController.showsStoredOverview(fetched)) {
+                    gatherShownAgain(fetched)
                 } else {
-                    navController.openFetchedWayOverview(wayId)
+                    navController.openFetchedWayOverview(fetched)
                 }
+            }
+        }
+    }
+
+    var linkParkedBehindSummary by remember { mutableStateOf(false) }
+    LaunchedEffect(routeLink, backStack) {
+        if (routeLink == null) {
+            linkParkedBehindSummary = false
+            return@LaunchedEffect
+        }
+        when (routeLinkLanding(backStack, linkParkedBehindSummary)) {
+            FetchedWayLanding.WAIT -> Unit
+            FetchedWayLanding.PARK -> linkParkedBehindSummary = true
+            FetchedWayLanding.DROP -> consumeRouteLink(routeLink)
+            FetchedWayLanding.PRESENT -> {
+                consumeRouteLink(routeLink)
+                navController.openLinkedRoutePage(routeLink)
             }
         }
     }
@@ -1207,6 +1269,18 @@ internal fun NavController.openHonorOverviewFromSummary(sourceWalkId: Long) {
         popUpTo(Routes.WALK_SUMMARY_PATTERN) { inclusive = true }
         launchSingleTop = true
     }
+}
+
+/**
+ * iOS `walkAgain` (`MainCoordinatorView.swift:420-424@3b78728`): a Way
+ * built opens its overview in the summary's place, and that overview
+ * takes the place of a link parked behind the summary (the landing's
+ * `DROP`); a walk too short to build one only closes the summary, and the
+ * park opens once the summary has gone. Changed at `3b78728`: a nil build
+ * used to drop the park.
+ */
+internal fun summaryWalkAgain(result: WalkAgainResult, openOverview: (sourceWalkId: Long) -> Unit, closeSummary: () -> Unit) {
+    if (result.built) openOverview(result.sourceWalkId) else closeSummary()
 }
 
 /** Close returns to whatever hosted the overview; system Back does the same. */

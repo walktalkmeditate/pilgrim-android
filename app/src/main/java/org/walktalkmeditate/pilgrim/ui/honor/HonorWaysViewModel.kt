@@ -20,6 +20,7 @@ import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
+import org.walktalkmeditate.pilgrim.honor.HonorRouteLink
 import org.walktalkmeditate.pilgrim.honor.HonorImportCoordinator
 import org.walktalkmeditate.pilgrim.honor.HonorImportState
 import org.walktalkmeditate.pilgrim.honor.HonorLink
@@ -129,9 +130,9 @@ class HonorWaysViewModel internal constructor(
 }
 
 /**
- * The app's end of the import and the links: a listed Way no sheet is up
- * to take, the link toast, the switch to the Path tab, and the back stack
- * the link routing reads (the walk screen's cancel among it).
+ * The app's end of the import and the links: a listed Way or a route page
+ * no sheet is up to take, the link toast, the switch to the Path tab, and
+ * the back stack the link routing reads (the walk screen's cancel among it).
  */
 @HiltViewModel
 class HonorImportHostViewModel @Inject constructor(
@@ -141,6 +142,9 @@ class HonorImportHostViewModel @Inject constructor(
 
     val fetched: StateFlow<String?> = imports.fetched
 
+    /** A route page a stage link resolved to, no screen having opened it yet (stage-links spec Q1). */
+    val routeLink: StateFlow<HonorRouteLink?> = imports.routeLink
+
     val linkToast: StateFlow<HonorLinkToast?> = links.toast
 
     val pathSwitch: StateFlow<Boolean> = links.pathSwitch
@@ -149,9 +153,8 @@ class HonorImportHostViewModel @Inject constructor(
         imports.consumeFetched(wayId)
     }
 
-    /** iOS `walkAgain` with no Way built: the park is overwritten with nil, so a link's Way waiting there never opens. */
-    fun dropParkedWay() {
-        imports.fetched.value?.let(imports::consumeFetched)
+    fun consumeRouteLink(link: HonorRouteLink) {
+        imports.consumeRouteLink(link)
     }
 
     /** iOS `openOverview` for the share whose overview is up: it stays, and gathers again (S2 §5 row 8). */
