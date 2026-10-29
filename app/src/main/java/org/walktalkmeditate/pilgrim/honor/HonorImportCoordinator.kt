@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.honor
 
+import android.util.Log
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
@@ -180,8 +181,9 @@ class HonorImportCoordinator internal constructor(
      * iOS `openStage(routeId:index:)` (`MainCoordinatorView.swift:270-330@3b78728`):
      * what tapping that stage on the route page does. It cancels the share
      * import or stage resolution in flight, and a share's stranded spinner
-     * goes with it. Then, on the main thread, it reads the installed route
-     * once and the stage Way once, and only for the installed route;
+     * goes with it. Then it reads the installed route
+     * once and the stage Way once (both reads on IO; only the job's own
+     * steps run on the main thread), and only for the installed route;
      * resolves against the catalog in memory; and loads only when it must,
      * unforced for no catalog, forced exactly once for a route the catalog
      * lacks, each load announced "reaching for the route…". A replaced
@@ -244,6 +246,7 @@ class HonorImportCoordinator internal constructor(
     } catch (cancel: CancellationException) {
         throw cancel
     } catch (e: Exception) {
+        Log.w(TAG, "the installed-route read failed; resolving the stage link as if none is installed", e)
         null
     }
 
@@ -331,6 +334,8 @@ class HonorImportCoordinator internal constructor(
     }
 
     private companion object {
+        private const val TAG = "HonorImportCoordinator"
+
         /** Outcomes arrive one per import on the main thread, so a few slots never drop one. */
         const val OUTCOME_BUFFER = 4
     }

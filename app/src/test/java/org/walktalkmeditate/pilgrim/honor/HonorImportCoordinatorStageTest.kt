@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.honor
 
+import android.app.Application
 import java.io.IOException
 import java.time.Instant
 import kotlin.coroutines.Continuation
@@ -16,6 +17,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageCatalog
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageCatalogEntry
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageError
@@ -32,6 +36,8 @@ import org.walktalkmeditate.pilgrim.domain.honor.WaySource
  * `AsyncGate` holds it.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
 class HonorImportCoordinatorStageTest {
 
     private val dispatcher = UnconfinedTestDispatcher()
@@ -262,7 +268,10 @@ class HonorImportCoordinatorStageTest {
         assertEquals(listOf(HonorImportOutcome.ReachingForRoute), outcomes)
     }
 
-    /** Q8: a `catch (e: Exception)` that swallowed the cancellation would say "the routes are out of reach" for a replaced link. */
+    /**
+     * Q8: the `if (!isActive)` guard inside the catch. Without it a replaced
+     * link's failed load would say "the routes are out of reach".
+     */
     @Test
     fun `a stage link replaced during a load that then fails says nothing`() = runTest(dispatcher) {
         var heldLoad: Continuation<PilgrimageCatalog>? = null

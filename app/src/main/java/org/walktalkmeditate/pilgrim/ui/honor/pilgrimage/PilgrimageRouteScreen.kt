@@ -93,7 +93,8 @@ class PilgrimageRouteActions(
 /**
  * iOS `PilgrimageRouteView` (`PilgrimageRouteView.swift:66-401@7c200bf`,
  * pilgrimage-stage spec P4 §4): the route's name in the bar, [leading]
- * at the start (Back to the catalog, or a link page's Close), and, for the installed route, the overflow's Remove;
+ * at the start (Back to the catalog, or a link page's Close), and,
+ * for the installed route, the overflow's Remove;
  * then three sections: the summary with the download button, the maps
  * row under it on the installed route ([mapsRow]) and the status lines
  * under the section, the next row on the installed route, and "Stages",
@@ -563,7 +564,8 @@ private fun PilgrimageRouteSheetBody(
         viewModel.opened.collect { wayId -> hideThen { openStage(wayId) } }
     }
     LaunchedEffect(gone) {
-        if (gone) hideThen(leaving)
+        // No slide: a first-frame hide can lose to the sheet's own show() and leave it blank.
+        if (gone) leaving()
     }
     val goBack = { hideThen(leaving) }
     PilgrimageRouteContent(

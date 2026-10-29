@@ -77,7 +77,8 @@ sealed interface HonorLinkToast {
  * - The install referrer's id routes like a held tap, unless the walker
  *   tapped a link in this process: the tap wins.
  * - An unrecognised link only says "this link needs a newer Pilgrim",
- *   mid-walk too; it switches no tab and cancels nothing.
+ *   mid-walk too; it switches no tab and cancels no work in flight
+ *   (a newer one still replaces and releases a held link).
  * - With the walk screen up, or `:tracker` walking with no walk screen
  *   yet (a cold start), a share or stage link is answered "finish this
  *   walk first" and dropped (correction 3).

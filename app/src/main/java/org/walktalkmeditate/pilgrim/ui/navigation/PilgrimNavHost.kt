@@ -867,8 +867,9 @@ private val HONOR_TRACKED_ROUTES = listOf(
 
 /**
  * Which tracked routes the back stack holds, with [currentRoute] last: the
- * list [honorLinkScreen] and [fetchedWayLanding] read. The full back stack
- * is a restricted API; [NavController.getBackStackEntry] answers per route.
+ * list [honorLinkScreen], [fetchedWayLanding] and [routeLinkLanding]
+ * read. The full back stack is a restricted API;
+ * [NavController.getBackStackEntry] answers per route.
  */
 internal fun NavController.honorBackStack(currentRoute: String?): List<String> =
     HONOR_TRACKED_ROUTES.filter(::hasBackStackEntry) + listOfNotNull(currentRoute)
@@ -1257,16 +1258,16 @@ private fun NavHostController.clearHonorSurfacesForPath() {
  * Done always lands the user on the Journal (HOME)
  * tab, regardless of how walkSummary was reached:
  * - Path-launched walk: stack is [PATH, walkSummary].
- * popBackStack(HOME) returns false → fall through
- * to the Path-launch branch below.
+ *   popBackStack(HOME) returns false → fall through
+ *   to the Path-launch branch in the body.
  * - HOME-launched: stack [PATH, HOME, walkSummary].
- * popBackStack(HOME) pops walkSummary, lands on HOME.
+ *   popBackStack(HOME) pops walkSummary, lands on HOME.
  * - Goshuin-launched: stack [PATH, HOME, GOSHUIN,
- * walkSummary]. popBackStack(HOME) pops both
- * walkSummary AND GOSHUIN — user lands on HOME, not
- * Goshuin. This is intentional: "Done" is the user
- * saying "I'm done; show me the Journal." Re-opening
- * Goshuin is a one-FAB-tap away.
+ *   walkSummary]. popBackStack(HOME) pops both
+ *   walkSummary AND GOSHUIN — user lands on HOME, not
+ *   Goshuin. This is intentional: "Done" is the user
+ *   saying "I'm done; show me the Journal." Re-opening
+ *   Goshuin is a one-FAB-tap away.
  *
  * Stage 9.5-B device-QA fix: for Path-launched walks,
  * we MUST pop walkSummary off PATH's stack before
