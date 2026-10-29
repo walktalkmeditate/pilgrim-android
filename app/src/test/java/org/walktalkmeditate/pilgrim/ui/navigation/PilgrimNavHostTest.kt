@@ -210,16 +210,21 @@ class PilgrimNavHostTest {
     // Controller ruling 1, preflight F14: the landing itself, on a real NavController.
 
     @Test
-    fun `a route link parked behind a summary shows its page over Path when the summary closes by Done`() {
+    fun `walk this again on a walk too short to build keeps a route link parked behind the summary, which opens over Path once Done lands on the Journal`() {
         val landing = landingHarness()
-        onMain { landing.nav.navigate(Routes.walkSummary(7L)) }
+        onMain { landing.nav.navigate(Routes.walkSummary(7L, walkAgainDoor = true)) }
         onMain { landing.routeLink = link(13) }
         composeRule.waitForIdle()
-
         onMain { assertEquals("parked, the summary stays", Routes.WALK_SUMMARY_PATTERN, landing.nav.currentBackStackEntry?.destination?.route) }
         assertEquals(emptyList<HonorRouteLink>(), landing.consumedLinks)
 
-        onMain { landing.nav.popBackStack(Routes.WALK_SUMMARY_PATTERN, inclusive = true) }
+        onMain {
+            summaryWalkAgain(
+                WalkAgainResult(sourceWalkId = 7L, built = false),
+                openOverview = {},
+                closeSummary = { landing.nav.doneFromSummary() },
+            )
+        }
         composeRule.waitForIdle()
 
         onMain {

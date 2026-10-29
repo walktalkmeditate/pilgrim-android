@@ -548,32 +548,7 @@ fun PilgrimNavHost(
             // Dialog's dismiss share the same handler.
             val onDone: () -> Unit = remember(navController) {
                 {
-                    // Done always lands the user on the Journal (HOME)
-                    // tab, regardless of how walkSummary was reached:
-                    //  - Path-launched walk: stack is [PATH, walkSummary].
-                    //    popBackStack(HOME) returns false → fall through
-                    //    to the Path-launch branch below.
-                    //  - HOME-launched: stack [PATH, HOME, walkSummary].
-                    //    popBackStack(HOME) pops walkSummary, lands on HOME.
-                    //  - Goshuin-launched: stack [PATH, HOME, GOSHUIN,
-                    //    walkSummary]. popBackStack(HOME) pops both
-                    //    walkSummary AND GOSHUIN — user lands on HOME, not
-                    //    Goshuin. This is intentional: "Done" is the user
-                    //    saying "I'm done; show me the Journal." Re-opening
-                    //    Goshuin is a one-FAB-tap away.
-                    //
-                    // Stage 9.5-B device-QA fix: for Path-launched walks,
-                    // we MUST pop walkSummary off PATH's stack before
-                    // navigateToTab(HOME), otherwise navigateToTab's
-                    // `popUpTo(PATH){saveState=true}` captures walkSummary
-                    // as part of PATH's tab state. The next Path-tab tap
-                    // then restores [PATH, walkSummary] instead of the
-                    // bare [PATH] (WalkStartScreen) the user expects —
-                    // they get stuck in a Done → Path → walkSummary loop.
-                    if (!navController.popBackStack(Routes.HOME, inclusive = false)) {
-                        navController.popBackStack(Routes.PATH, inclusive = false)
-                        navController.navigateToTab(Routes.HOME)
-                    }
+                    navController.doneFromSummary()
                 }
             }
             @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -1261,6 +1236,38 @@ private fun NavHostController.clearHonorSurfacesForPath() {
     popBackStack(Routes.HONOR_WAYS, inclusive = true)
     popBackStack(Routes.HONOR_ROUTE_LINK_PATTERN, inclusive = true)
     if (currentDestination?.route != Routes.PATH) navigateToTab(Routes.PATH)
+}
+
+/**
+ * The summary's Done.
+ * Done always lands the user on the Journal (HOME)
+ * tab, regardless of how walkSummary was reached:
+ * - Path-launched walk: stack is [PATH, walkSummary].
+ * popBackStack(HOME) returns false → fall through
+ * to the Path-launch branch below.
+ * - HOME-launched: stack [PATH, HOME, walkSummary].
+ * popBackStack(HOME) pops walkSummary, lands on HOME.
+ * - Goshuin-launched: stack [PATH, HOME, GOSHUIN,
+ * walkSummary]. popBackStack(HOME) pops both
+ * walkSummary AND GOSHUIN — user lands on HOME, not
+ * Goshuin. This is intentional: "Done" is the user
+ * saying "I'm done; show me the Journal." Re-opening
+ * Goshuin is a one-FAB-tap away.
+ * 
+ * Stage 9.5-B device-QA fix: for Path-launched walks,
+ * we MUST pop walkSummary off PATH's stack before
+ * navigateToTab(HOME), otherwise navigateToTab's
+ * `popUpTo(PATH){saveState=true}` captures walkSummary
+ * as part of PATH's tab state. The next Path-tab tap
+ * then restores [PATH, walkSummary] instead of the
+ * bare [PATH] (WalkStartScreen) the user expects —
+ * they get stuck in a Done → Path → walkSummary loop.
+ */
+internal fun NavHostController.doneFromSummary() {
+    if (!popBackStack(Routes.HOME, inclusive = false)) {
+        popBackStack(Routes.PATH, inclusive = false)
+        navigateToTab(Routes.HOME)
+    }
 }
 
 /** "walk this again" built a Way: the overview takes the summary's place over its host (F §6.2). */
