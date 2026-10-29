@@ -152,11 +152,21 @@ class MainActivityIntentsTest {
     fun `a link that wouldn't route here moves without it`() {
         val restored = ownTaskIntent(context, link(), restored = true)
         val fromRecents = ownTaskIntent(context, link().addFlags(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY), restored = false)
-        val unparsed = ownTaskIntent(context, Intent(Intent.ACTION_VIEW, Uri.parse("https://honor.pilgrimapp.org/abc")), restored = false)
+        val bareRoot = ownTaskIntent(context, Intent(Intent.ACTION_VIEW, Uri.parse("https://honor.pilgrimapp.org/")), restored = false)
 
-        listOf(restored, fromRecents, unparsed).forEach {
+        listOf(restored, fromRecents, bareRoot).forEach {
             assertNull(it.data)
             assertEquals(ComponentName(context, MainActivity::class.java), it.component)
+        }
+    }
+
+    /** Stage-links spec: an honor path this build can't read still routes, to its "needs a newer Pilgrim" toast, so it moves too. */
+    @Test
+    fun `an unrecognised honor path and a stage link move with their data`() {
+        listOf("https://honor.pilgrimapp.org/abc", "https://honor.pilgrimapp.org/camino-frances/14").forEach { url ->
+            val moved = ownTaskIntent(context, Intent(Intent.ACTION_VIEW, Uri.parse(url)), restored = false)
+            assertEquals(url, Intent.ACTION_VIEW, moved.action)
+            assertEquals(url, Uri.parse(url), moved.data)
         }
     }
 

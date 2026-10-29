@@ -126,10 +126,10 @@ class HonorLinkRouter internal constructor(
 
     /** A launch's intent, or a new one; [restored] for an Activity rebuilt from saved state. */
     fun open(intent: Intent?, restored: Boolean) {
-        val shareId = honorLinkOf(intent, restored) ?: return
+        val link = honorLinkOf(intent, restored) ?: return
         if (!honorEnabled) return
         linkTapped = true
-        route(shareId)
+        if (link is HonorLinkDestination.Share) route(link.id)
     }
 
     /**
@@ -262,7 +262,7 @@ class HonorLinkRouter internal constructor(
 }
 
 /**
- * The share id a launch or a new intent carries: a VIEW intent's data,
+ * The destination a launch or a new intent carries: a VIEW intent's data,
  * parsed as iOS parses a link the OS hands it. A task the system rebuilds
  * carries none, so R18 loses a waiting link with the process, as iOS does
  * (S2 open question 3, resolved): an Activity rebuilt from saved state,
@@ -272,7 +272,7 @@ class HonorLinkRouter internal constructor(
  * saved state. A configuration change rebuilds from saved state too, but
  * its intent was already consumed.
  */
-internal fun honorLinkOf(intent: Intent?, restored: Boolean): String? {
+internal fun honorLinkOf(intent: Intent?, restored: Boolean): HonorLinkDestination? {
     if (restored || intent == null || !carriesLinkData(intent)) return null
     if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return null
     return intent.data?.let(HonorLink::parse)

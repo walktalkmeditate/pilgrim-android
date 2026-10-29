@@ -23,6 +23,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.honor.HonorImportCoordinator
 import org.walktalkmeditate.pilgrim.honor.HonorImportState
 import org.walktalkmeditate.pilgrim.honor.HonorLink
+import org.walktalkmeditate.pilgrim.honor.HonorLinkDestination
 import org.walktalkmeditate.pilgrim.honor.HonorLinkRouter
 import org.walktalkmeditate.pilgrim.honor.HonorLinkScreen
 import org.walktalkmeditate.pilgrim.honor.HonorLinkToast
@@ -115,7 +116,7 @@ class HonorWaysViewModel internal constructor(
 
     /** iOS's `onPaste`: parses again, and opens only what parses. */
     fun open(text: String) {
-        HonorLink.parse(text = text)?.let(imports::openWay)
+        (HonorLink.parse(text = text) as? HonorLinkDestination.Share)?.let { imports.openWay(it.id) }
     }
 
     fun consumeFetched(wayId: String) {
