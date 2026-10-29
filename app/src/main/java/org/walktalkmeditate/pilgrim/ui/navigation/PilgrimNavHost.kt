@@ -1253,7 +1253,7 @@ private fun NavHostController.clearHonorSurfacesForPath() {
  * Goshuin. This is intentional: "Done" is the user
  * saying "I'm done; show me the Journal." Re-opening
  * Goshuin is a one-FAB-tap away.
- * 
+ *
  * Stage 9.5-B device-QA fix: for Path-launched walks,
  * we MUST pop walkSummary off PATH's stack before
  * navigateToTab(HOME), otherwise navigateToTab's
