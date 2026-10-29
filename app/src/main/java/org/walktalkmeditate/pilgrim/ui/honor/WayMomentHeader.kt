@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.honor
 
+import android.content.Context
 import android.content.res.Resources
+import android.text.format.DateFormat
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -185,6 +187,40 @@ object WayStageLine {
         if (stage.difficulty.isNotEmpty()) parts += stage.difficulty
         return parts.joinToString(STAGE_SEPARATOR)
     }
+}
+
+/**
+ * iOS `WayStampNotice` (`WayMomentHeader.swift:120-146@e551b11`): "temple
+ * 10 stamps until 5 · 3.2 km", the one line a stamp office may say, in the
+ * walk screen's register, the distance in the walker's unit and the hour
+ * in their own clock, with no meridiem marker. A fact, not a forecast.
+ */
+object WayStampNotice {
+
+    fun caption(
+        resources: Resources,
+        templeNumber: Int,
+        closesMinutes: Int,
+        meters: Double,
+        units: UnitSystem,
+        twelveHour: Boolean,
+    ): String = resources.getString(
+        R.string.honor_stamp_caption,
+        templeNumber.toString(),
+        hour(closesMinutes, twelveHour),
+        WayRelation.distance(if (meters.isFinite()) meters else 0.0, units),
+    )
+
+    /** 17:00 as "5" on a 12-hour clock and "17" on a 24-hour one; noon is 12; minutes only when they aren't zero. */
+    fun hour(minutesSinceMidnight: Int, twelveHour: Boolean): String {
+        val hour = minutesSinceMidnight / 60
+        val minute = minutesSinceMidnight % 60
+        val shown = if (twelveHour) (if (hour % 12 == 0) 12 else hour % 12) else hour
+        return if (minute == 0) shown.toString() else String.format(Locale.US, "%d:%02d", shown, minute)
+    }
+
+    /** The walk screen's reading: the walker's "Use 24-hour format", as iOS's `Locale.current` carries its own switch. */
+    fun isTwelveHourClock(context: Context): Boolean = !DateFormat.is24HourFormat(context)
 }
 
 /**

@@ -1540,6 +1540,10 @@
          appended distance keeps from ever showing (pilgrim-ios #122, matched). One label
          covers "reply here" and "record again", as iOS ships it. -->
     <string name="honor_water_caption">water in %1$s</string>
+    <!-- iOS PR #91 (stamp-closing spec, UI, Strings): a Shikoku stage's temple notice, lowercase, with
+         a U+00B7 middle dot. All three arguments arrive formatted (the number, the hour in Locale.US,
+         the distance as WayDistance writes it), so a configuration can't change their digits. -->
+    <string name="honor_stamp_caption">temple %1$s stamps until %2$s · %3$s</string>
     <string name="honor_arrival_stage_title">you walked the stage</string>
     <string name="honor_arrival_whole_stage">the whole stage</string>
     <string name="honor_arrival_reply_a11y">Record a reply to this stage</string>
