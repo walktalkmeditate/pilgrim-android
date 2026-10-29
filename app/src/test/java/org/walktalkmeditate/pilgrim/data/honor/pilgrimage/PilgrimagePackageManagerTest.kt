@@ -127,7 +127,7 @@ class PilgrimagePackageManagerTest {
     /** The hours are `route.json`'s, handed to every stage as it is staged (A.2, A.11 item 6); iOS has no such test. */
     @Test
     fun `a route with stamp hours hands them to every stage it stages`() {
-        h.rewriteRouteFile(ROUTE_ID, stampHours = SHIKOKU_HOURS_JSON)
+        h.rewriteRouteFile(SHIKOKU_HOURS_JSON)
 
         h.makeManager().download(h.entry, RELEASE).awaitBlocking()
 

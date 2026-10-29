@@ -3,7 +3,6 @@ package org.walktalkmeditate.pilgrim.data.honor.pilgrimage
 
 import androidx.annotation.StringRes
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.JsonElement
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
 import org.walktalkmeditate.pilgrim.domain.honor.WayStampHours
@@ -141,7 +140,9 @@ data class PilgrimageCatalog(
  * `null` fails the whole decode, as Swift's synthesized `Decodable` does;
  * unknown keys (`schemaVersion`, `cover`, and a stage file's `stampHours`)
  * are ignored. A route file's `stampHours` is the one lenient member (iOS
- * `RouteFile.init(from:)`, `PilgrimageWayImporter.swift:178-197@e551b11`).
+ * `RouteFile.init(from:)`, `PilgrimageWayImporter.swift:178-197@e551b11`); it is
+ * not a field of [RouteFile] but read by its own probe in the importer, so the
+ * strict decode skips the key without building a tree.
  * Swift's `Int` is 64-bit, so every
  * integer is a [Long], narrowed only once its bound has passed (P1 §4.3, A7).
  * Moment and mark kinds are plain strings, so a kind the dataset adds later
@@ -243,12 +244,6 @@ internal data class RouteFile(
     val tradition: String? = null,
     val summary: String? = null,
     val stages: List<Stage>,
-    /**
-     * Any JSON at all: iOS reads it with `try?`, so a value of a shape this
-     * build can't read costs the hours, never the route, and never
-     * `installed()`. [PilgrimageWayImporter.route] makes the hours of it.
-     */
-    val stampHours: JsonElement? = null,
 ) {
 
     @Serializable

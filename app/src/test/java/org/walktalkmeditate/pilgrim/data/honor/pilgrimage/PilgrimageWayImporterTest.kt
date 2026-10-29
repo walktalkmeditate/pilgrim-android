@@ -1119,6 +1119,7 @@ class PilgrimageWayImporterTest {
             """"stampHours": { "opens": null, "closes": "17:00" },""",
             """"stampHours": null,""",
             """"stampHours": [ { "opens": "08:00", "closes": "12:00" }, { "opens": "13:00", "closes": "17:00" } ],""",
+            """"stampHours": ${"[".repeat(5000)}${"]".repeat(5000)},""",
         )
         for (block in misShaped) {
             val route = route(routeTextWith(block))

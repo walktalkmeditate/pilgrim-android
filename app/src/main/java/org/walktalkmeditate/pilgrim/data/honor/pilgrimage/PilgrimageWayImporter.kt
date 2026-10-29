@@ -4,9 +4,7 @@ package org.walktalkmeditate.pilgrim.data.honor.pilgrimage
 import java.nio.charset.CharacterCodingException
 import kotlin.math.abs
 import kotlinx.serialization.DeserializationStrategy
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.Serializable
 import org.walktalkmeditate.pilgrim.data.honor.WayImporter
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.domain.honor.OwnWalkWayBuilder
@@ -148,7 +146,7 @@ object PilgrimageWayImporter {
             stageCount = file.stageCount.toInt(),
             tradition = file.tradition?.prefixCharacters(WayImporter.MAX_LABEL_CHARACTERS),
             summary = file.summary.trimmedOrNull(MAX_SUMMARY_CHARACTERS),
-            stampHours = stampHours(file.stampHours),
+            stampHours = stampHours(from),
             stages = file.stages.sortedBy { it.index }.map { row ->
                 PilgrimageRouteStage(
                     index = row.index.toInt(),
@@ -242,16 +240,26 @@ object PilgrimageWayImporter {
      * hours at all. Any other shape (a missing or null member, numbers, a
      * bare string, `null`, an array of windows) is no hours, and the route
      * still decodes; a pair either half of which won't read is dropped whole.
+     * Read by a typed probe of the same bytes, which fails at the first token
+     * of a wrong shape and builds no tree, so a deeply nested value can't
+     * overflow the stack. Only decode errors are caught, never an `Error`.
      */
-    private fun stampHours(raw: JsonElement?): WayStampHours? {
-        val members = raw as? JsonObject ?: return null
-        val opens = members["opens"]?.jsonString()?.let(::minutesSinceMidnight) ?: return null
-        val closes = members["closes"]?.jsonString()?.let(::minutesSinceMidnight) ?: return null
+    private fun stampHours(from: ByteArray): WayStampHours? {
+        val wire = try {
+            decoded(StampHoursProbe.serializer(), from).stampHours
+        } catch (e: PilgrimageException) {
+            null
+        } ?: return null
+        val opens = minutesSinceMidnight(wire.opens) ?: return null
+        val closes = minutesSinceMidnight(wire.closes) ?: return null
         return WayStampHours(opensMinutes = opens, closesMinutes = closes)
     }
 
-    /** A JSON string's text; null for a number, a boolean, `null`, an object or an array. */
-    private fun JsonElement.jsonString(): String? = (this as? JsonPrimitive)?.takeIf { it.isString }?.content
+    @Serializable
+    private class StampHoursProbe(val stampHours: StampHoursWire? = null)
+
+    @Serializable
+    private class StampHoursWire(val opens: String, val closes: String)
 
     /**
      * iOS `minutesSinceMidnight` (`PilgrimageWayImporter.swift:394-400@e551b11`,

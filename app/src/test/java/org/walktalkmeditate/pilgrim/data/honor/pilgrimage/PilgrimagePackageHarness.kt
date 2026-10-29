@@ -127,7 +127,7 @@ internal class PilgrimagePackageHarness(root: File) {
      * Re-stubs [routeId]'s `route.json` as the fixture with [stampHours], a raw JSON value (see
      * [SHIKOKU_HOURS_JSON]), spliced in where the dataset writes it; null leaves the file as the fixture has it.
      */
-    fun rewriteRouteFile(routeId: String = ROUTE_ID, stampHours: String?, release: String = RELEASE) {
+    fun rewriteRouteFile(stampHours: String?, routeId: String = ROUTE_ID, release: String = RELEASE) {
         val text = when (stampHours) {
             null -> fixtureText("route.json")
             else -> routeTextWith(""""stampHours": $stampHours,""")
