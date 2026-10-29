@@ -887,6 +887,7 @@ internal fun honorLinkScreen(backStack: List<String>): HonorLinkScreen {
         waysSheetUp = Routes.HONOR_WAYS in backStack,
         summaryUp = Routes.WALK_SUMMARY_PATTERN in backStack,
         overviewUp = Routes.HONOR_OVERVIEW_PATTERN in backStack,
+        routeSheetUp = Routes.HONOR_ROUTE_LINK_PATTERN in backStack,
     )
 }
 

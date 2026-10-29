@@ -10,7 +10,9 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
@@ -25,6 +27,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.honor.WayError
 import org.walktalkmeditate.pilgrim.data.honor.WayImportException
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageCatalog
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageError
 import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.domain.honor.WayPoint
@@ -33,6 +36,7 @@ import org.walktalkmeditate.pilgrim.ui.navigation.FetchedWayLanding
 import org.walktalkmeditate.pilgrim.ui.navigation.Routes
 import org.walktalkmeditate.pilgrim.ui.navigation.fetchedWayLanding
 import org.walktalkmeditate.pilgrim.ui.navigation.honorLinkScreen
+import org.walktalkmeditate.pilgrim.ui.navigation.routeLinkLanding
 import org.walktalkmeditate.pilgrim.widget.DeepLinkTarget
 
 /**
@@ -54,6 +58,11 @@ class HonorLinkRouterTest {
     private val asked = mutableListOf<String>()
     private var trackerWalking = false
     private var probes = 0
+    private var holdProbe = false
+    private var probeGate: CancellableContinuation<Boolean>? = null
+    private var cachedCatalog: PilgrimageCatalog? = null
+    private val catalogLoads = mutableListOf<Boolean>()
+    private var heldLoad: Continuation<PilgrimageCatalog>? = null
     private val navHost = Any()
     private lateinit var imports: HonorImportCoordinator
 
@@ -66,13 +75,18 @@ class HonorLinkRouterTest {
             honorEnabled = honorEnabled,
             scope = backgroundScope,
             media = { error("a link never gathers") },
+            cachedCatalog = { cachedCatalog },
+            loadCatalog = { force ->
+                catalogLoads += force
+                suspendCoroutine { heldLoad = it }
+            },
         )
         return HonorLinkRouter(
             honorEnabled = honorEnabled,
             imports = imports,
             trackerWalking = {
                 probes++
-                trackerWalking
+                if (holdProbe) suspendCancellableCoroutine { probeGate = it } else trackerWalking
             },
             scope = backgroundScope,
         )
@@ -522,17 +536,21 @@ class HonorLinkRouterTest {
         assertNull("the widget's extras are never read from a link", DeepLinkTarget.parse(intent))
     }
 
+    // Stage-links spec Q7: an honor path this build can't read is answered, never met with silence; the bare root still is.
     @Test
-    fun `an honor path that doesn't parse opens the app and does nothing`() = runTest(dispatcher) {
+    fun `an honor path this build can't read says a newer Pilgrim is needed, and the bare root still does nothing`() = runTest(dispatcher) {
         val links = router()
         links.at(Routes.PATH, Routes.HOME)
 
-        links.open(Intent(Intent.ACTION_VIEW, Uri.parse("https://honor.pilgrimapp.org/abc")), restored = false)
-        links.open(Intent(Intent.ACTION_VIEW, Uri.parse("https://honor.pilgrimapp.org/")), restored = false)
+        links.open(honorPath(""), restored = false)
+        assertNull("the site itself opened is no link", links.toast.value)
 
-        assertTrue(asked.isEmpty())
-        assertNull(links.toast.value)
-        assertFalse(links.pathSwitch.value)
+        links.open(honorPath("abc"), restored = false)
+
+        assertEquals(HonorLinkToast.NeedsNewerPilgrim, links.toast.value)
+        assertTrue("no import starts", asked.isEmpty())
+        assertTrue("no catalog is read", catalogLoads.isEmpty())
+        assertFalse("the walker stays on the Journal", links.pathSwitch.value)
     }
 
     @Test
@@ -561,8 +579,11 @@ class HonorLinkRouterTest {
         links.at(Routes.PATH, Routes.HOME)
 
         links.open(link(FIRST), restored = false)
-        links.route(SECOND)
+        links.route(HonorLinkDestination.Share(SECOND))
         links.routeReferrer(SECOND) {}
+        links.open(honorPath("camino-frances/14"), restored = false)
+        links.open(honorPath("abc"), restored = false)
+        assertTrue(catalogLoads.isEmpty())
 
         assertTrue(asked.isEmpty())
         assertNull(links.toast.value)
@@ -576,8 +597,8 @@ class HonorLinkRouterTest {
         links.at(Routes.WELCOME)
         val released = mutableListOf<String>()
 
-        links.route(FIRST) { released += FIRST }
-        links.route(SECOND) { released += SECOND }
+        links.route(HonorLinkDestination.Share(FIRST)) { released += FIRST }
+        links.route(HonorLinkDestination.Share(SECOND)) { released += SECOND }
         assertEquals("a newer link replaced it", listOf(FIRST), released)
         links.at(Routes.PATH)
 
@@ -683,6 +704,148 @@ class HonorLinkRouterTest {
         }
     }
 
+    // Stage links (stage-links spec Q7, Q8): the share's refusal and carve-outs, and no "reaching for the walk…".
+
+    @Test
+    fun `a stage link from the Journal switches to Path and reaches for the route, never for the walk`() = runTest(dispatcher) {
+        val links = router()
+        links.at(Routes.PATH, Routes.HOME)
+
+        links.open(honorPath("camino-frances/14"), restored = false)
+
+        assertTrue(links.pathSwitch.value)
+        assertEquals(HonorLinkToast.ReachingForRoute, links.toast.value)
+        assertEquals(listOf(false), catalogLoads)
+        assertTrue("no share import starts", asked.isEmpty())
+        checkNotNull(heldLoad).resume(catalog())
+        assertNull("the toast goes as the page is offered", links.toast.value)
+        assertEquals(HonorRouteLink(caminoFrancesEntry, RELEASE, focus = 13), imports.routeLink.value)
+    }
+
+    @Test
+    fun `a stage link with the link page up keeps it in place to be swapped, as iOS swaps its route sheet`() = runTest(dispatcher) {
+        cachedCatalog = catalog()
+        val links = router()
+        links.at(Routes.PATH, Routes.HONOR_ROUTE_LINK_PATTERN)
+
+        links.open(honorPath("camino-frances/20"), restored = false)
+
+        assertFalse(links.pathSwitch.value)
+        assertEquals(HonorRouteLink(caminoFrancesEntry, RELEASE, focus = 19), imports.routeLink.value)
+    }
+
+    @Test
+    fun `a stage link over a summary keeps the summary's place`() = runTest(dispatcher) {
+        cachedCatalog = catalog()
+        val links = router()
+        links.at(Routes.PATH, Routes.HOME, Routes.WALK_SUMMARY_PATTERN)
+
+        links.open(honorPath("camino-frances/14"), restored = false)
+
+        assertFalse(links.pathSwitch.value)
+        assertEquals(HonorRouteLink(caminoFrancesEntry, RELEASE, focus = 13), imports.routeLink.value)
+    }
+
+    // iOS `testStageLinkWhileWalkingSetsTheToast`.
+    @Test
+    fun `a stage link during a walk is refused, with no switch and nothing resolved`() = runTest(dispatcher) {
+        cachedCatalog = catalog()
+        val links = router()
+        links.at(Routes.PATH, Routes.ACTIVE_WALK)
+
+        links.open(honorPath("camino-frances/14"), restored = false)
+
+        assertEquals(HonorLinkToast.FinishWalkFirst, links.toast.value)
+        assertFalse(links.pathSwitch.value)
+        assertNull(imports.routeLink.value)
+    }
+
+    // iOS `testABeginInFlightWinsOverAStageLink`; Q9: the walk screen opening is Android's Begin in flight.
+    @Test
+    fun `a Begin landing while the catalog loads wins over the stage link`() = runTest(dispatcher) {
+        val links = router()
+        links.at(Routes.PATH, Routes.HOME, Routes.HONOR_OVERVIEW_PATTERN)
+        links.open(honorPath("camino-frances/14"), restored = false)
+
+        links.at(Routes.PATH, Routes.HOME, Routes.ACTIVE_WALK)
+        checkNotNull(heldLoad).resume(catalog())
+
+        assertNull("nothing interrupts the walk", imports.routeLink.value)
+        assertEquals(FetchedWayLanding.DROP, routeLinkLanding(listOf(Routes.PATH, Routes.HOME, Routes.ACTIVE_WALK)))
+    }
+
+    @Test
+    fun `a stage link during onboarding waits, then resolves at Path`() = runTest(dispatcher) {
+        val links = router()
+        links.at(Routes.WELCOME)
+
+        links.open(honorPath("camino-frances/14"), restored = false)
+        assertTrue(catalogLoads.isEmpty())
+        assertNull(links.toast.value)
+        links.at(Routes.PATH)
+
+        assertEquals(listOf(false), catalogLoads)
+    }
+
+    // iOS `testAnUnrecognisedLinkSaysANewerPilgrimIsNeeded`; `open(.unrecognised)` checks no walk (`MainCoordinatorView.swift:227-233@3b78728`).
+    @Test
+    fun `an unrecognised link mid-walk still says a newer Pilgrim is needed, and asks nothing of the tracker`() = runTest(dispatcher) {
+        val links = router()
+        links.at(Routes.PATH, Routes.ACTIVE_WALK)
+
+        links.open(honorPath("abc"), restored = false)
+
+        assertEquals(HonorLinkToast.NeedsNewerPilgrim, links.toast.value)
+        assertFalse(links.pathSwitch.value)
+        assertEquals(0, probes)
+    }
+
+    @Test
+    fun `an unrecognised link leaves a share import in flight running`() = runTest(dispatcher) {
+        val links = router()
+        links.at(Routes.PATH)
+        links.open(link(FIRST), restored = false)
+
+        links.open(honorPath("abc"), restored = false)
+        assertEquals(HonorLinkToast.NeedsNewerPilgrim, links.toast.value)
+        assertEquals(HonorImportState.Fetching, imports.state.value)
+        land(FIRST)
+
+        assertEquals("share:$FIRST", imports.fetched.value)
+    }
+
+    /** Ruling on Q8's edge: an unrecognised link never cancels a share's walk probe, as iOS's never touches the import. */
+    @Test
+    fun `an unrecognised link while a share's walk probe is out leaves the share to open`() = runTest(dispatcher) {
+        holdProbe = true
+        val links = router()
+        links.at(Routes.PATH)
+        links.open(link(FIRST), restored = false)
+
+        links.open(honorPath("abc"), restored = false)
+        assertEquals(HonorLinkToast.NeedsNewerPilgrim, links.toast.value)
+        checkNotNull(probeGate).resume(false)
+
+        assertEquals(listOf(FIRST), asked)
+    }
+
+    @Test
+    fun `an unrecognised tap still counts as the walker's own, so a referrer is released unrouted`() = runTest(dispatcher) {
+        val links = router()
+        links.at(Routes.PATH)
+        var released = false
+
+        links.open(honorPath("abc"), restored = false)
+        links.routeReferrer(FIRST) { released = true }
+
+        assertTrue(released)
+        assertTrue("the tap won over the referrer", asked.isEmpty())
+    }
+
+    private fun honorPath(path: String) = Intent(Intent.ACTION_VIEW, Uri.parse("https://honor.pilgrimapp.org/$path"))
+
+    private fun catalog() = PilgrimageCatalog(release = RELEASE, routes = listOf(caminoFrancesEntry))
+
     private fun link(id: String) = Intent(Intent.ACTION_VIEW, Uri.parse("https://honor.pilgrimapp.org/$id"))
 
     private fun way(shareId: String) = Way(
@@ -703,5 +866,6 @@ class HonorLinkRouterTest {
     private companion object {
         const val FIRST = "Qoi4YmPHLN"
         const val SECOND = "Second1234"
+        const val RELEASE = "v1.12.0"
     }
 }

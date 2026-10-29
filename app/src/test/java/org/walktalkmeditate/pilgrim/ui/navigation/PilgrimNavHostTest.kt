@@ -299,6 +299,14 @@ class PilgrimNavHostTest {
     }
 
     @Test
+    fun `the link routing reads a link page off the back stack, and the catalog's route page is not one`() {
+        assertTrue(honorLinkScreen(listOf(Routes.PATH, Routes.HONOR_ROUTE_LINK_PATTERN)).routeSheetUp)
+        assertFalse(
+            honorLinkScreen(listOf(Routes.PATH, Routes.HONOR_WAYS, Routes.HONOR_PILGRIMAGES, Routes.HONOR_PILGRIMAGE_PATTERN)).routeSheetUp,
+        )
+    }
+
+    @Test
     fun `the one link toast shows on every tab and the walk screen, but not over a sitting or an overview`() {
         assertTrue(linkToastShows(listOf(Routes.PATH, Routes.ACTIVE_WALK)))
         assertFalse(linkToastShows(listOf(Routes.PATH, Routes.ACTIVE_WALK, Routes.MEDITATION)))

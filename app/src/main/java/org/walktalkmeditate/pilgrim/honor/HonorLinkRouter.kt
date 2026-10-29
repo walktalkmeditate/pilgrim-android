@@ -37,6 +37,8 @@ data class HonorLinkScreen(
     /** A summary from any of its hosts: a fetched Way waits until it closes (owner decision 5). */
     val summaryUp: Boolean,
     val overviewUp: Boolean,
+    /** A route page a stage link opened: a second link swaps it in place, as iOS swaps its route sheet. */
+    val routeSheetUp: Boolean,
 )
 
 /** What the link toast says (S2 §7.1; stage-links spec, Copy). The overview and the Ways sheet say the rest inline. */
@@ -62,11 +64,11 @@ sealed interface HonorLinkToast {
 
 /**
  * Honor links in the UI process: iOS's `PilgrimApp.route` stash, the
- * `MainTabView` drain and handler, and `MainCoordinator.openWay`'s
- * refusal and toast (`PilgrimApp.swift:54-64`, `MainTabView.swift:86-106`,
- * `MainCoordinatorView.swift:209-242,340-349@7c200bf`; shared-walk spec
- * S2 §2–§7). The fetch itself is [HonorImportCoordinator]'s, and where a
- * fetched Way lands is the nav host's.
+ * `MainTabView` drain and handler, and `MainCoordinator.open`'s refusal
+ * and toast (`PilgrimApp.swift:35,47-64`, `MainTabView.swift:93-107,172-175`,
+ * `MainCoordinatorView.swift:227-242,274-275@3b78728`; shared-walk spec
+ * S2 §2–§7). The fetch and the stage resolution are
+ * [HonorImportCoordinator]'s, and where their results land is the nav host's.
  *
  * - A link waits in memory, the last one winning, until a nav host
  *   first stands past setup (correction 4). This singleton outlives an
@@ -74,15 +76,18 @@ sealed interface HonorLinkToast {
  *   does. Nothing shows while it waits.
  * - The install referrer's id routes like a held tap, unless the walker
  *   tapped a link in this process: the tap wins.
+ * - An unrecognised link only says "this link needs a newer Pilgrim",
+ *   mid-walk too; it switches no tab and cancels nothing.
  * - With the walk screen up, or `:tracker` walking with no walk screen
- *   yet (a cold start), the link is answered "finish this walk first"
- *   and dropped (correction 3).
+ *   yet (a cold start), a share or stage link is answered "finish this
+ *   walk first" and dropped (correction 3).
  * - Otherwise the tab switches to Path, unless a summary, the Ways sheet,
- *   or an overview is up (they keep their place: the summary parks the
- *   Way, the sheet takes it, the overview is replaced by it); the toast
- *   says "reaching for the walk…" unless the Ways sheet is up; and the
- *   import starts (correction 2).
- * - The walk screen opening cancels an import in flight, silently.
+ *   an overview, or a link's route page is up (they keep their place: the
+ *   summary parks what comes, the sheet takes a Way, the overview and the
+ *   page are replaced by it). A share says "reaching for the walk…" unless
+ *   the Ways sheet is up and starts its import; a stage starts its
+ *   resolution, which says its own lines (correction 2).
+ * - The walk screen opening cancels either in flight, silently.
  *
  * Main thread only, as iOS's `@MainActor` coordinator is.
  */
@@ -142,7 +147,7 @@ class HonorLinkRouter internal constructor(
         val link = honorLinkOf(intent, restored) ?: return
         if (!honorEnabled) return
         linkTapped = true
-        if (link is HonorLinkDestination.Share) route(link.id)
+        route(link)
     }
 
     /**
@@ -156,19 +161,20 @@ class HonorLinkRouter internal constructor(
             released()
             return
         }
-        route(shareId, released)
+        route(HonorLinkDestination.Share(shareId), released)
     }
 
     /**
-     * iOS `route`: [shareId] waits for setup if it has to, then routes.
-     * [released] runs once the id stops waiting, routed or replaced by a
-     * newer link.
+     * iOS `route`: [link] waits for setup if it has to, then routes.
+     * [released] runs once it stops waiting, routed or replaced by a newer
+     * link. An unrecognised link leaves a share's walk probe running, as
+     * iOS's `open(.unrecognised)` leaves the import.
      */
-    fun route(shareId: String, released: () -> Unit = {}) {
+    fun route(link: HonorLinkDestination, released: () -> Unit = {}) {
         if (!honorEnabled) return
-        routing?.cancel()
+        if (link != HonorLinkDestination.Unrecognised) routing?.cancel()
         held?.released?.invoke()
-        held = HeldLink(shareId, released)
+        held = HeldLink(link, released)
         drainIfReady()
     }
 
@@ -206,15 +212,19 @@ class HonorLinkRouter internal constructor(
         val link = held ?: return
         held = null
         link.released()
-        dispatch(link.shareId)
+        dispatch(link.destination)
     }
 
-    private fun dispatch(shareId: String) {
+    private fun dispatch(link: HonorLinkDestination) {
+        if (link == HonorLinkDestination.Unrecognised) {
+            showToast(HonorLinkToast.NeedsNewerPilgrim)
+            return
+        }
         routing = scope.launch {
             val walking = screen?.walkScreenUp == true || trackerWalking()
             val now = screen
             if (now == null) {
-                held = HeldLink(shareId) {}
+                held = HeldLink(link) {}
                 return@launch
             }
             if (walking || now.walkScreenUp) {
@@ -222,8 +232,14 @@ class HonorLinkRouter internal constructor(
                 return@launch
             }
             if (!now.atPath && !now.keepsItsPlace()) _pathSwitch.value = true
-            if (!now.waysSheetUp) showToast(HonorLinkToast.Reaching)
-            imports.openWay(shareId)
+            when (link) {
+                is HonorLinkDestination.Share -> {
+                    if (!now.waysSheetUp) showToast(HonorLinkToast.Reaching)
+                    imports.openWay(link.id)
+                }
+                is HonorLinkDestination.Stage -> imports.openStage(link.routeId, link.index)
+                HonorLinkDestination.Unrecognised -> Unit
+            }
         }
     }
 
@@ -242,9 +258,9 @@ class HonorLinkRouter internal constructor(
         }
     }
 
-    private fun HonorLinkScreen.keepsItsPlace(): Boolean = summaryUp || waysSheetUp || overviewUp
+    private fun HonorLinkScreen.keepsItsPlace(): Boolean = summaryUp || waysSheetUp || overviewUp || routeSheetUp
 
-    private class HeldLink(val shareId: String, val released: () -> Unit)
+    private class HeldLink(val destination: HonorLinkDestination, val released: () -> Unit)
 
     companion object {
         const val TOAST_MILLIS = 5_000L
