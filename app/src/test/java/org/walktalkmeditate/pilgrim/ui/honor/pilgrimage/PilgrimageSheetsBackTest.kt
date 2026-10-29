@@ -127,6 +127,25 @@ class PilgrimageSheetsBackTest {
         composeRule.runOnIdle { assertNull(nav.previousBackStackEntry) }
     }
 
+    /**
+     * Q5: a link page whose route the catalog doesn't list ends Gone and
+     * closes itself, silently. Its windows come up only as Robolectric's
+     * paused main looper runs, which `waitUntil` never does, so the test
+     * waits for idle instead.
+     */
+    @Test
+    fun `a link page for a route the catalog doesn't list closes itself to Path`() {
+        val nav = linkPageSheets()
+
+        composeRule.runOnIdle { nav.navigate(Routes.honorRouteLink(PilgrimagePackageHarness.NORTE_ID, 0)) }
+        composeRule.waitForIdle()
+
+        composeRule.runOnIdle {
+            assertEquals(Routes.PATH, nav.currentBackStackEntry?.destination?.route)
+            assertNull(nav.previousBackStackEntry)
+        }
+    }
+
     /** Path and the link page wired as the app's host wires it, the page's ViewModel built on the world. */
     private fun linkPageSheets(): NavHostController {
         world.holdCatalog()
