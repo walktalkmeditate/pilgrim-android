@@ -17,12 +17,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.StateFlow
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageCopy
 import org.walktalkmeditate.pilgrim.honor.HonorImportCopy
@@ -34,6 +36,14 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
 /** SwiftUI's `.easeInOut`, which iOS gives no duration: 0.35 s. */
 private const val TOAST_MOTION_MS = 350
+
+/**
+ * The app's link toast, for a window that covers the Activity's toast host,
+ * an Honor sheet's: iOS repeats its overlay inside each sheet
+ * (`MainTabView.swift:64,77,91,178-193@3b78728`). Null with Honor off, or
+ * outside the nav host.
+ */
+val LocalHonorLinkToast = staticCompositionLocalOf<StateFlow<HonorLinkToast?>?> { null }
 
 /**
  * iOS `HonorLinkToast` (`MainCoordinatorView.swift:405-423@7c200bf`, S2

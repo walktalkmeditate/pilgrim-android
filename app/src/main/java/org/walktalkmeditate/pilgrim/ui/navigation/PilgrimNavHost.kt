@@ -56,6 +56,7 @@ import org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinScreen
 import org.walktalkmeditate.pilgrim.ui.honor.WalkAgainResult
 import org.walktalkmeditate.pilgrim.ui.honor.HonorImportHostViewModel
 import org.walktalkmeditate.pilgrim.ui.honor.HonorOverviewViewModel
+import org.walktalkmeditate.pilgrim.ui.honor.LocalHonorLinkToast
 import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.PilgrimageRouteViewModel
 import org.walktalkmeditate.pilgrim.ui.home.HomeScreen
 import org.walktalkmeditate.pilgrim.ui.meditation.MeditationScreen
@@ -246,7 +247,7 @@ fun PilgrimNavHost(
     val honorHost: HonorImportHostViewModel? = if (honorEnabled) hiltViewModel() else null
 
     val appHazeState = remember { HazeState() }
-    CompositionLocalProvider(LocalAppHazeState provides appHazeState) {
+    CompositionLocalProvider(LocalAppHazeState provides appHazeState, LocalHonorLinkToast provides honorHost?.linkToast) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors.parchment,
@@ -941,18 +942,30 @@ internal fun routeLinkLanding(backStack: List<String>, parkedBehindSummary: Bool
     }
 }
 
+/** The Honor routes that are dialogs: each sheet draws the link toast inside its own window (stage-links spec Q6). */
+private val HONOR_SHEET_ROUTES = setOf(
+    Routes.HONOR_WAYS,
+    Routes.HONOR_OWN_WALKS,
+    Routes.HONOR_PILGRIMAGES,
+    Routes.HONOR_PILGRIMAGE_PATTERN,
+    Routes.HONOR_ROUTE_LINK_PATTERN,
+)
+
 /**
  * Whether the app-wide toast shows over [backStack]'s screen. During a
  * walk only the walk screen shows it: not meditation (owner decision 3,
  * matching iOS's toast hidden under the meditation cover), nor anything
- * over it. An overview hides it, as iOS's overview sheet covers its toast;
- * the summary's sheet, a window of its own, covers it by itself.
+ * over it. An Honor sheet draws its own inside its window, so this one
+ * hides behind it and one toast shows at a time. The overview, a screen in
+ * this window, shows it, as iOS repeats the toast inside its overview
+ * sheet (`MainTabView.swift:77@3b78728`). The summary's sheet, a window of
+ * its own, covers it, as iOS's summary sheet carries none (Q6, option A).
  */
 internal fun linkToastShows(backStack: List<String>): Boolean {
     val current = backStack.lastOrNull() ?: return false
     return when {
         Routes.ACTIVE_WALK in backStack -> current == Routes.ACTIVE_WALK
-        current == Routes.HONOR_OVERVIEW_PATTERN -> false
+        current in HONOR_SHEET_ROUTES -> false
         else -> true
     }
 }

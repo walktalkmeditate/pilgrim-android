@@ -306,16 +306,27 @@ class PilgrimNavHostTest {
         )
     }
 
+    // Stage-links spec Q6: the overview shows the Activity's toast now; each Honor sheet draws its own.
     @Test
-    fun `the one link toast shows on every tab and the walk screen, but not over a sitting or an overview`() {
+    fun `the one link toast shows on every tab, the walk screen and an overview, but not over a sitting or an Honor sheet`() {
         assertTrue(linkToastShows(listOf(Routes.PATH, Routes.ACTIVE_WALK)))
         assertFalse(linkToastShows(listOf(Routes.PATH, Routes.ACTIVE_WALK, Routes.MEDITATION)))
         assertFalse(linkToastShows(listOf(Routes.PATH, Routes.ACTIVE_WALK, Routes.MEDITATION, Routes.SOUNDSCAPE_PICKER)))
         assertTrue("under the recovery banner, in the same host", linkToastShows(listOf(Routes.PATH)))
         assertTrue(linkToastShows(listOf(Routes.PATH, Routes.HOME)))
         assertTrue(linkToastShows(listOf(Routes.PATH, Routes.SETTINGS)))
-        assertFalse(linkToastShows(listOf(Routes.PATH, Routes.HONOR_OVERVIEW_PATTERN)))
-        assertTrue("under the summary's own window", linkToastShows(listOf(Routes.PATH, Routes.WALK_SUMMARY_PATTERN)))
+        assertTrue(
+            "the overview is a screen in this window, as iOS repeats the toast in its overview sheet",
+            linkToastShows(listOf(Routes.PATH, Routes.HONOR_OVERVIEW_PATTERN)),
+        )
+        assertTrue("under the summary's own window (Q6, option A)", linkToastShows(listOf(Routes.PATH, Routes.WALK_SUMMARY_PATTERN)))
+        listOf(
+            Routes.HONOR_WAYS,
+            Routes.HONOR_OWN_WALKS,
+            Routes.HONOR_PILGRIMAGES,
+            Routes.HONOR_PILGRIMAGE_PATTERN,
+            Routes.HONOR_ROUTE_LINK_PATTERN,
+        ).forEach { assertFalse("the sheet draws its own: $it", linkToastShows(listOf(Routes.PATH, it))) }
         assertFalse(linkToastShows(emptyList()))
     }
 
