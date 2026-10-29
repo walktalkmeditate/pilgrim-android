@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.honor.pilgrimage
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,7 +16,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -106,10 +109,20 @@ fun PilgrimageRouteContent(
     alert: PilgrimageRouteAlert?,
     actions: PilgrimageRouteActions,
     modifier: Modifier = Modifier,
+    scrollTarget: Int? = null,
+    onScrollConsumed: () -> Unit = {},
+    listState: LazyListState = rememberLazyListState(),
     leading: @Composable () -> Unit = { RouteBackButton(actions.onBack) },
 ) {
     val page = (state as? PilgrimageRouteUiState.Ready)?.page
     val busy = page != null && PilgrimageRouteModel.isBusy(phase, tilesPhase, page.isHeld)
+    val shownPage by rememberUpdatedState(page)
+    val scrolled by rememberUpdatedState(onScrollConsumed)
+    LaunchedEffect(scrollTarget) {
+        val target = scrollTarget ?: return@LaunchedEffect
+        shownPage?.let { PilgrimageRouteModel.stageListPosition(it, target) }?.let { listState.animateScrollToCentre(it) }
+        scrolled()
+    }
     HonorSheetFrame(
         title = page?.entry?.name.orEmpty(),
         leading = leading,
@@ -123,7 +136,7 @@ fun PilgrimageRouteContent(
             // The catalog is read again after a process death; the sheet keeps its size meanwhile.
             Box(Modifier.fillMaxSize())
         } else {
-            RouteSections(page, phase, tilesPhase, mapsRow, units, busy, actions)
+            RouteSections(page, phase, tilesPhase, mapsRow, units, busy, actions, listState)
         }
     }
     if (page != null && alert != null) RouteAlert(alert, page, actions)
@@ -158,8 +171,9 @@ private fun RouteSections(
     units: UnitSystem,
     busy: Boolean,
     actions: PilgrimageRouteActions,
+    listState: LazyListState,
 ) {
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
+    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
         item(key = "header") { HeaderSection(page, phase, tilesPhase, mapsRow, units, busy, actions) }
         if (page.isInstalled) {
             item(key = "next") {
@@ -541,6 +555,7 @@ private fun PilgrimageRouteSheetBody(
     val mapsRow by viewModel.mapsRow.collectAsStateWithLifecycle()
     val units by viewModel.units.collectAsStateWithLifecycle()
     val alert by viewModel.alert.collectAsStateWithLifecycle()
+    val scrollTarget by viewModel.scrollTarget.collectAsStateWithLifecycle()
     val leaving by rememberUpdatedState(leave)
     val openStage by rememberUpdatedState(onOpenStage)
     val gone = state == PilgrimageRouteUiState.Gone
@@ -572,8 +587,24 @@ private fun PilgrimageRouteSheetBody(
             onSaveMaps = viewModel::onSaveMaps,
             onCancelMaps = viewModel::onCancelMaps,
         ),
+        scrollTarget = scrollTarget,
+        onScrollConsumed = viewModel::consumeScrollTarget,
         leading = { leading(goBack) },
     )
+}
+
+/**
+ * SwiftUI's `scrollTo(_, anchor: .center)` (`PilgrimageRouteView.swift:117-125@3b78728`):
+ * the row brought into view, then its centre moved onto the viewport's,
+ * both with Compose's default spring, as iOS's `withAnimation` names no
+ * duration. A row near the end stops where the list does, as `.center`
+ * clamps.
+ */
+internal suspend fun LazyListState.animateScrollToCentre(position: Int) {
+    animateScrollToItem(position)
+    val row = layoutInfo.visibleItemsInfo.firstOrNull { it.index == position } ?: return
+    val viewportCentre = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2
+    animateScrollBy((row.offset + row.size / 2 - viewportCentre).toFloat())
 }
 
 internal const val STAGE_CIRCLE_TAG = "pilgrimage-stage-circle"

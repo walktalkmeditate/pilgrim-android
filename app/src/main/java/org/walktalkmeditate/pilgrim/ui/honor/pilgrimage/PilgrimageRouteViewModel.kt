@@ -152,6 +152,22 @@ object PilgrimageRouteModel {
         (page.ledger ?: PilgrimageLedger(page.entry.id)).next(page.entry.stageCount)?.index
             ?: page.stages.firstOrNull()?.index
 
+    /**
+     * Where [stageIndex]'s row sits in the route page's list, which iOS
+     * scrolls to by `.id(stage.index)` (`PilgrimageRouteView.swift:283-285@3b78728`):
+     * after the header, the next row on the installed route, and the
+     * stages header (`RouteSections`), at the stage's place in the list.
+     * Null for a stage the list doesn't hold.
+     */
+    fun stageListPosition(page: PilgrimageRoutePage, stageIndex: Int): Int? {
+        val position = page.stages.indexOfFirst { it.index == stageIndex }
+        if (position < 0) return null
+        return position + if (page.isInstalled) ROWS_ABOVE_INSTALLED_STAGES else ROWS_ABOVE_STAGES
+    }
+
+    private const val ROWS_ABOVE_STAGES = 2
+    private const val ROWS_ABOVE_INSTALLED_STAGES = 3
+
     fun buttonLabel(resources: Resources, isInstalled: Boolean, hasUpdate: Boolean): String = resources.getString(
         when {
             !isInstalled -> R.string.pilgrimage_route_download
