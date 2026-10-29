@@ -111,8 +111,11 @@
 
                  Honor links (plan U27, in every build since the 2.0.0 flip):
                  iOS associates only the honor host, every path
-                 (`applinks:honor.pilgrimapp.org`, the worker's `"/*"`): a path
-                 that doesn't parse opens the app and does nothing. The walk
+                 (`applinks:honor.pilgrimapp.org`, the worker's `"/*"`): a
+                 share id or a `/{routeId}/{n}` stage link opens what it
+                 names; any other path opens the app and says "this link
+                 needs a newer Pilgrim"; the bare root opens the app and
+                 does nothing (`HonorLink.swift:22-32@3b78728`). The walk
                  host is never claimed, so a tapped walk link opens the
                  browser and imports only when pasted (AE4). -->
             <intent-filter android:autoVerify="true">
