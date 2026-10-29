@@ -159,7 +159,7 @@ class WayCodecTest {
         val rest = WayMoment(id = "rest-1", frac = 0.5, at = null, kind = WayMomentKind.Rest(minutes = 3))
         val way = way(source = WaySource.OwnWalk("e621e1f8-c36c-495a-93fc-0c247a3e6e5f"), moments = listOf(rest))
         val json = WayJson.encode(way)
-        val omitted = listOf("spans", "marks", "stage", "tzIdentifier", "expires", "weather")
+        val omitted = listOf("spans", "marks", "stage", "stampHours", "tzIdentifier", "expires", "weather")
         for (key in omitted + listOf("alt", "at", "transcript", "place")) {
             assertFalse("nil $key stays off the wire", json.contains("\"$key\""))
         }
@@ -343,6 +343,23 @@ class WayCodecTest {
     fun `a non-finite number fails to encode, as JSONEncoder does`() {
         val broken = way(source = WaySource.OwnWalk("x")).copy(totalDistanceMeters = Double.NaN)
         assertThrows(SerializationException::class.java) { WayJson.encode(broken) }
+    }
+
+    /**
+     * iOS `Way.stampHours` (`Way.swift:249@e551b11`): last, optional, sorted on the wire,
+     * and absent from older files.
+     */
+    @Test
+    fun `a stage's stamp hours round-trip in sorted keys, and a way json written before them decodes with none`() {
+        val way = way(source = WaySource.Pilgrimage(routeId = "shikoku-88-awa", stageIndex = 0))
+            .copy(stampHours = WayStampHours(opensMinutes = 480, closesMinutes = 1020))
+
+        val json = WayJson.encode(way)
+
+        val written = ",\"stampHours\":{\"closesMinutes\":1020,\"opensMinutes\":480}"
+        assertTrue(json, json.contains(written))
+        assertEquals(way, WayJson.decode(json))
+        assertNull(WayJson.decode(json.replace(written, "")).stampHours)
     }
 
     private fun way(source: WaySource, moments: List<WayMoment> = emptyList()): Way = Way(
