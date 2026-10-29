@@ -114,9 +114,13 @@ class HonorWaysViewModel internal constructor(
         }
     }
 
-    /** iOS's `onPaste`: parses again, and opens only what parses. */
+    /** iOS's `onPaste` (`MainTabView.swift:60-62@3b78728`): parses again and opens only what parses, never through the link routing. */
     fun open(text: String) {
-        (HonorLink.parse(text = text) as? HonorLinkDestination.Share)?.let { imports.openWay(it.id) }
+        when (val link = HonorLink.parse(text = text)) {
+            is HonorLinkDestination.Share -> imports.openWay(link.id)
+            is HonorLinkDestination.Stage -> imports.openStage(link.routeId, link.index)
+            HonorLinkDestination.Unrecognised, null -> Unit
+        }
     }
 
     fun consumeFetched(wayId: String) {

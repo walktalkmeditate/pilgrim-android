@@ -11,6 +11,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -55,6 +56,7 @@ class HonorWaysViewModelTest {
     private lateinit var store: WayStore
     private val importScope = CoroutineScope(SupervisorJob() + dispatcher)
     private val asked = mutableListOf<String>()
+    private val catalogLoads = mutableListOf<Boolean>()
     private var held: Continuation<Way>? = null
     private val imports by lazy {
         HonorImportCoordinator(
@@ -65,6 +67,10 @@ class HonorWaysViewModelTest {
             honorEnabled = true,
             scope = importScope,
             media = { WayMediaDownloader(store, FakeWayMediaDownloadScheduler(), importScope, dispatcher) },
+            loadCatalog = { force ->
+                catalogLoads += force
+                awaitCancellation()
+            },
         )
     }
     private val viewModels = mutableListOf<HonorWaysViewModel>()
@@ -177,6 +183,21 @@ class HonorWaysViewModelTest {
 
         assertEquals(listOf("Qoi4YmPHLN"), asked)
         assertEquals(HonorImportState.Fetching, vm.importState.value)
+    }
+
+    // iOS's `onPaste` (`MainTabView.swift:60-62@3b78728`): a stage link resolves; what the routing would answer opens nothing.
+    @Test
+    fun `Open on a stage link resolves the stage, and a link the paste can't open opens nothing`() = runTest(dispatcher) {
+        val vm = sheet()
+
+        vm.open("honor.pilgrimapp.org/camino-frances/0")
+        vm.open("honor.pilgrimapp.org/abc")
+        assertTrue(catalogLoads.isEmpty())
+
+        vm.open(" https://honor.pilgrimapp.org/camino-frances/14\n")
+
+        assertEquals("no catalog in hand: one unforced load", listOf(false), catalogLoads)
+        assertTrue("no share import", asked.isEmpty())
     }
 
     private fun way(id: String, title: String, source: WaySource = WaySource.Share(id.removePrefix("share:"), "https://walk.pilgrimapp.org/x")) = Way(
