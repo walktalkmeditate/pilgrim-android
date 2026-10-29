@@ -9,11 +9,14 @@ package org.walktalkmeditate.pilgrim.domain.honor
  * gates. Parity spec B §8.
  *
  * It also watches a pilgrimage stage's water (pilgrimage-stage spec P3
- * §2): only on-way water marks, each spoken once, at most one per
- * [HonorTuning.MARK_QUIET_SECONDS] of the engine clock with the first
- * free, and only within [HonorTuning.MARK_AHEAD_METERS] ahead along the
- * line while the walker is on the Way. It reads no gate, and runs only on
- * a fix. Own and shared Ways carry no marks, so for them it never speaks.
+ * §2): only on-way water marks, each spoken once, within
+ * [HonorTuning.MARK_AHEAD_METERS] ahead along the line while the walker is
+ * on the Way. Clocks of engine seconds keep the caption line quiet (iOS PR
+ * #91, `HonorMomentTracker.swift:62-81@e551b11`): water's own hour
+ * ([HonorTuning.MARK_QUIET_SECONDS]) and a minute between any two notices
+ * ([HonorTuning.NOTICE_GAP_SECONDS]), each first notice free. It reads no
+ * gate, and runs only on a fix. Own and shared Ways carry no marks, so for
+ * them it never speaks.
  */
 class HonorMomentTracker(
     moments: List<WayMoment>,
@@ -45,14 +48,16 @@ class HonorMomentTracker(
 
     /**
      * What a revival needs back: the moments reached, the voices waiting in
-     * queue order, the water marks spoken, and the engine clock at the last
-     * notice (null while the first is still free).
+     * queue order, the water marks spoken, and the notice clocks, each null
+     * while its first notice is still free (a null restored stays null, never 0).
      */
     data class Snapshot(
         val reached: Set<String>,
         val queue: List<String>,
         val firedMarks: Set<String>,
         val lastNoticeSeconds: Double?,
+        val lastWaterSeconds: Double?,
+        val lastStampSeconds: Double?,
     )
 
     /**
@@ -86,11 +91,21 @@ class HonorMomentTracker(
     private val firedMarks = mutableSetOf<String>()
 
     /**
-     * The engine clock at the last notice; null means the first is free. iOS
-     * names it `lastMarkSeconds` (`HonorMomentTracker.swift:37@7c200bf`); the
-     * name is the one iOS PR #91 gives it, a clock that notice kinds share.
+     * The engine clock at the last notice of either kind, read only for the
+     * minute that keeps two notices off the caption line at once; null means
+     * the line is free (iOS `lastNoticeSeconds`, `HonorMomentTracker.swift:68-73@e551b11`).
+     * That minute can cost one of them, as iOS documents and intends: a
+     * fountain under about 80 m ahead when another notice speaks is passed
+     * before the minute is up, and a temple 1.00-1.08 km ahead is inside the
+     * kilometre by then.
      */
     private var lastNoticeSeconds: Double? = null
+
+    /** Water's own hour: the engine clock at the last water notice; null means the first is free (`:64-67`). */
+    private var lastWaterSeconds: Double? = null
+
+    /** The temples' ten minutes: the engine clock at the last temple notice; null means the first is free (`:80-81`). */
+    private var lastStampSeconds: Double? = null
 
     var playing: WayMoment? = null
         private set
@@ -172,6 +187,8 @@ class HonorMomentTracker(
         queue = queue.map { it.id },
         firedMarks = firedMarks.toSet(),
         lastNoticeSeconds = lastNoticeSeconds,
+        lastWaterSeconds = lastWaterSeconds,
+        lastStampSeconds = lastStampSeconds,
     )
 
     /**
@@ -189,6 +206,8 @@ class HonorMomentTracker(
         firedMarks.clear()
         snapshot.firedMarks.filterTo(firedMarks) { it in watched }
         lastNoticeSeconds = snapshot.lastNoticeSeconds
+        lastWaterSeconds = snapshot.lastWaterSeconds
+        lastStampSeconds = snapshot.lastStampSeconds
         playing = null
         isVoicePaused = false
     }
@@ -201,14 +220,16 @@ class HonorMomentTracker(
     }
 
     /**
-     * iOS `waterAhead` (`HonorMomentTracker.swift:124-139@7c200bf`): the
+     * iOS `waterAhead` (`HonorMomentTracker.swift:175-191@e551b11`): the
      * nearest unfired water the walker is about to reach. Never one already
-     * behind them, never off the Way, and at most one an hour of walking;
-     * the marks skipped inside the quiet hour stay silent pins.
+     * behind them, never off the Way, never inside the minute after another
+     * notice, and at most one an hour of walking; the marks skipped inside
+     * the quiet hour stay silent pins. A water notice writes its own hour
+     * and the shared minute.
      */
     private fun waterAhead(progressFrac: Double, activeSeconds: Double, isOnWay: Boolean): List<Action> {
-        if (!isOnWay || marks.isEmpty() || !(geometry.totalMeters > 0)) return emptyList()
-        val last = lastNoticeSeconds
+        if (!isOnWay || marks.isEmpty() || !(geometry.totalMeters > 0) || !isLineFree(activeSeconds)) return emptyList()
+        val last = lastWaterSeconds
         if (last != null && activeSeconds - last < HonorTuning.MARK_QUIET_SECONDS) return emptyList()
         for (mark in marks) {
             if (mark.id in firedMarks) continue
@@ -216,10 +237,17 @@ class HonorMomentTracker(
             if (!(ahead >= 0)) continue
             if (!(ahead <= HonorTuning.MARK_AHEAD_METERS)) break
             firedMarks += mark.id
+            lastWaterSeconds = activeSeconds
             lastNoticeSeconds = activeSeconds
             return listOf(Action.MarkAhead(mark, meters = ahead))
         }
         return emptyList()
+    }
+
+    /** One notice on the caption line at a time, whatever its kind (`:225-229`): exactly a minute is free. */
+    private fun isLineFree(activeSeconds: Double): Boolean {
+        val last = lastNoticeSeconds ?: return true
+        return activeSeconds - last >= HonorTuning.NOTICE_GAP_SECONDS
     }
 
     private fun place(moment: WayMoment): WayCoordinate = moment.at ?: geometry.coordinate(atFrac = moment.frac)

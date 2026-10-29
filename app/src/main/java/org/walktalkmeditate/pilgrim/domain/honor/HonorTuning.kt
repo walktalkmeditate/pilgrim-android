@@ -36,4 +36,12 @@ object HonorTuning {
 
     /** Stage-only: at most one water caption per this many seconds of the engine clock. */
     const val MARK_QUIET_SECONDS = 3600.0
+
+    /**
+     * The least walking between any two notices on the caption line, water
+     * or temple (`HonorTuning.swift:33-36@e551b11`): the line holds a notice
+     * for 20 s, and a minute keeps one from replacing another still being
+     * read, or two taps landing together.
+     */
+    const val NOTICE_GAP_SECONDS = 60.0
 }

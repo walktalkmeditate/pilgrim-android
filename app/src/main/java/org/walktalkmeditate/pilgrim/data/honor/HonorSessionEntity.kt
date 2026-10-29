@@ -23,9 +23,10 @@ enum class HonorFinishKind { CLEAN, RECOVERED }
  * The engine's `activeDuration` is not here: it is the walk's elapsed
  * time minus pauses, which the walk's own events already give. Nor are
  * the published `isOnWay`, `offWayMeters`, `distanceRemainingMeters`, and
- * `companionFrac`, which the next fix or tick recomputes. A stage's water
- * marks spoken are rows of `honor_notices`; their quiet clock is
- * [lastNoticeSeconds] (schema 12, pilgrimage-stage spec Annex A.5.2).
+ * `companionFrac`, which the next fix or tick recomputes. A stage's
+ * notices spoken are rows of `honor_notices`; the clocks between them are
+ * [lastNoticeSeconds], [lastWaterSeconds] and [lastStampSeconds] (schema
+ * 13, stamp-closing spec owner decision 1).
  *
  * Times are epoch milliseconds on the wall clock the engine's timers use;
  * the `_seconds` columns are active-duration seconds, as in the engine.
@@ -120,9 +121,11 @@ data class HonorSessionEntity(
     @ColumnInfo(name = "finish_kind")
     val finishKind: HonorFinishKind? = null,
     /**
-     * The engine clock at the last notice, in seconds; null while the first
-     * is free. A water caption writes it today; iOS PR #91's temple notice
-     * shares the clock (Annex A.5.2).
+     * The engine clock at the last notice of either kind, in seconds, read
+     * only for the minute between notices (iOS `lastNoticeSeconds`,
+     * `HonorMomentTracker.swift:68-73@e551b11`); null while none has spoken.
+     * Through schema 12 only water wrote it, as water's hour, which schema
+     * 13 copied into [lastWaterSeconds].
      */
     @ColumnInfo(name = "last_notice_seconds")
     val lastNoticeSeconds: Double? = null,
@@ -148,6 +151,12 @@ data class HonorSessionEntity(
     val stageName: String? = null,
     @ColumnInfo(name = "stage_distance_km")
     val stageDistanceKm: Double? = null,
+    /** Water's own hour: the engine clock at the last water notice, in seconds; null while the first is free. */
+    @ColumnInfo(name = "last_water_seconds")
+    val lastWaterSeconds: Double? = null,
+    /** The temples' ten minutes: the engine clock at the last temple notice, in seconds; null while the first is free. */
+    @ColumnInfo(name = "last_stamp_seconds")
+    val lastStampSeconds: Double? = null,
 )
 
 /**

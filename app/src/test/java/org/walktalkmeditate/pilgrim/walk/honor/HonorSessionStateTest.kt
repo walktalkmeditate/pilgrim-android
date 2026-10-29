@@ -75,6 +75,36 @@ class HonorSessionStateTest {
     }
 
     @Test
+    fun `the row's three clocks go to the tracker and come back, each its own`() {
+        val session = HonorSessionEntity(
+            walkId = 1L,
+            wayId = HonorHarness.STAGE_ID,
+            sourceKind = HonorSourceKind.PILGRIMAGE,
+            voicesEnabled = false,
+            softTapEnabled = false,
+            lastNoticeSeconds = 2_400.0,
+            lastWaterSeconds = 1_820.4,
+            lastStampSeconds = 2_400.0,
+        )
+
+        val snapshot = session.engineSnapshot(rows = emptyList(), notices = emptyList())
+        val state = snapshot.toEngineState(walkId = 1L)
+
+        assertEquals(
+            listOf<Double?>(2_400.0, 1_820.4, 2_400.0),
+            listOf(
+                snapshot.tracker.lastNoticeSeconds,
+                snapshot.tracker.lastWaterSeconds,
+                snapshot.tracker.lastStampSeconds,
+            ),
+        )
+        assertEquals(
+            listOf<Double?>(2_400.0, 1_820.4, 2_400.0),
+            listOf(state.lastNoticeSeconds, state.lastWaterSeconds, state.lastStampSeconds),
+        )
+    }
+
+    @Test
     fun `a session row and its moment rows restore the engine where it stood`() {
         val way = HonorHarness.way()
         var now = 5_000_000L
@@ -109,6 +139,8 @@ class HonorSessionStateTest {
             softTapArmed = state.softTapArmed,
             arrivalInsideFixes = state.arrivalInsideFixes,
             lastNoticeSeconds = state.lastNoticeSeconds,
+            lastWaterSeconds = state.lastWaterSeconds,
+            lastStampSeconds = state.lastStampSeconds,
         )
         val rows = snapshot.tracker.reached.map { HonorMomentStateEntity(walkId = 1L, momentId = it, reachedAt = 1L) }
 

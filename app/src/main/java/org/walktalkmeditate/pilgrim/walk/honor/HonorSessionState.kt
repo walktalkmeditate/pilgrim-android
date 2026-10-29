@@ -190,6 +190,8 @@ internal fun HonorSessionEntity.engineSnapshot(
         queue = rows.filter { it.queuePosition != null }.sortedBy { it.queuePosition }.map { it.momentId },
         firedMarks = notices.filter { it.kind == HonorNoticeKind.WATER }.mapTo(mutableSetOf()) { it.refId },
         lastNoticeSeconds = lastNoticeSeconds,
+        lastWaterSeconds = lastWaterSeconds,
+        lastStampSeconds = lastStampSeconds,
     ),
 )
 
@@ -213,6 +215,8 @@ internal fun HonorEngine.Snapshot.toEngineState(walkId: Long) = HonorEngineState
     softTapArmed = softTapArmed,
     arrivalInsideFixes = arrivalInsideFixes,
     lastNoticeSeconds = tracker.lastNoticeSeconds,
+    lastWaterSeconds = tracker.lastWaterSeconds,
+    lastStampSeconds = tracker.lastStampSeconds,
 )
 
 /**

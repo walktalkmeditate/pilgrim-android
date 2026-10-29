@@ -442,6 +442,7 @@ class HonorMomentTrackerTest {
         live.waterAt(100.0, progress = 0.1, clock = 42.0)
         val snapshot = live.snapshot()
         assertEquals(setOf("a") to 42.0, snapshot.firedMarks to snapshot.lastNoticeSeconds)
+        assertEquals("water's own hour", 42.0, snapshot.lastWaterSeconds!!, 0.0)
 
         val revived = markTracker(water("a", frac = 0.3), water("b", frac = 0.5))
         revived.restore(snapshot.copy(firedMarks = snapshot.firedMarks + "a-food-mark"))
@@ -458,12 +459,73 @@ class HonorMomentTrackerTest {
     @Test
     fun `a restored null clock leaves the first notice free`() {
         val t = markTracker(water("a", frac = 0.5))
-        t.restore(HonorMomentTracker.Snapshot(emptySet(), emptyList(), emptySet(), lastNoticeSeconds = null))
+        t.restore(
+            HonorMomentTracker.Snapshot(
+                reached = emptySet(),
+                queue = emptyList(),
+                firedMarks = emptySet(),
+                lastNoticeSeconds = null,
+                lastWaterSeconds = null,
+                lastStampSeconds = null,
+            ),
+        )
         assertEquals(
             "a minute in: a clock restored as 0 would still be inside its hour",
             listOf("a"),
             markAhead(t.waterAt(250.0, progress = 0.25, clock = 60.0)),
         )
+    }
+
+    // iOS PR #91's clocks (`HonorMomentTracker.swift:62-81,179-189,226-229@e551b11`)
+
+    private fun clocks(notice: Double?, water: Double?, stamp: Double?) = HonorMomentTracker.Snapshot(
+        reached = emptySet(),
+        queue = emptyList(),
+        firedMarks = emptySet(),
+        lastNoticeSeconds = notice,
+        lastWaterSeconds = water,
+        lastStampSeconds = stamp,
+    )
+
+    @Test
+    fun `water writes its own hour and the shared minute, and no temple clock`() {
+        val t = markTracker(water("a", frac = 0.3))
+
+        t.waterAt(100.0, progress = 0.1, clock = 42.0)
+
+        val snapshot = t.snapshot()
+        assertEquals(
+            listOf<Double?>(42.0, 42.0, null),
+            listOf(snapshot.lastNoticeSeconds, snapshot.lastWaterSeconds, snapshot.lastStampSeconds),
+        )
+    }
+
+    /** The shared minute binds water too, though in a water-only walk its own hour always covers it. */
+    @Test
+    fun `a notice under a minute ago holds water, even with water's own hour free`() {
+        val t = markTracker(water("a", frac = 0.5))
+        t.restore(clocks(notice = 100.0, water = null, stamp = 100.0))
+
+        assertEquals(
+            "30 s after another notice",
+            emptyList<String>(),
+            markAhead(t.waterAt(250.0, progress = 0.25, clock = 130.0)),
+        )
+        assertEquals(
+            "exactly a minute after it the line is free",
+            listOf("a"),
+            markAhead(t.waterAt(260.0, progress = 0.26, clock = 160.0)),
+        )
+    }
+
+    @Test
+    fun `a restore keeps each clock its own, and a null stays null`() {
+        val t = markTracker(water("a", frac = 0.5))
+        val restored = clocks(notice = 500.0, water = null, stamp = 450.0)
+
+        t.restore(restored)
+
+        assertEquals(restored, t.snapshot())
     }
 
     @Test

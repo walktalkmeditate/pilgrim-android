@@ -71,6 +71,8 @@ class HonorDaoTest {
         softTapArmed = true,
         arrivalInsideFixes = 2,
         lastNoticeSeconds = null,
+        lastWaterSeconds = null,
+        lastStampSeconds = null,
     )
 
     @Test
@@ -155,6 +157,25 @@ class HonorDaoTest {
         assertEquals(
             listOf<Any?>("camino-frances", 3, "Larrasoaña to Pamplona", 15.6),
             listOf(row.stageRouteId, row.stageIndex, row.stageName, row.stageDistanceKm),
+        )
+    }
+
+    @Test
+    fun `an engine update writes all three notice clocks, each to its own column`() = runTest {
+        dao.insertSession(session())
+
+        dao.updateEngineState(
+            engine(progress = 0.4).copy(
+                lastNoticeSeconds = 2_400.0,
+                lastWaterSeconds = 1_820.4,
+                lastStampSeconds = 2_400.0,
+            ),
+        )
+
+        val row = dao.getSession(walkId)!!
+        assertEquals(
+            listOf<Double?>(2_400.0, 1_820.4, 2_400.0),
+            listOf(row.lastNoticeSeconds, row.lastWaterSeconds, row.lastStampSeconds),
         )
     }
 

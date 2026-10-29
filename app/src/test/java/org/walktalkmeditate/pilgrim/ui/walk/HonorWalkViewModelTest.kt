@@ -1882,6 +1882,7 @@ class HonorWalkViewModelTest {
                 offWayActiveSeconds = session.offWayActiveSeconds, lastReacquireAttempt = session.lastReacquireAttempt,
                 softTapSince = null, softTapArmed = false, arrivalInsideFixes = session.arrivalInsideFixes,
                 lastNoticeSeconds = session.lastNoticeSeconds,
+                lastWaterSeconds = session.lastWaterSeconds, lastStampSeconds = session.lastStampSeconds,
             ),
         )
     }

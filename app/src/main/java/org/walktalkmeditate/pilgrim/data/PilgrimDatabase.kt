@@ -50,7 +50,7 @@ import org.walktalkmeditate.pilgrim.data.seek.SeekSessionEntity
         SeekSessionEntity::class,
         HonorNoticeEntity::class,
     ],
-    version = 12,
+    version = 13,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
@@ -381,7 +381,8 @@ abstract class PilgrimDatabase : RoomDatabase() {
          * is Room's own for v12, copied from `app/schemas/.../12.json`.
          *
          * - `last_notice_seconds`: the engine clock at the last notice;
-         *   NULL means the first is free.
+         *   NULL means the first is free. Water's hour through schema 12;
+         *   schema 13 makes it the shared minute.
          * - `arrival_walked_meters`: the walked distance arrival froze.
          * - `stage_route_id`, `stage_index`, `stage_name`,
          *   `stage_distance_km`: the stage walked, for the ledger.
@@ -411,6 +412,25 @@ abstract class PilgrimDatabase : RoomDatabase() {
         }
 
         /**
+         * Phase 22 (iOS PR #91): a stage's three notice clocks (stamp-closing
+         * spec, owner decision 1). Two nullable columns on `honor_sessions`.
+         * `last_notice_seconds` was water's hour, the only notice schema 12
+         * wrote, so it is copied into `last_water_seconds` exactly, and from
+         * here on it is the minute shared by every notice. A row with no
+         * notice yet keeps every clock NULL, the first notice free.
+         *
+         * Schema 12 shipped in 2.0.0, so it is never edited: this is the
+         * only way its tables change.
+         */
+        val MIGRATION_12_13: Migration = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `honor_sessions` ADD COLUMN `last_water_seconds` REAL")
+                db.execSQL("ALTER TABLE `honor_sessions` ADD COLUMN `last_stamp_seconds` REAL")
+                db.execSQL("UPDATE `honor_sessions` SET `last_water_seconds` = `last_notice_seconds`")
+            }
+        }
+
+        /**
          * Every manual migration, in order — the one list the production
          * builder ([org.walktalkmeditate.pilgrim.di.DatabaseModule]) and the
          * migration tests register. 1→2 is the AutoMigration declared on
@@ -429,6 +449,7 @@ abstract class PilgrimDatabase : RoomDatabase() {
                 MIGRATION_9_10,
                 MIGRATION_10_11,
                 MIGRATION_11_12,
+                MIGRATION_12_13,
             )
     }
 }

@@ -29,6 +29,8 @@ data class HonorEngineState(
     @ColumnInfo(name = "soft_tap_armed") val softTapArmed: Boolean,
     @ColumnInfo(name = "arrival_inside_fixes") val arrivalInsideFixes: Int,
     @ColumnInfo(name = "last_notice_seconds") val lastNoticeSeconds: Double?,
+    @ColumnInfo(name = "last_water_seconds") val lastWaterSeconds: Double?,
+    @ColumnInfo(name = "last_stamp_seconds") val lastStampSeconds: Double?,
 )
 
 /** The playing voice's columns of a session row. */

@@ -48,7 +48,7 @@ import org.walktalkmeditate.pilgrim.domain.seek.SeekEnginePhase
  * can't find the exported schema JSON (the helper is designed for
  * on-device `androidTest` runs).
  *
- * The 8→9, 9→10, 10→11, and 11→12 tests, and the chains from 6, 7, and 8, build the starting version
+ * The 8→9, 9→10, 10→11, 11→12, and 12→13 tests, and the chains from 6, 7, and 8, build the starting version
  * from its exported schema
  * with [MigrationTestDatabases] and open it through `Room.databaseBuilder`
  * with the production [PilgrimDatabase.MIGRATIONS], so Room's schema
@@ -1055,7 +1055,7 @@ class PilgrimDatabaseMigrationTest {
     // ---- 11 → 12: what a pilgrimage stage's walk persists (U35) ----
 
     @Test
-    fun `a v11 database migrates to 12 through Room's identity check and keeps its data`() {
+    fun `a v11 database migrates through 12 and Room's identity check and keeps its data`() {
         MigrationTestDatabases.createAtVersion(context, dbName, version = 11) { db ->
             seedV8World(db)
             db.insertRow(
@@ -1075,9 +1075,9 @@ class PilgrimDatabaseMigrationTest {
         val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
         try {
             val db = room.openHelper.writableDatabase
-            assertEquals(12L, db.longQuery("PRAGMA user_version"))
+            assertEquals(LATEST_VERSION.toLong(), db.longQuery("PRAGMA user_version"))
             assertEquals(
-                MigrationTestDatabases.identityHash(12),
+                MigrationTestDatabases.identityHash(LATEST_VERSION),
                 db.stringQuery("SELECT identity_hash FROM room_master_table WHERE id = 42"),
             )
             assertEquals(WORLD_WALK_COUNT, db.longQuery("SELECT COUNT(*) FROM walks"))
@@ -1147,18 +1147,105 @@ class PilgrimDatabaseMigrationTest {
         assertEquals(SCHEMA_11_IDENTITY_HASH, MigrationTestDatabases.identityHash(11))
     }
 
-    // ---- 8 → 12: the path every 1.5.0 install takes to 2.0.0 ----
+    /** Schema 12 shipped in Android 2.0.0 (code 912), so its export is frozen as schema 11's is. */
+    @Test
+    fun `schema 12's export is byte for byte the one 2_0_0 shipped`() {
+        val export = listOf(File(SCHEMA_12_PATH), File("app", SCHEMA_12_PATH)).first { it.isFile }
+        val sha256 = MessageDigest.getInstance("SHA-256").digest(export.readBytes())
+            .joinToString("") { "%02x".format(it) }
+
+        assertEquals(SCHEMA_12_SHA256, sha256)
+        assertEquals(SCHEMA_12_IDENTITY_HASH, MigrationTestDatabases.identityHash(12))
+    }
+
+    // ---- 12 → 13: the three notice clocks (iOS PR #91; stamp-closing spec, owner decision 1) ----
+
+    /** A 2.0.0 stage row, mid-walk, with water spoken at 1,820.4 s of engine time. */
+    private fun SupportSQLiteDatabase.insertV12StageSession(lastNoticeSeconds: Double?) = insertRow(
+        "honor_sessions",
+        "walk_id" to UNFINISHED_WALK, "way_id" to "pilgrimage:camino-frances:4",
+        "source_kind" to "PILGRIMAGE", "voices_enabled" to 0, "soft_tap_enabled" to 0, "phase" to "WALKING",
+        "start_frac" to 0.1, "anchored_by_fallback" to 0, "anchor_active_seconds" to 12.0,
+        "companion_t0_seconds" to 30.0, "progress_frac" to 0.4, "progress_high_water" to 0.4,
+        "walked_frac" to 0.3, "off_way_active_seconds" to 0.0, "soft_tap_armed" to 1,
+        "arrival_inside_fixes" to 0, "voice_paused" to 0, "voice_rate" to 1.0,
+        "last_command_seq" to 2L, "gate_generation" to 1L, "last_notice_seconds" to lastNoticeSeconds,
+        "stage_route_id" to "camino-frances", "stage_index" to 4, "stage_name" to "Larrasoaña to Pamplona",
+        "stage_distance_km" to 15.6,
+    )
 
     @Test
-    fun `a v8 database with walks, sittings, and cached stats reaches 12 through Room's identity check intact`() {
+    fun `a v12 database migrates through 13, and water's hour is the one clock schema 12 kept`() {
+        MigrationTestDatabases.createAtVersion(context, dbName, version = 12) { db ->
+            seedV8World(db)
+            db.insertV12StageSession(lastNoticeSeconds = 1_820.4)
+            db.insertRow(
+                "honor_notices",
+                "walk_id" to UNFINISHED_WALK, "kind" to "WATER", "ref_id" to "wp-osm-water-node1",
+                "meters" to 280.0, "fired_at" to 21_500_000L,
+            )
+        }
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            val db = room.openHelper.writableDatabase
+            assertEquals(LATEST_VERSION.toLong(), db.longQuery("PRAGMA user_version"))
+            assertEquals(
+                MigrationTestDatabases.identityHash(LATEST_VERSION),
+                db.stringQuery("SELECT identity_hash FROM room_master_table WHERE id = 42"),
+            )
+            runBlocking {
+                val session = room.honorDao().getSession(UNFINISHED_WALK)!!
+                assertEquals("only water wrote it through schema 12", 1_820.4, session.lastWaterSeconds!!, 0.0)
+                assertEquals("and the same value now starts the shared minute", 1_820.4, session.lastNoticeSeconds!!, 0.0)
+                assertNull("no temple has spoken", session.lastStampSeconds)
+                assertEquals(
+                    listOf<Any?>("camino-frances", 4, 0.4),
+                    listOf(session.stageRouteId, session.stageIndex, session.progressFrac),
+                )
+                assertEquals(
+                    listOf("wp-osm-water-node1"),
+                    room.honorDao().getNotices(UNFINISHED_WALK).map { it.refId },
+                )
+            }
+        } finally {
+            room.close()
+        }
+    }
+
+    @Test
+    fun `a v12 row whose first notice is still free migrates with all three clocks free`() {
+        MigrationTestDatabases.createAtVersion(context, dbName, version = 12) { db ->
+            seedV8World(db)
+            db.insertV12StageSession(lastNoticeSeconds = null)
+        }
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            runBlocking {
+                val session = room.honorDao().getSession(UNFINISHED_WALK)!!
+                assertEquals(
+                    listOf<Double?>(null, null, null),
+                    listOf(session.lastNoticeSeconds, session.lastWaterSeconds, session.lastStampSeconds),
+                )
+            }
+        } finally {
+            room.close()
+        }
+    }
+
+    // ---- 8 → 13: the path every 1.5.0 install takes to 2.1.0 ----
+
+    @Test
+    fun `a v8 database with walks, sittings, and cached stats reaches the latest schema through Room's identity check intact`() {
         MigrationTestDatabases.createAtVersion(context, dbName, version = 8) { db -> seedV8World(db) }
 
         val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
         try {
             val db = room.openHelper.writableDatabase
-            assertEquals(12L, db.longQuery("PRAGMA user_version"))
+            assertEquals(LATEST_VERSION.toLong(), db.longQuery("PRAGMA user_version"))
             assertEquals(
-                MigrationTestDatabases.identityHash(12),
+                MigrationTestDatabases.identityHash(LATEST_VERSION),
                 db.stringQuery("SELECT identity_hash FROM room_master_table WHERE id = 42"),
             )
             assertEquals(WORLD_WALK_COUNT, db.longQuery("SELECT COUNT(*) FROM walks"))
@@ -1394,7 +1481,7 @@ class PilgrimDatabaseMigrationTest {
 
         val CANONICAL_UUID = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
-        const val LATEST_VERSION = 12
+        const val LATEST_VERSION = 13
 
         val HONOR_TABLES =
             listOf("honor_sessions", "honor_moment_states", "honor_card_states", "honor_walk_markers", "honor_notices")
@@ -1402,6 +1489,10 @@ class PilgrimDatabaseMigrationTest {
         const val SCHEMA_11_PATH = "schemas/org.walktalkmeditate.pilgrim.data.PilgrimDatabase/11.json"
         const val SCHEMA_11_SHA256 = "32f7f89becff570726cc014064929a24475f5d1cd90b0942e073fafdf340e92d"
         const val SCHEMA_11_IDENTITY_HASH = "878d6530e1d627b0f0ae4ffd2201d58c"
+
+        const val SCHEMA_12_PATH = "schemas/org.walktalkmeditate.pilgrim.data.PilgrimDatabase/12.json"
+        const val SCHEMA_12_SHA256 = "59bf5c4ce0f9eb35981a1baf10abf699ca3bfa778a6d647743e78fc59c9a5aeb"
+        const val SCHEMA_12_IDENTITY_HASH = "6b5cb42e6e0b92d704bdd83b718cf6fd"
 
         val HONOR_SCHEMA_SQL =
             "SELECT group_concat(sql, ';') FROM (SELECT sql FROM sqlite_master " +
