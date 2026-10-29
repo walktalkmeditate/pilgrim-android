@@ -25,6 +25,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.honor.WayError
 import org.walktalkmeditate.pilgrim.data.honor.WayImportException
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageError
 import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.domain.honor.WayPoint
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
@@ -664,6 +665,22 @@ class HonorLinkRouterTest {
         links.at(Routes.PATH, Routes.ACTIVE_WALK)
 
         assertFalse(links.walkScreenUp)
+    }
+
+    // iOS's `showLinkToast` per outcome (`MainCoordinatorView.swift:250-266,296-328@3b78728`).
+    @Test
+    fun `a stage link's lines show even with the Ways sheet up, where a share's failure stays inline`() {
+        assertNull(linkToastFor(HonorImportOutcome.Listed, waysSheetUp = false))
+        assertEquals(HonorLinkToast.Failed(WayError.NOT_FOUND), linkToastFor(HonorImportOutcome.Failed(WayError.NOT_FOUND), waysSheetUp = false))
+        assertNull(linkToastFor(HonorImportOutcome.Failed(WayError.NOT_FOUND), waysSheetUp = true))
+        listOf(false, true).forEach { sheetUp ->
+            assertEquals(HonorLinkToast.ReachingForRoute, linkToastFor(HonorImportOutcome.ReachingForRoute, sheetUp))
+            assertEquals(HonorLinkToast.RouteNotInPilgrim, linkToastFor(HonorImportOutcome.RouteNotInPilgrim, sheetUp))
+            assertEquals(
+                HonorLinkToast.CatalogFailed(PilgrimageError.CATALOG_UNREACHABLE),
+                linkToastFor(HonorImportOutcome.CatalogFailed(PilgrimageError.CATALOG_UNREACHABLE), sheetUp),
+            )
+        }
     }
 
     private fun link(id: String) = Intent(Intent.ACTION_VIEW, Uri.parse("https://honor.pilgrimapp.org/$id"))

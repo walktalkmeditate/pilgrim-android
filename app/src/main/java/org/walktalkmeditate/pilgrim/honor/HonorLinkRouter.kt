@@ -20,6 +20,7 @@ import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.honor.WayError
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageError
 
 /**
  * Where the app is, as the link routing reads it. The nav host reports
@@ -38,13 +39,25 @@ data class HonorLinkScreen(
     val overviewUp: Boolean,
 )
 
-/** What the link toast says (S2 §7.1). The overview and the Ways sheet say the rest inline. */
+/** What the link toast says (S2 §7.1; stage-links spec, Copy). The overview and the Ways sheet say the rest inline. */
 sealed interface HonorLinkToast {
     data object FinishWalkFirst : HonorLinkToast
 
     data object Reaching : HonorLinkToast
 
     data class Failed(val error: WayError) : HonorLinkToast
+
+    /** "reaching for the route…", before each catalog load a stage link makes. */
+    data object ReachingForRoute : HonorLinkToast
+
+    /** "this route isn't in Pilgrim yet": the catalog, forced once, still lacks the route. */
+    data object RouteNotInPilgrim : HonorLinkToast
+
+    /** "this link needs a newer Pilgrim": an honor-host path this build can't read. */
+    data object NeedsNewerPilgrim : HonorLinkToast
+
+    /** The catalog load threw: its pilgrimage line. */
+    data class CatalogFailed(val error: PilgrimageError) : HonorLinkToast
 }
 
 /**
@@ -214,15 +227,8 @@ class HonorLinkRouter internal constructor(
         }
     }
 
-    /** iOS `openWay`'s two answers: a listed Way clears the toast; a failure shows unless the sheet says it inline. */
     private fun answer(outcome: HonorImportOutcome) {
-        val sheetUp = screen?.waysSheetUp == true
-        showToast(
-            when (outcome) {
-                HonorImportOutcome.Listed -> null
-                is HonorImportOutcome.Failed -> HonorLinkToast.Failed(outcome.error).takeUnless { sheetUp }
-            },
-        )
+        showToast(linkToastFor(outcome, waysSheetUp = screen?.waysSheetUp == true))
     }
 
     /** iOS `showLinkToast`: each text cancels the pending expiry and starts its own; null clears at once. */
@@ -289,4 +295,19 @@ internal fun carriesLinkData(intent: Intent?): Boolean = intent?.action == Inten
 internal fun linkConsumed(intent: Intent): Intent = Intent(intent).apply {
     data = null
     replaceExtras(Bundle())
+}
+
+/**
+ * iOS's `showLinkToast` for each way an import or a stage link ends
+ * (`MainCoordinatorView.swift:250-266,296-328@3b78728`): a listed Way or a
+ * landed route clears the toast; a share's failure shows unless the Ways
+ * sheet says it inline; a stage link's lines show wherever the walker is,
+ * the sheet included.
+ */
+internal fun linkToastFor(outcome: HonorImportOutcome, waysSheetUp: Boolean): HonorLinkToast? = when (outcome) {
+    HonorImportOutcome.Listed -> null
+    is HonorImportOutcome.Failed -> HonorLinkToast.Failed(outcome.error).takeUnless { waysSheetUp }
+    HonorImportOutcome.ReachingForRoute -> HonorLinkToast.ReachingForRoute
+    HonorImportOutcome.RouteNotInPilgrim -> HonorLinkToast.RouteNotInPilgrim
+    is HonorImportOutcome.CatalogFailed -> HonorLinkToast.CatalogFailed(outcome.error)
 }

@@ -24,6 +24,7 @@ import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageCopy
 import org.walktalkmeditate.pilgrim.honor.HonorImportCopy
 import org.walktalkmeditate.pilgrim.honor.HonorImportState
 import org.walktalkmeditate.pilgrim.honor.HonorLinkToast
@@ -89,7 +90,7 @@ private class LastToast {
     var value: HonorLinkToast? = null
 }
 
-/** Every line verbatim (S2 §7.1): the refusal, and the import's own copy for the fetch and its failures. */
+/** Every line verbatim (S2 §7.1; stage-links spec, Copy): the refusal, the import's own copy, and a stage link's lines. */
 @Composable
 private fun honorLinkToastText(toast: HonorLinkToast): String {
     val resources = LocalResources.current
@@ -97,5 +98,9 @@ private fun honorLinkToastText(toast: HonorLinkToast): String {
         HonorLinkToast.FinishWalkFirst -> resources.getString(R.string.honor_link_finish_walk_first)
         HonorLinkToast.Reaching -> HonorImportCopy.line(resources, HonorImportState.Fetching)
         is HonorLinkToast.Failed -> HonorImportCopy.line(resources, HonorImportState.Failed(toast.error))
+        HonorLinkToast.ReachingForRoute -> resources.getString(R.string.honor_link_reaching_for_route)
+        HonorLinkToast.RouteNotInPilgrim -> resources.getString(R.string.honor_link_route_not_in_pilgrim)
+        HonorLinkToast.NeedsNewerPilgrim -> resources.getString(R.string.honor_link_needs_newer_pilgrim)
+        is HonorLinkToast.CatalogFailed -> resources.getString(PilgrimageCopy.line(toast.error))
     }.orEmpty()
 }

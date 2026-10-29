@@ -24,6 +24,7 @@ import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.honor.WayError
 import org.walktalkmeditate.pilgrim.data.honor.WayImportException
 import org.walktalkmeditate.pilgrim.data.honor.WayImporter
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageError
 import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 
@@ -214,10 +215,18 @@ class HonorImportCoordinator internal constructor(
     }
 }
 
-/** How an import the walker still wanted ended. */
+/** How an import, or a stage link's resolution, the walker still wanted ended. */
 sealed interface HonorImportOutcome {
-    /** Its Way is listed and offered through [HonorImportCoordinator.fetched]. */
+    /** Its Way is offered through [HonorImportCoordinator.fetched], or its route page through `routeLink`. */
     data object Listed : HonorImportOutcome
 
     data class Failed(val error: WayError) : HonorImportOutcome
+
+    /** A stage link is about to load the catalog. */
+    data object ReachingForRoute : HonorImportOutcome
+
+    /** The catalog, forced once, still lacks the route. */
+    data object RouteNotInPilgrim : HonorImportOutcome
+
+    data class CatalogFailed(val error: PilgrimageError) : HonorImportOutcome
 }

@@ -1285,6 +1285,12 @@
     <!-- Phase 21 U27: a link refused during a walk (shared-walk spec S2 §6.1),
          lowercase with no full stop, an English Swift literal on iOS. -->
     <string name="honor_link_finish_walk_first">finish this walk first</string>
+    <!-- Phase 22 U4: stage links (stage-links spec, Copy). English Swift literals on iOS
+         (`MainCoordinatorView.swift:231,299,327@3b78728`): lowercase, the single-character
+         ellipsis, the ASCII apostrophe, no full stop. -->
+    <string name="honor_link_needs_newer_pilgrim">this link needs a newer Pilgrim</string>
+    <string name="honor_link_reaching_for_route">reaching for the route…</string>
+    <string name="honor_link_route_not_in_pilgrim">this route isn\'t in Pilgrim yet</string>
     <string name="honor_ways_voices_returned">voices returned to the trail</string>
     <string name="honor_ways_paste_header">From a shared walk</string>
     <string name="honor_ways_paste_placeholder">paste a walk link</string>
