@@ -20,9 +20,11 @@ import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
+import org.walktalkmeditate.pilgrim.honor.HonorRouteLink
 import org.walktalkmeditate.pilgrim.honor.HonorImportCoordinator
 import org.walktalkmeditate.pilgrim.honor.HonorImportState
 import org.walktalkmeditate.pilgrim.honor.HonorLink
+import org.walktalkmeditate.pilgrim.honor.HonorLinkDestination
 import org.walktalkmeditate.pilgrim.honor.HonorLinkRouter
 import org.walktalkmeditate.pilgrim.honor.HonorLinkScreen
 import org.walktalkmeditate.pilgrim.honor.HonorLinkToast
@@ -113,9 +115,13 @@ class HonorWaysViewModel internal constructor(
         }
     }
 
-    /** iOS's `onPaste`: parses again, and opens only what parses. */
+    /** iOS's `onPaste` (`MainTabView.swift:60-62@3b78728`): parses again and opens only what parses, never through the link routing. */
     fun open(text: String) {
-        HonorLink.parse(text = text)?.let(imports::openWay)
+        when (val link = HonorLink.parse(text = text)) {
+            is HonorLinkDestination.Share -> imports.openWay(link.id)
+            is HonorLinkDestination.Stage -> imports.openStage(link.routeId, link.index)
+            HonorLinkDestination.Unrecognised, null -> Unit
+        }
     }
 
     fun consumeFetched(wayId: String) {
@@ -124,9 +130,9 @@ class HonorWaysViewModel internal constructor(
 }
 
 /**
- * The app's end of the import and the links: a listed Way no sheet is up
- * to take, the link toast, the switch to the Path tab, and the back stack
- * the link routing reads (the walk screen's cancel among it).
+ * The app's end of the import and the links: a listed Way or a route page
+ * no sheet is up to take, the link toast, the switch to the Path tab, and
+ * the back stack the link routing reads (the walk screen's cancel among it).
  */
 @HiltViewModel
 class HonorImportHostViewModel @Inject constructor(
@@ -136,6 +142,9 @@ class HonorImportHostViewModel @Inject constructor(
 
     val fetched: StateFlow<String?> = imports.fetched
 
+    /** A route page a stage link resolved to, no screen having opened it yet (stage-links spec Q1). */
+    val routeLink: StateFlow<HonorRouteLink?> = imports.routeLink
+
     val linkToast: StateFlow<HonorLinkToast?> = links.toast
 
     val pathSwitch: StateFlow<Boolean> = links.pathSwitch
@@ -144,9 +153,8 @@ class HonorImportHostViewModel @Inject constructor(
         imports.consumeFetched(wayId)
     }
 
-    /** iOS `walkAgain` with no Way built: the park is overwritten with nil, so a link's Way waiting there never opens. */
-    fun dropParkedWay() {
-        imports.fetched.value?.let(imports::consumeFetched)
+    fun consumeRouteLink(link: HonorRouteLink) {
+        imports.consumeRouteLink(link)
     }
 
     /** iOS `openOverview` for the share whose overview is up: it stays, and gathers again (S2 §5 row 8). */

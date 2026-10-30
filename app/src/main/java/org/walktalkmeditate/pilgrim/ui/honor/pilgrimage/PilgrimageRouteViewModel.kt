@@ -152,6 +152,22 @@ object PilgrimageRouteModel {
         (page.ledger ?: PilgrimageLedger(page.entry.id)).next(page.entry.stageCount)?.index
             ?: page.stages.firstOrNull()?.index
 
+    /**
+     * Where [stageIndex]'s row sits in the route page's list, which iOS
+     * scrolls to by `.id(stage.index)` (`PilgrimageRouteView.swift:283-285@3b78728`):
+     * after the header, the next row on the installed route, and the
+     * stages header (`RouteSections`), at the stage's place in the list.
+     * Null for a stage the list doesn't hold.
+     */
+    fun stageListPosition(page: PilgrimageRoutePage, stageIndex: Int): Int? {
+        val position = page.stages.indexOfFirst { it.index == stageIndex }
+        if (position < 0) return null
+        return position + if (page.isInstalled) ROWS_ABOVE_INSTALLED_STAGES else ROWS_ABOVE_STAGES
+    }
+
+    private const val ROWS_ABOVE_STAGES = 2
+    private const val ROWS_ABOVE_INSTALLED_STAGES = 3
+
     fun buttonLabel(resources: Resources, isInstalled: Boolean, hasUpdate: Boolean): String = resources.getString(
         when {
             !isInstalled -> R.string.pilgrimage_route_download
@@ -245,6 +261,9 @@ object PilgrimageRouteModel {
  * iOS `PilgrimageRouteView` (`PilgrimageRouteView.swift:66-401@7c200bf`, P4
  * §4): one route, what it is, where the walker is in it, and every stage.
  *
+ * A page a stage link opened also carries a focus ([ARG_FOCUS]), applied once
+ * its stages are in (stage-links spec Q4).
+ *
  * The page opens on a route id and takes the entry and the release from
  * the catalog the service holds, as iOS takes them from the tapped row and
  * the catalog of that moment. A page restored in a new process reads the
@@ -308,6 +327,9 @@ class PilgrimageRouteViewModel internal constructor(
 
     private val routeId: String? = savedState[ARG_ROUTE_ID]
 
+    /** The stage a link brings into view, 0-based: null on the catalog's page and for a link past the route's end. */
+    private val focus: Int? = savedState.get<Int>(ARG_FOCUS)?.takeIf { it != NO_FOCUS }
+
     val units: StateFlow<UnitSystem> = unitsPreferences.distanceUnits
 
     val phase: StateFlow<PilgrimagePackageManager.Phase> = packages.phase
@@ -345,6 +367,15 @@ class PilgrimageRouteViewModel internal constructor(
     /** A stage Way to open: the sheets close, then its overview opens. */
     val opened: SharedFlow<String> = _opened.asSharedFlow()
 
+    private val _scrollTarget = MutableStateFlow<Int?>(null)
+
+    /**
+     * The stage index the link's focus scrolls to, until the screen has
+     * scrolled ([consumeScrollTarget]): iOS's `scrollTarget`
+     * (`PilgrimageRouteView.swift:105,117-125@3b78728`).
+     */
+    val scrollTarget: StateFlow<Int?> = _scrollTarget.asStateFlow()
+
     private val page: PilgrimageRoutePage? get() = (_state.value as? PilgrimageRouteUiState.Ready)?.page
 
     init {
@@ -358,6 +389,7 @@ class PilgrimageRouteViewModel internal constructor(
                 releaseHold()
             }
             loadStagesIfNeeded(force = false)
+            applyFocus()
         }
     }
 
@@ -419,7 +451,14 @@ class PilgrimageRouteViewModel internal constructor(
     }
 
     fun retryStages() {
-        viewModelScope.launch { loadStagesIfNeeded(force = true) }
+        viewModelScope.launch {
+            loadStagesIfNeeded(force = true)
+            applyFocus()
+        }
+    }
+
+    fun consumeScrollTarget() {
+        _scrollTarget.value = null
     }
 
     fun confirmReplace() {
@@ -651,6 +690,25 @@ class PilgrimageRouteViewModel internal constructor(
         updatePage { it.copy(isLoadingStages = false) }
     }
 
+    /**
+     * iOS `applyFocus()` (`PilgrimageRouteView.swift:354-359@3b78728`): once
+     * per page, and only once it has stages, so a failed preview keeps the
+     * focus for "try again". The prompt and the scroll are independent:
+     * "Download this route first?" only for a route not on the phone (an
+     * installed route whose stage is missing asks nothing, its Update button
+     * being the answer), through the button's own gate; the scroll only to a
+     * stage the list holds. The latch is kept in the saved state, so neither
+     * a rotation nor a restore asks again.
+     */
+    private fun applyFocus() {
+        val focus = focus ?: return
+        val page = page ?: return
+        if (savedState.get<Boolean>(KEY_FOCUS_APPLIED) == true || page.stages.isEmpty()) return
+        if (!page.isInstalled) _alert.value = PilgrimageRouteAlert.DOWNLOAD_FIRST
+        if (page.stages.any { it.index == focus }) _scrollTarget.value = focus
+        savedState[KEY_FOCUS_APPLIED] = true
+    }
+
     /** The in-memory catalog when the service holds one (the catalog of the tap); a new process reads it in [resolve]. */
     private fun openingState(): PilgrimageRouteUiState {
         val id = routeId ?: return PilgrimageRouteUiState.Gone
@@ -686,7 +744,15 @@ class PilgrimageRouteViewModel internal constructor(
 
     companion object {
         const val ARG_ROUTE_ID = "routeId"
+
+        /** The 0-based stage a link brings into view; absent on the catalog's page (stage-links spec Q4). */
+        const val ARG_FOCUS = "focus"
+
+        /** The `focus` argument's default: no stage to bring into view. */
+        const val NO_FOCUS = -1
+
         internal const val KEY_REDRAW_NOTICE = "showRedrawNotice"
+        internal const val KEY_FOCUS_APPLIED = "focusApplied"
     }
 }
 

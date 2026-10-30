@@ -31,6 +31,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -417,6 +418,10 @@ internal fun HonorSheetGroupRow(
  * the sheet's and doesn't dim, so only the sheet's scrim shades Path
  * behind. A route under the next sheet (the Ways sheet under the picker)
  * stays composed, hidden, and slides back up once it is on top again.
+ *
+ * While it is on top, the link toast shows at the sheet's top, inside its
+ * window, which covers the Activity's toast (stage-links spec Q6); a sheet
+ * under another draws none, so one toast shows at a time.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -450,8 +455,19 @@ internal fun HonorSheetHost(
         properties = ModalBottomSheetProperties(shouldDismissOnBackPress = onBack == null),
     ) {
         if (onBack != null) BackHandler { hideThen(onBack) }
-        content(hideThen)
+        Box(Modifier.fillMaxWidth()) {
+            content(hideThen)
+            if (onTop) SheetLinkToast(Modifier.align(Alignment.TopCenter))
+        }
     }
+}
+
+/** The link toast at the top of a sheet's own window, which covers the Activity's (stage-links spec Q6). */
+@Composable
+private fun SheetLinkToast(modifier: Modifier) {
+    val toasts = LocalHonorLinkToast.current ?: return
+    val toast by toasts.collectAsState()
+    HonorLinkToastView(toast = toast, modifier = modifier)
 }
 
 /**

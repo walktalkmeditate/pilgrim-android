@@ -17,13 +17,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.StateFlow
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageCopy
 import org.walktalkmeditate.pilgrim.honor.HonorImportCopy
 import org.walktalkmeditate.pilgrim.honor.HonorImportState
 import org.walktalkmeditate.pilgrim.honor.HonorLinkToast
@@ -33,6 +36,14 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
 /** SwiftUI's `.easeInOut`, which iOS gives no duration: 0.35 s. */
 private const val TOAST_MOTION_MS = 350
+
+/**
+ * The app's link toast, for a window that covers the Activity's toast host,
+ * an Honor sheet's: iOS repeats its overlay inside each sheet
+ * (`MainTabView.swift:64,77,91,178-193@3b78728`). Null with Honor off, or
+ * outside the nav host.
+ */
+val LocalHonorLinkToast = staticCompositionLocalOf<StateFlow<HonorLinkToast?>?> { null }
 
 /**
  * iOS `HonorLinkToast` (`MainCoordinatorView.swift:405-423@7c200bf`, S2
@@ -89,7 +100,7 @@ private class LastToast {
     var value: HonorLinkToast? = null
 }
 
-/** Every line verbatim (S2 §7.1): the refusal, and the import's own copy for the fetch and its failures. */
+/** Every line verbatim (S2 §7.1; stage-links spec, Copy): the refusal, the import's own copy, and a stage link's lines. */
 @Composable
 private fun honorLinkToastText(toast: HonorLinkToast): String {
     val resources = LocalResources.current
@@ -97,5 +108,9 @@ private fun honorLinkToastText(toast: HonorLinkToast): String {
         HonorLinkToast.FinishWalkFirst -> resources.getString(R.string.honor_link_finish_walk_first)
         HonorLinkToast.Reaching -> HonorImportCopy.line(resources, HonorImportState.Fetching)
         is HonorLinkToast.Failed -> HonorImportCopy.line(resources, HonorImportState.Failed(toast.error))
+        HonorLinkToast.ReachingForRoute -> resources.getString(R.string.honor_link_reaching_for_route)
+        HonorLinkToast.RouteNotInPilgrim -> resources.getString(R.string.honor_link_route_not_in_pilgrim)
+        HonorLinkToast.NeedsNewerPilgrim -> resources.getString(R.string.honor_link_needs_newer_pilgrim)
+        is HonorLinkToast.CatalogFailed -> resources.getString(PilgrimageCopy.line(toast.error))
     }.orEmpty()
 }

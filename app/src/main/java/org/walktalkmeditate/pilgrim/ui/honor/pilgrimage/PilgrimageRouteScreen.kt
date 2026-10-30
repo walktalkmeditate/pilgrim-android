@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.honor.pilgrimage
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,7 +16,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -89,8 +92,9 @@ class PilgrimageRouteActions(
 
 /**
  * iOS `PilgrimageRouteView` (`PilgrimageRouteView.swift:66-401@7c200bf`,
- * pilgrimage-stage spec P4 §4): the route's name in the bar, Back to the
- * catalog leading, and, for the installed route, the overflow's Remove;
+ * pilgrimage-stage spec P4 §4): the route's name in the bar, [leading]
+ * at the start (Back to the catalog, or a link page's Close), and,
+ * for the installed route, the overflow's Remove;
  * then three sections: the summary with the download button, the maps
  * row under it on the installed route ([mapsRow]) and the status lines
  * under the section, the next row on the installed route, and "Stages",
@@ -106,21 +110,23 @@ fun PilgrimageRouteContent(
     alert: PilgrimageRouteAlert?,
     actions: PilgrimageRouteActions,
     modifier: Modifier = Modifier,
+    scrollTarget: Int? = null,
+    onScrollConsumed: () -> Unit = {},
+    listState: LazyListState = rememberLazyListState(),
+    leading: @Composable () -> Unit = { RouteBackButton(actions.onBack) },
 ) {
     val page = (state as? PilgrimageRouteUiState.Ready)?.page
     val busy = page != null && PilgrimageRouteModel.isBusy(phase, tilesPhase, page.isHeld)
+    val shownPage by rememberUpdatedState(page)
+    val scrolled by rememberUpdatedState(onScrollConsumed)
+    LaunchedEffect(scrollTarget) {
+        val target = scrollTarget ?: return@LaunchedEffect
+        shownPage?.let { PilgrimageRouteModel.stageListPosition(it, target) }?.let { listState.animateScrollToCentre(it) }
+        scrolled()
+    }
     HonorSheetFrame(
         title = page?.entry?.name.orEmpty(),
-        leading = {
-            // iOS's back button, titled with the catalog it returns to (P4 §4.7).
-            IconButton(onClick = actions.onBack) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = stringResource(R.string.pilgrimage_catalog_title),
-                    tint = pilgrimColors.stone,
-                )
-            }
-        },
+        leading = leading,
         trailing = {
             if (page?.isInstalled == true) OverflowMenu(enabled = !busy, onRemove = actions.onRemove)
         },
@@ -131,10 +137,30 @@ fun PilgrimageRouteContent(
             // The catalog is read again after a process death; the sheet keeps its size meanwhile.
             Box(Modifier.fillMaxSize())
         } else {
-            RouteSections(page, phase, tilesPhase, mapsRow, units, busy, actions)
+            RouteSections(page, phase, tilesPhase, mapsRow, units, busy, actions, listState)
         }
     }
     if (page != null && alert != null) RouteAlert(alert, page, actions)
+}
+
+/** iOS's back button on the catalog's route page, titled with the catalog it returns to (P4 §4.7). */
+@Composable
+internal fun RouteBackButton(onBack: () -> Unit) {
+    IconButton(onClick = onBack) {
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+            contentDescription = stringResource(R.string.pilgrimage_catalog_title),
+            tint = pilgrimColors.stone,
+        )
+    }
+}
+
+/** iOS's "Close" on the route sheet a stage link opens (`MainTabView.swift:85-87@3b78728`), drawn as the overview draws its own. */
+@Composable
+internal fun RouteCloseButton(onClose: () -> Unit) {
+    TextButton(onClick = onClose) {
+        Text(stringResource(R.string.honor_close), style = pilgrimType.button, color = pilgrimColors.stone)
+    }
 }
 
 @Composable
@@ -146,8 +172,9 @@ private fun RouteSections(
     units: UnitSystem,
     busy: Boolean,
     actions: PilgrimageRouteActions,
+    listState: LazyListState,
 ) {
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
+    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
         item(key = "header") { HeaderSection(page, phase, tilesPhase, mapsRow, units, busy, actions) }
         if (page.isInstalled) {
             item(key = "next") {
@@ -486,45 +513,100 @@ fun PilgrimageRouteSheet(
     onOpenStage: (wayId: String) -> Unit,
     viewModel: PilgrimageRouteViewModel = hiltViewModel(),
 ) {
+    HonorSheetHost(onDismissed = onClosed, onBack = onBack) { hideThen ->
+        PilgrimageRouteSheetBody(viewModel, hideThen, leave = onBack, onOpenStage = onOpenStage) { goBack ->
+            RouteBackButton(goBack)
+        }
+    }
+}
+
+/**
+ * The route page a stage link opened, iOS's route sheet
+ * (`MainTabView.swift:79-91@3b78728`): a sheet of its own over the Path
+ * tab, with "Close" leading. Close, a swipe and system Back all close it
+ * alone ([onClose]), since nothing lies beneath it but Path. A stage with
+ * its Way slides the page down and opens the stage's overview in its
+ * place. A route the catalog no longer lists closes it, silently.
+ */
+@Composable
+fun PilgrimageRouteLinkSheet(
+    onClose: () -> Unit,
+    onOpenStage: (wayId: String) -> Unit,
+    viewModel: PilgrimageRouteViewModel = hiltViewModel(),
+) {
+    HonorSheetHost(onDismissed = onClose) { hideThen ->
+        PilgrimageRouteSheetBody(viewModel, hideThen, leave = onClose, onOpenStage = onOpenStage) { close ->
+            RouteCloseButton(close)
+        }
+    }
+}
+
+/** Both route sheets' body: one ViewModel, one page; only how the page is left differs. */
+@Composable
+private fun PilgrimageRouteSheetBody(
+    viewModel: PilgrimageRouteViewModel,
+    hideThen: (() -> Unit) -> Unit,
+    leave: () -> Unit,
+    onOpenStage: (wayId: String) -> Unit,
+    leading: @Composable (onLeave: () -> Unit) -> Unit,
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val phase by viewModel.phase.collectAsStateWithLifecycle()
     val tilesPhase by viewModel.tilesPhase.collectAsStateWithLifecycle()
     val mapsRow by viewModel.mapsRow.collectAsStateWithLifecycle()
     val units by viewModel.units.collectAsStateWithLifecycle()
     val alert by viewModel.alert.collectAsStateWithLifecycle()
-    val back by rememberUpdatedState(onBack)
+    val scrollTarget by viewModel.scrollTarget.collectAsStateWithLifecycle()
+    val leaving by rememberUpdatedState(leave)
     val openStage by rememberUpdatedState(onOpenStage)
     val gone = state == PilgrimageRouteUiState.Gone
-    HonorSheetHost(onDismissed = onClosed, onBack = onBack) { hideThen ->
-        LaunchedEffect(viewModel) {
-            viewModel.opened.collect { wayId -> hideThen { openStage(wayId) } }
-        }
-        LaunchedEffect(gone) {
-            if (gone) hideThen(back)
-        }
-        PilgrimageRouteContent(
-            state = state,
-            phase = phase,
-            tilesPhase = tilesPhase,
-            mapsRow = mapsRow,
-            units = units,
-            alert = alert,
-            actions = PilgrimageRouteActions(
-                onBack = { hideThen(back) },
-                onDownload = viewModel::onDownloadTapped,
-                onOpenNext = viewModel::openNext,
-                onOpenStage = viewModel::open,
-                onRetryStages = viewModel::retryStages,
-                onRemove = viewModel::onRemoveTapped,
-                onConfirmReplace = viewModel::confirmReplace,
-                onConfirmRemove = viewModel::confirmRemove,
-                onConfirmDownloadFirst = viewModel::confirmDownloadFirst,
-                onDismissAlert = viewModel::dismissAlert,
-                onSaveMaps = viewModel::onSaveMaps,
-                onCancelMaps = viewModel::onCancelMaps,
-            ),
-        )
+    LaunchedEffect(viewModel) {
+        viewModel.opened.collect { wayId -> hideThen { openStage(wayId) } }
     }
+    LaunchedEffect(gone) {
+        // No slide: a first-frame hide can lose to the sheet's own show() and leave it blank.
+        if (gone) leaving()
+    }
+    val goBack = { hideThen(leaving) }
+    PilgrimageRouteContent(
+        state = state,
+        phase = phase,
+        tilesPhase = tilesPhase,
+        mapsRow = mapsRow,
+        units = units,
+        alert = alert,
+        actions = PilgrimageRouteActions(
+            onBack = goBack,
+            onDownload = viewModel::onDownloadTapped,
+            onOpenNext = viewModel::openNext,
+            onOpenStage = viewModel::open,
+            onRetryStages = viewModel::retryStages,
+            onRemove = viewModel::onRemoveTapped,
+            onConfirmReplace = viewModel::confirmReplace,
+            onConfirmRemove = viewModel::confirmRemove,
+            onConfirmDownloadFirst = viewModel::confirmDownloadFirst,
+            onDismissAlert = viewModel::dismissAlert,
+            onSaveMaps = viewModel::onSaveMaps,
+            onCancelMaps = viewModel::onCancelMaps,
+        ),
+        scrollTarget = scrollTarget,
+        onScrollConsumed = viewModel::consumeScrollTarget,
+        leading = { leading(goBack) },
+    )
+}
+
+/**
+ * SwiftUI's `scrollTo(_, anchor: .center)` (`PilgrimageRouteView.swift:117-125@3b78728`):
+ * the row brought into view, then its centre moved onto the viewport's,
+ * both with Compose's default spring, as iOS's `withAnimation` names no
+ * duration. A row near the end stops where the list does, as `.center`
+ * clamps.
+ */
+internal suspend fun LazyListState.animateScrollToCentre(position: Int) {
+    animateScrollToItem(position)
+    val row = layoutInfo.visibleItemsInfo.firstOrNull { it.index == position } ?: return
+    val viewportCentre = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2
+    animateScrollBy((row.offset + row.size / 2 - viewportCentre).toFloat())
 }
 
 internal const val STAGE_CIRCLE_TAG = "pilgrimage-stage-circle"
