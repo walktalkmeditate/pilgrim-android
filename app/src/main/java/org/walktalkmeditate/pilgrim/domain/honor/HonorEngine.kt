@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.domain.honor
 
+import java.time.DateTimeException
+import java.time.ZoneId
 import kotlin.math.max
 import kotlin.math.min
 import org.walktalkmeditate.pilgrim.domain.ArrivalDebounce
@@ -30,6 +32,12 @@ sealed class HonorEngineEvent {
 
     /** A stage's water source [meters] ahead on the line, unrounded (pilgrimage-stage spec P3 §4). */
     data class MarkAhead(val mark: WayMark, val meters: Double) : HonorEngineEvent()
+
+    /**
+     * A Shikoku temple [meters] ahead on the line, unrounded, its stamp
+     * office shutting within two hours (iOS PR #91).
+     */
+    data class StampAhead(val temple: WayMoment, val meters: Double) : HonorEngineEvent()
     data class Arrived(val theirSeconds: Double, val yourSeconds: Double) : HonorEngineEvent()
 }
 
@@ -45,11 +53,12 @@ sealed class HonorEngineEvent {
  * voice starts, never processing.
  *
  * Two clocks come in from outside. [clock] is the wall clock behind the
- * 120 s re-acquire, its 10 s retry, and the 120 s soft tap, read only when
- * a fix arrives. [updateActiveDuration] is the engine clock: elapsed walk
- * time minus pauses, the pause in progress included, with sittings left
- * in (spec B §7, owner decision 1). `WalkStats.activeWalkingMillis` also
- * takes out meditation, so it must not feed it.
+ * 120 s re-acquire, its 10 s retry, the 120 s soft tap, and a Shikoku
+ * stage's stamp office, read only when a fix arrives.
+ * [updateActiveDuration] is the engine clock: elapsed walk time minus
+ * pauses, the pause in progress included, with sittings left in (spec B
+ * §7, owner decision 1). `WalkStats.activeWalkingMillis` also takes out
+ * meditation, so it must not feed it.
  */
 class HonorEngine(
     val way: Way,
@@ -57,6 +66,13 @@ class HonorEngine(
     voicesEnabled: Boolean,
     private val clock: Clock,
     private val distance: HonorDistance = WGS84_HONOR_DISTANCE,
+    /**
+     * The zone a stamp office reads when its Way names none Java can read:
+     * iOS's `TimeZone.current` (`HonorEngine.swift:100-103@e551b11`),
+     * captured once, here. A parameter so a test pins it without a
+     * process-wide default (annex A.11 item 5).
+     */
+    fallbackZone: ZoneId = ZoneId.systemDefault(),
 ) {
     val geometry = WayGeometry(way.route)
 
@@ -99,6 +115,7 @@ class HonorEngine(
         geometry = geometry,
         voicesEnabled = voicesEnabled,
         distance = distance,
+        stamp = stampOffice(way, clock, fallbackZone),
     )
     private var gates = HonorMomentTracker.Gates()
     private var activeDuration = 0.0
@@ -380,6 +397,7 @@ class HonorEngine(
         HonorMomentTracker.Action.VoiceResume -> HonorEngineEvent.VoiceResume
         is HonorMomentTracker.Action.VoiceDropped -> HonorEngineEvent.VoiceDropped(moment)
         is HonorMomentTracker.Action.MarkAhead -> HonorEngineEvent.MarkAhead(mark, meters)
+        is HonorMomentTracker.Action.StampAhead -> HonorEngineEvent.StampAhead(temple, meters)
     }
 
     private companion object {
@@ -391,5 +409,29 @@ class HonorEngine(
 
         /** iOS's `Date.timeIntervalSince`, on the injected clock's milliseconds. */
         fun secondsBetween(earlierMillis: Long, laterMillis: Long): Double = (laterMillis - earlierMillis) / 1000.0
+
+        /**
+         * iOS `stampOffice(for:now:)` (`HonorEngine.swift:95-105@e551b11`):
+         * no hours, no office. The office keeps the Way's own zone where it
+         * names one Java reads, and [fallbackZone] otherwise, which on
+         * Shikoku is the same clock: no stage file names a zone.
+         */
+        fun stampOffice(way: Way, clock: Clock, fallbackZone: ZoneId): HonorMomentTracker.StampOffice? {
+            val hours = way.stampHours ?: return null
+            return HonorMomentTracker.StampOffice(
+                closesMinutes = hours.closesMinutes,
+                zone = zoneOf(way.tzIdentifier) ?: fallbackZone,
+                clock = clock,
+            )
+        }
+
+        /** `ZoneId.of` throws where iOS's `TimeZone(identifier:)` answers nil (`WayMomentCopy.wayZone`'s rule). */
+        fun zoneOf(identifier: String?): ZoneId? = identifier?.let {
+            try {
+                ZoneId.of(it)
+            } catch (_: DateTimeException) {
+                null
+            }
+        }
     }
 }

@@ -47,6 +47,7 @@ import org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness.Companion.RELEASE
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness.Companion.ROUTE_ID
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness.Companion.SHIKOKU_HOURS_JSON
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness.Companion.WALKED_AT
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness.Companion.assertRefused
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarness.Companion.awaitBlocking
@@ -58,6 +59,7 @@ import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageHarne
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimagePackageManager.Phase
 import org.walktalkmeditate.pilgrim.di.NetworkModule
 import org.walktalkmeditate.pilgrim.domain.honor.WayJson
+import org.walktalkmeditate.pilgrim.domain.honor.WayStampHours
 import org.walktalkmeditate.pilgrim.honor.HonorBeginsInFlight
 import org.walktalkmeditate.pilgrim.ui.honor.pilgrimage.PilgrimageRouteModel
 import org.walktalkmeditate.pilgrim.walk.honor.HonorHarness
@@ -116,6 +118,26 @@ class PilgrimagePackageManagerTest {
         assertEquals("v1.7.0", installed.release)
         assertEquals(2, installed.route.stages.size)
         assertEquals(Phase.Idle, manager.phase.value)
+        assertNull(
+            "a route that states no hours stages none",
+            h.wayStore.load("pilgrimage:camino-frances:0")?.stampHours,
+        )
+    }
+
+    /** The hours are `route.json`'s, handed to every stage as it is staged (A.2, A.11 item 6); iOS has no such test. */
+    @Test
+    fun `a route with stamp hours hands them to every stage it stages`() {
+        h.rewriteRouteFile(SHIKOKU_HOURS_JSON)
+
+        h.makeManager().download(h.entry, RELEASE).awaitBlocking()
+
+        for (index in 0 until h.entry.stageCount) {
+            assertEquals(
+                "stage $index",
+                WayStampHours(opensMinutes = 480, closesMinutes = 1020),
+                h.wayStore.load(WayStore.stageWayId(ROUTE_ID, index))?.stampHours,
+            )
+        }
     }
 
     /** A StateFlow conflates, so each phase is read while a held file keeps it on screen, the last at the commit's guard. */

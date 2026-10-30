@@ -41,6 +41,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import org.robolectric.shadows.ShadowSettings
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
 import org.walktalkmeditate.pilgrim.domain.honor.WayCoordinate
@@ -664,6 +665,39 @@ class HonorOnWalkSemanticsTest {
         showSheet(HonorSheetStats(remainingMeters = 650.0, caption = HonorCaption.Water(280.0), listening = null), units = UnitSystem.Imperial)
 
         composeRule.onNodeWithText("water in 0.2 mi", useUnmergedTree = true).assertExists()
+    }
+
+    /** Review Focus 4, at the draw site: the sheet reads the walker's switch when it draws the line. */
+    @Test
+    fun `a temple notice takes the third stat's place in the walker's 12-hour clock, and the Walk stats value reads it`() {
+        ShadowSettings.set24HourTimeFormat(false)
+        showSheet(
+            HonorSheetStats(
+                remainingMeters = 650.0,
+                caption = HonorCaption.Stamp(10, 17 * 60, 3200.0),
+                listening = null,
+            ),
+        )
+
+        composeRule.onNodeWithText("temple 10 stamps until 5 · 3.2 km", useUnmergedTree = true).assertExists()
+        composeRule.onAllNodesWithText("Remaining", useUnmergedTree = true).assertCountEquals(0)
+        val value = "${WalkFormat.duration(90_000L)}, ${WalkFormat.distance(250.0)}, temple 10 stamps until 5 · 3.2 km"
+        composeRule.onNodeWithContentDescription("Walk stats")
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, value))
+    }
+
+    @Test
+    fun `a walker on the 24-hour clock reads the office's close as 17`() {
+        ShadowSettings.set24HourTimeFormat(true)
+        showSheet(
+            HonorSheetStats(
+                remainingMeters = 650.0,
+                caption = HonorCaption.Stamp(10, 17 * 60, 3200.0),
+                listening = null,
+            ),
+        )
+
+        composeRule.onNodeWithText("temple 10 stamps until 17 · 3.2 km", useUnmergedTree = true).assertExists()
     }
 
     // ---- The meditation caption (E §12) --------------------------------------

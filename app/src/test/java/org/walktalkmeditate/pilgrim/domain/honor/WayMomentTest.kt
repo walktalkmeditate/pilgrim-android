@@ -82,6 +82,51 @@ class WayMomentTest {
         assertTrue(WaySource.Pilgrimage(routeId = "camino-frances", stageIndex = 0).isPackageOwned)
     }
 
+    // iOS PR #91: which moments are stamp temples (`Way.swift:108-115@e551b11`, annex A.3.3)
+
+    private fun place(text: String?) = WayMoment(
+        id = "wp",
+        frac = 0.5,
+        at = null,
+        kind = WayMomentKind.Waypoint(label = "Ryozen-ji", icon = "seal"),
+        text = text,
+    )
+
+    /** iOS `testTempleZeroIsNotANumberedTemple` (`HonorWayRenderingTests.swift:175-187@e551b11`). */
+    @Test
+    fun testTempleZeroIsNotANumberedTemple() {
+        assertNull(place("Temple 0 · Koyasan Shingon · stamp available (¥500)").templeNumber)
+        assertNull("zero however it is padded", place("Temple 0000 · Koyasan Shingon").templeNumber)
+        assertEquals(1, place("Temple 1 · Koyasan Shingon · stamp available (¥500)").templeNumber)
+        assertEquals(88, place("Temple 88 · Shingon").templeNumber)
+    }
+
+    /** Annex A.3.3's probed outcomes, which hold at `e551b11` but for Temple 0. */
+    @Test
+    fun `a temple number is one to four ASCII digits after the exact prefix, and only the digits are read`() {
+        assertEquals(1, place("Temple 01 · x").templeNumber)
+        assertEquals(10, place("Temple 10· x").templeNumber)
+        assertEquals(1234, place("Temple 1234 · x").templeNumber)
+        assertNull(place("Temple 12345 · x").templeNumber)
+        assertNull("the prefix is case-sensitive", place("temple 10 · x").templeNumber)
+        assertNull("Arabic-Indic digits are not ASCII", place("Temple \u0661\u0660 · x").templeNumber)
+        assertNull(
+            "a seal that is not a numbered temple",
+            place("Pilgrim office · 172 m · stamp available").templeNumber,
+        )
+        assertNull(place(null).templeNumber)
+    }
+
+    /**
+     * Swift reads characters: a digit carrying a combining mark is one character and not ASCII,
+     * so the run ends before it.
+     */
+    @Test
+    fun `a digit with a combining mark ends the number, as Swift's characters do`() {
+        assertNull(place("Temple 1\u0301 · x").templeNumber)
+        assertEquals(1, place("Temple 10\u0301 · x").templeNumber)
+    }
+
     private fun moment(
         kind: WayMomentKind = WayMomentKind.Rest(minutes = 1),
         transcript: String? = null,

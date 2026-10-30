@@ -71,6 +71,8 @@ class HonorDaoTest {
         softTapArmed = true,
         arrivalInsideFixes = 2,
         lastNoticeSeconds = null,
+        lastWaterSeconds = null,
+        lastStampSeconds = null,
     )
 
     @Test
@@ -159,6 +161,25 @@ class HonorDaoTest {
     }
 
     @Test
+    fun `an engine update writes all three notice clocks, each to its own column`() = runTest {
+        dao.insertSession(session())
+
+        dao.updateEngineState(
+            engine(progress = 0.4).copy(
+                lastNoticeSeconds = 2_400.0,
+                lastWaterSeconds = 1_820.4,
+                lastStampSeconds = 2_160.0,
+            ),
+        )
+
+        val row = dao.getSession(walkId)!!
+        assertEquals(
+            listOf<Double?>(2_400.0, 1_820.4, 2_160.0),
+            listOf(row.lastNoticeSeconds, row.lastWaterSeconds, row.lastStampSeconds),
+        )
+    }
+
+    @Test
     fun `a new session row is no stage, with nothing spoken and the first notice free`() = runTest {
         dao.insertSession(session())
 
@@ -186,10 +207,26 @@ class HonorDaoTest {
     fun `a notice of a kind this build doesn't know reads as unknown`() = runTest {
         db.openHelper.writableDatabase.execSQL(
             "INSERT INTO honor_notices (walk_id, kind, ref_id, meters, fired_at) " +
-                "VALUES ($walkId, 'STAMP', 'wp-temple-10', 1.0, 2)",
+                "VALUES ($walkId, 'SHRINE', 'wp-shrine-3', 1.0, 2)",
         )
 
         assertEquals(HonorNoticeKind.UNKNOWN, dao.getNotices(walkId).single().kind)
+    }
+
+    @Test
+    fun `a temple notice is stored by its name and read back as a temple`() = runTest {
+        dao.insertNotice(
+            HonorNoticeEntity(walkId, HonorNoticeKind.STAMP, "temple-10", meters = 1_057.5, firedAt = 9_000L),
+        )
+
+        assertEquals(HonorNoticeKind.STAMP, dao.getNotices(walkId).single().kind)
+        assertEquals(
+            "STAMP",
+            db.openHelper.writableDatabase.query("SELECT kind FROM honor_notices").use {
+                it.moveToFirst()
+                it.getString(0)
+            },
+        )
     }
 
     @Test

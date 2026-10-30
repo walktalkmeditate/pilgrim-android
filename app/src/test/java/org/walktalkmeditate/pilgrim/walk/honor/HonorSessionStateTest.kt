@@ -13,6 +13,7 @@ import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.honor.HonorEngine
+import org.walktalkmeditate.pilgrim.domain.honor.HonorEngineEvent
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPhase
 import org.walktalkmeditate.pilgrim.walk.honor.HonorHarness.Companion.fix
 
@@ -75,6 +76,75 @@ class HonorSessionStateTest {
     }
 
     @Test
+    fun `the temples spoken are the walk's STAMP rows, and an unknown kind's row is ignored`() {
+        val session = HonorSessionEntity(
+            walkId = 1L,
+            wayId = HonorHarness.STAGE_ID,
+            sourceKind = HonorSourceKind.PILGRIMAGE,
+            voicesEnabled = false,
+            softTapEnabled = false,
+        )
+        val notices = listOf(
+            HonorNoticeEntity(1L, HonorNoticeKind.WATER, "wp-osm-water-node1", meters = 280.0, firedAt = 5_000L),
+            HonorNoticeEntity(1L, HonorNoticeKind.STAMP, "temple-10", meters = 1_057.5, firedAt = 9_000L),
+            HonorNoticeEntity(1L, HonorNoticeKind.UNKNOWN, "wp-shrine-3", meters = 900.0, firedAt = 9_500L),
+        )
+
+        val tracker = session.engineSnapshot(rows = emptyList(), notices = notices).tracker
+
+        assertEquals(setOf("wp-osm-water-node1") to setOf("temple-10"), tracker.firedMarks to tracker.firedStamps)
+    }
+
+    /**
+     * iOS's caption guard, moved to where Android plans the tap
+     * (`ActiveWalkViewModel+MarkPins.swift:69-73@e551b11`).
+     */
+    @Test
+    fun `a temple ahead is a STAMP row only on a Way with hours, and only for a numbered temple`() {
+        val way = HonorHarness.templeStage()
+        val temple = way.moments.single()
+        val event = HonorEngineEvent.StampAhead(temple, meters = 1_057.5)
+
+        assertEquals(
+            HonorNoticeEntity(1L, HonorNoticeKind.STAMP, "temple-10", meters = 1_057.5, firedAt = 9_000L),
+            stampNotice(walkId = 1L, way = way, event = event, firedAt = 9_000L),
+        )
+        assertNull("no hours, no line, so no tap", stampNotice(1L, way.copy(stampHours = null), event, 9_000L))
+        val zero = HonorEngineEvent.StampAhead(temple.copy(text = "Temple 0 · Koyasan Shingon"), meters = 1_057.5)
+        assertNull("Temple 0 names no temple", stampNotice(1L, way, zero, 9_000L))
+    }
+
+    @Test
+    fun `the row's three clocks go to the tracker and come back, each its own`() {
+        val session = HonorSessionEntity(
+            walkId = 1L,
+            wayId = HonorHarness.STAGE_ID,
+            sourceKind = HonorSourceKind.PILGRIMAGE,
+            voicesEnabled = false,
+            softTapEnabled = false,
+            lastNoticeSeconds = 2_400.0,
+            lastWaterSeconds = 1_820.4,
+            lastStampSeconds = 2_160.0,
+        )
+
+        val snapshot = session.engineSnapshot(rows = emptyList(), notices = emptyList())
+        val state = snapshot.toEngineState(walkId = 1L)
+
+        assertEquals(
+            listOf<Double?>(2_400.0, 1_820.4, 2_160.0),
+            listOf(
+                snapshot.tracker.lastNoticeSeconds,
+                snapshot.tracker.lastWaterSeconds,
+                snapshot.tracker.lastStampSeconds,
+            ),
+        )
+        assertEquals(
+            listOf<Double?>(2_400.0, 1_820.4, 2_160.0),
+            listOf(state.lastNoticeSeconds, state.lastWaterSeconds, state.lastStampSeconds),
+        )
+    }
+
+    @Test
     fun `a session row and its moment rows restore the engine where it stood`() {
         val way = HonorHarness.way()
         var now = 5_000_000L
@@ -109,6 +179,8 @@ class HonorSessionStateTest {
             softTapArmed = state.softTapArmed,
             arrivalInsideFixes = state.arrivalInsideFixes,
             lastNoticeSeconds = state.lastNoticeSeconds,
+            lastWaterSeconds = state.lastWaterSeconds,
+            lastStampSeconds = state.lastStampSeconds,
         )
         val rows = snapshot.tracker.reached.map { HonorMomentStateEntity(walkId = 1L, momentId = it, reachedAt = 1L) }
 

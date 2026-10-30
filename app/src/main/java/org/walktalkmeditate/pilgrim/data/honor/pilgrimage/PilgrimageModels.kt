@@ -5,6 +5,7 @@ import androidx.annotation.StringRes
 import kotlinx.serialization.Serializable
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
+import org.walktalkmeditate.pilgrim.domain.honor.WayStampHours
 
 /**
  * iOS `PilgrimageError` (`PilgrimageWayImporter.swift:5-13@7c200bf`): what
@@ -61,6 +62,13 @@ data class PilgrimageRoute(
     val stageCount: Int,
     val tradition: String?,
     val summary: String?,
+    /**
+     * Only a route whose dataset declares them, Shikoku's four; null
+     * everywhere else, and for a shape this build can't read
+     * (`PilgrimageWayImporter.swift:47-49@e551b11`). The importer always
+     * sets it; the default is for the tests that build a route by hand.
+     */
+    val stampHours: WayStampHours? = null,
     val stages: List<PilgrimageRouteStage>,
 ) {
     /**
@@ -130,8 +138,12 @@ data class PilgrimageCatalog(
  * catalog's private `IndexFile` does (`PilgrimageCatalogService.swift:243-274@7c200bf`,
  * P1 §4.2). A required field has no default, so a missing key or a JSON
  * `null` fails the whole decode, as Swift's synthesized `Decodable` does;
- * unknown keys (`schemaVersion`,
- * `stampHours`, `cover`) are ignored. Swift's `Int` is 64-bit, so every
+ * unknown keys (`schemaVersion`, `cover`, and a stage file's `stampHours`)
+ * are ignored. A route file's `stampHours` is the one lenient member (iOS
+ * `RouteFile.init(from:)`, `PilgrimageWayImporter.swift:178-197@e551b11`); it is
+ * not a field of [RouteFile] but read by its own probe in the importer, so the
+ * strict decode skips the key without building a tree.
+ * Swift's `Int` is 64-bit, so every
  * integer is a [Long], narrowed only once its bound has passed (P1 §4.3, A7).
  * Moment and mark kinds are plain strings, so a kind the dataset adds later
  * decodes and is then skipped.

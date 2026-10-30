@@ -19,6 +19,7 @@ This directory also pins the distance behind iOS's `CLLocation.distance(from:)` 
 |---|---|
 | Pin | `pilgrim-ios` `v2.0.0` = `7c200bf` |
 | Captured | 2026-09-29, `TZ=UTC` (the nine own walks); 2026-10-02 (the nine water traces, with the own walks recaptured byte for byte) |
+| Not recaptured | Android 2.1.0 moved the parity pin to `e551b11` (iOS PR #91) and `3b78728` without a recapture, by the owner's decision of 2026-10-29: these traces still pin water and own walks as they were, and the temple notice is pinned by unit tests (`docs/plans/2026-10-29-002-feat-temple-stamp-hours-port-plan.md`) |
 | macOS | 26.7.1 (25G241) |
 | Swift | 6.3.3 (swiftlang-6.3.3.1.3), `swiftc -O`, Swift 5 language mode |
 | Cross-check | iOS 26.5 simulator (23F77, iPhone 17 Pro), for the nine own walks. The same harness, built for `arm64-apple-ios26.0-simulator` and run with `xcrun simctl spawn`, loads the runtime's own `CoreLocation.framework` and writes byte-identical `corpus/` and `expected/`. The water traces were captured on macOS only; they make no `CLLocation.distance` call, so CoreLocation can't move them |
@@ -54,7 +55,7 @@ An `expected/*.jsonl` record has an input index `i` and a `kind`. A fix also has
 - `arrivalCount`;
 - `offWaySince` and `lastReacquireAttempt`, in seconds since `t0`;
 - the tracker's `playing`, `voicePaused`, and `queue`;
-- on a stage only, so the own-walk records keep their bytes: the tracker's `firedMarks` (sorted) and `lastNoticeSeconds`, the engine clock at the last water notice, absent until the first. iOS names that clock `lastMarkSeconds` at the pin; the key is the name iOS PR #91 gives it, so a fold-in changes one label in `main.swift` and no expected file.
+- on a stage only, so the own-walk records keep their bytes: the tracker's `firedMarks` (sorted) and `lastNoticeSeconds`, the engine clock at the last water notice, absent until the first (equal to water's hour in every water trace; iOS PR #91 makes it the shared minute). iOS names that clock `lastMarkSeconds` at the pin; the key is the name iOS PR #91 gives it, so a fold-in changes one label in `main.swift` and no expected file.
 
 A fix record also has `calls`. Each call has a `target` (`end`, or a moment id), the place measured to (`to`), and the `cl` and `fresh` values.
 

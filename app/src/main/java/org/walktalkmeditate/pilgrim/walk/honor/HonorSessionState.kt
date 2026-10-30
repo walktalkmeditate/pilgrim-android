@@ -14,10 +14,12 @@ import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.HonorStageOutcome
 import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageStageIdentity
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.honor.HonorEngine
+import org.walktalkmeditate.pilgrim.domain.honor.HonorEngineEvent
 import org.walktalkmeditate.pilgrim.domain.honor.HonorMomentTracker
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPhase
 import org.walktalkmeditate.pilgrim.domain.honor.VoiceKind
+import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.domain.honor.WayMoment
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.domain.seek.SeekGlanceModel
@@ -164,8 +166,8 @@ internal fun WayMoment.voiceGain(): Float =
 
 /**
  * The engine where this row, its moment rows, and its [notices] left it:
- * the water spoken is the walk's water notices, and an unknown kind's row
- * is ignored.
+ * the water and temples spoken are the walk's water and stamp notices, and
+ * an unknown kind's row is ignored.
  */
 internal fun HonorSessionEntity.engineSnapshot(
     rows: Collection<HonorMomentStateEntity>,
@@ -190,12 +192,15 @@ internal fun HonorSessionEntity.engineSnapshot(
         queue = rows.filter { it.queuePosition != null }.sortedBy { it.queuePosition }.map { it.momentId },
         firedMarks = notices.filter { it.kind == HonorNoticeKind.WATER }.mapTo(mutableSetOf()) { it.refId },
         lastNoticeSeconds = lastNoticeSeconds,
+        lastWaterSeconds = lastWaterSeconds,
+        lastStampSeconds = lastStampSeconds,
+        firedStamps = notices.filter { it.kind == HonorNoticeKind.STAMP }.mapTo(mutableSetOf()) { it.refId },
     ),
 )
 
 /**
  * The phase is left out: only arrival's compare-and-set writes it. The
- * water spoken goes out as notice rows, in the same commit.
+ * water and temples spoken go out as notice rows, in the same commit.
  */
 internal fun HonorEngine.Snapshot.toEngineState(walkId: Long) = HonorEngineState(
     walkId = walkId,
@@ -213,7 +218,34 @@ internal fun HonorEngine.Snapshot.toEngineState(walkId: Long) = HonorEngineState
     softTapArmed = softTapArmed,
     arrivalInsideFixes = arrivalInsideFixes,
     lastNoticeSeconds = tracker.lastNoticeSeconds,
+    lastWaterSeconds = tracker.lastWaterSeconds,
+    lastStampSeconds = tracker.lastStampSeconds,
 )
+
+/**
+ * The row a temple ahead writes, or null for none (iOS `showStampCaption`'s
+ * guard, `ActiveWalkViewModel+MarkPins.swift:69-73@e551b11`): the walk's
+ * Way must number the temple and state its hours, since without both there
+ * is no caption, and iOS gives no tap without one
+ * (`ActiveWalkViewModel+Honor.swift:208-215@e551b11`). `:tracker` plans the
+ * tap, so the check is made here, on the staged Way the UI also reads
+ * (stamp-closing spec, "Android split").
+ */
+internal fun stampNotice(
+    walkId: Long,
+    way: Way,
+    event: HonorEngineEvent.StampAhead,
+    firedAt: Long,
+): HonorNoticeEntity? {
+    if (event.temple.templeNumber == null || way.stampHours == null) return null
+    return HonorNoticeEntity(
+        walkId = walkId,
+        kind = HonorNoticeKind.STAMP,
+        refId = event.temple.id,
+        meters = event.meters,
+        firedAt = firedAt,
+    )
+}
 
 /**
  * What the player holds, as iOS's view model tracks it (`activeVoice`,

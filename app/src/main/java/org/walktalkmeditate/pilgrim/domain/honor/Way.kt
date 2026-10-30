@@ -122,10 +122,31 @@ data class WayMoment(
             is WayMomentKind.Waypoint, is WayMomentKind.Rest, is WayMomentKind.Meditation -> null
         }
 
+    /**
+     * The fudasho's number when this place is one of Shikoku's numbered
+     * stamp temples, null otherwise (iOS `templeNumber`,
+     * `Way.swift:95-113@e551b11`): the test for "is this a temple" and the
+     * word the caption uses, so the notice never names a temple the rule
+     * didn't recognise. Read from [text], which the dataset writes as
+     * "Temple 10 · …", never from the `seal` icon, which 48 places that
+     * aren't temples also carry. One to four ASCII digits after the exact
+     * prefix, read as Swift reads characters, and above zero: the temples
+     * are numbered from one, so a zero is a typo and names nothing.
+     */
+    val templeNumber: Int?
+        get() {
+            val text = text ?: return null
+            if (!text.startsWith(TEMPLE_PREFIX)) return null
+            val digits = text.substring(TEMPLE_PREFIX.length).leadingAsciiDigits()
+            if (digits.length !in 1..4) return null
+            return digits.toInt().takeIf { it > 0 }
+        }
+
     companion object {
         const val MAX_TRANSCRIPT_CHARACTERS = 600
         private const val TRANSCRIPT_LINE_CHARACTERS = 120
         private const val SENTENCE_ENDS = ".!?"
+        private const val TEMPLE_PREFIX = "Temple "
 
         /**
          * Trims Swift's whitespace set, drops the empty, and caps at
@@ -188,6 +209,18 @@ data class WayMark(
 data class WayStageHours(
     val min: Double,
     val max: Double,
+)
+
+/**
+ * iOS `WayStampHours` (`Way.swift:151-163@e551b11`): when a route's stamp
+ * office opens and shuts, in minutes since midnight, parsed once at the
+ * import so the rule read on every fix is arithmetic. Only
+ * [closesMinutes] is read; [opensMinutes] is kept as iOS keeps it.
+ */
+@Serializable
+data class WayStampHours(
+    val opensMinutes: Int,
+    val closesMinutes: Int,
 )
 
 @Serializable
@@ -281,6 +314,13 @@ data class Way(
     val spans: List<WaySpan>? = null,
     val marks: List<WayMark>? = null,
     val stage: WayStage? = null,
+    /**
+     * The route's stamp hours, copied onto each of its stages so the walk
+     * reads one Way (`Way.swift:245-249@e551b11`). Optional and last: a
+     * `way.json` written before them, as Android 2.0.0 staged every stage,
+     * decodes with none.
+     */
+    val stampHours: WayStampHours? = null,
 ) {
     val voiceCount: Int get() = moments.count { it.isVoice }
 

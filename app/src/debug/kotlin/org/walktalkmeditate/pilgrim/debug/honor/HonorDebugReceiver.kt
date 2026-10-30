@@ -348,6 +348,11 @@ class HonorDebugReceiver : BroadcastReceiver() {
         val link = withContext(Dispatchers.IO) { wayStore.wayLink(walk.uuid) }
         val way = staged ?: link?.let { withContext(Dispatchers.IO) { wayStore.load(it.wayId) } }
         lines += momentLines(way, honorDao.getMomentStates(walk.id), honorDao.getCardStates(walk.id))
+        lines += "  stamp hours: " +
+            (way?.stampHours?.let { "opens ${it.opensMinutes} min, closes ${it.closesMinutes} min" } ?: "none")
+        honorDao.getNotices(walk.id).forEach {
+            lines += "  notice ${it.kind} ${it.refId} ${String.format(Locale.US, "%.0f", it.meters)} m"
+        }
         lines += "  staged way: ${if (staged != null) "yes" else "no"}"
         lines += "  link: " + when {
             link == null -> "none"
@@ -369,6 +374,8 @@ class HonorDebugReceiver : BroadcastReceiver() {
                 "arrivalInsideFixes=${session.arrivalInsideFixes}",
             "  voice: playing=${session.playingMomentId} paused=${session.voicePaused} rate=${session.voiceRate}",
             "  gates: generation=${session.gateGeneration} lastCommandSeq=${session.lastCommandSeq}",
+            "  clocks: gap=${seconds(session.lastNoticeSeconds)} water=${seconds(session.lastWaterSeconds)} " +
+                "temples=${seconds(session.lastStampSeconds)}",
         )
     }
 
@@ -401,6 +408,8 @@ class HonorDebugReceiver : BroadcastReceiver() {
     }
 
     private fun frac(value: Double?): String = value?.let { String.format(Locale.US, "%.3f", it) } ?: "none"
+
+    private fun seconds(value: Double?): String = value?.let { String.format(Locale.US, "%.1f s", it) } ?: "none"
 
     companion object {
         const val ACTION_LIST = "org.walktalkmeditate.pilgrim.debug.HONOR_LIST"

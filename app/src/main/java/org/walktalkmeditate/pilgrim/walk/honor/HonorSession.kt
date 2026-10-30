@@ -80,7 +80,7 @@ interface HonorArrivalRecorder {
  *   it, so a cached process carries nothing from an earlier walk. The
  *   Way, the frozen preferences, and the engine's state come from Room
  *   and the Ways store alone; a revival restores the anchor, the queue,
- *   and a stage's water spoken and quiet clock, never replays the voice
+ *   and a stage's notices spoken and their clocks, never replays the voice
  *   the dead process was playing or a notice it spoke, and bumps the gate
  *   generation so the UI re-sends its gates. An own walk's Way and a
  *   stage's are the copies staged under the walk at Begin, so a package
@@ -520,7 +520,11 @@ class HonorSession internal constructor(
             commitAndPerform(plan)
         }
 
-        /** iOS `handleHonorEvent` (`ActiveWalkViewModel+Honor.swift:175-212@7c200bf`), split into its writes and its effects. */
+        /**
+         * iOS `handleHonorEvent` (`ActiveWalkViewModel+Honor.swift:175-212@7c200bf`;
+         * its `.stampAhead` arm, `:208-215@e551b11`), split into its writes
+         * and its effects.
+         */
         private fun planEvents(plan: Plan, events: List<HonorEngineEvent>, fix: LocationPoint?) {
             for (event in events) {
                 when (event) {
@@ -552,6 +556,13 @@ class HonorSession internal constructor(
                         )
                         plan.rituals += Ritual.WaterHaptic
                     }
+                    // The water's tap, deliberately, and only with a line to read
+                    // (`ActiveWalkViewModel+Honor.swift:208-215@e551b11`).
+                    is HonorEngineEvent.StampAhead ->
+                        stampNotice(walkId, way, event, firedAt = plan.now)?.let { notice ->
+                            plan.notices += notice
+                            plan.rituals += Ritual.WaterHaptic
+                        }
                     is HonorEngineEvent.Arrived -> plan.rituals += Ritual.Arrive(
                         WayArrival(theirSeconds = event.theirSeconds, yourSeconds = event.yourSeconds),
                         walkedMeters = engine.distanceWalkedMeters,

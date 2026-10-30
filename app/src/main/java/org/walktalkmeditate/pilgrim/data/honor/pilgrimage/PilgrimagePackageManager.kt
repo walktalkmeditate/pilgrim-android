@@ -42,6 +42,7 @@ import org.walktalkmeditate.pilgrim.data.honor.fetchCapped
 import org.walktalkmeditate.pilgrim.data.honor.plainGet
 import org.walktalkmeditate.pilgrim.di.PilgrimagePackageHttpClient
 import org.walktalkmeditate.pilgrim.domain.honor.WayJson
+import org.walktalkmeditate.pilgrim.domain.honor.WayStampHours
 import org.walktalkmeditate.pilgrim.domain.honor.swiftCompareTo
 
 /**
@@ -151,9 +152,10 @@ class PilgrimagePackageManager internal constructor(
     val phase: StateFlow<Phase> = _phase.asStateFlow()
 
     /**
-     * The commit's one write to the store: a stage's id and its `way.json`
-     * text, already in the store's encoding. A seam so a test can fail it
-     * mid-loop and prove the rollback.
+     * The write of a stage's `way.json` to the store, by id and text already
+     * in the store's encoding: the commit's write, and the launch restamp's
+     * ([restampStageHours]). A seam so a test can fail it mid-loop and prove
+     * the rollback, or count the restamp's writes.
      */
     @Volatile internal var saveStage: (id: String, wayJson: String) -> Unit = store::saveEncoded
 
@@ -224,14 +226,60 @@ class PilgrimagePackageManager internal constructor(
      * which iOS leaves to the OS's purge of `tmp/` (A-6). No repair of a
      * half install (owner decision 3, pilgrim-ios #119).
      *
-     * @return what that read found, for the tiles reconcile and, later,
-     *   #91's restamp, which iOS feeds from its same launch read (spec D
-     *   §C2.10). A throw means no read: the caller sweeps nothing.
+     * @return what that read found, for the tiles reconcile and
+     *   [restampStageHours], which iOS feeds from its same launch read
+     *   (spec D §C2.10; `AppDelegate.swift:188-199@e551b11`). A throw means
+     *   no read: the caller sweeps and restamps nothing.
      */
     suspend fun runAtLaunch(): Installed? = onActor {
         val installed = installedOnActor()
         sweepTempSets()
         installed
+    }
+
+    /**
+     * iOS `restampStageHours(of:)` (`PilgrimagePackageManager.swift:156-170@e551b11`):
+     * a route installed by a build whose stages carry no stamp hours
+     * (Android 2.0.0) has them in its `route.json`, committed byte for byte,
+     * and an Update compares releases only, so nothing else would ever hand
+     * them down. Each stage Way whose hours differ from the route's is saved
+     * with the route's through [saveStage], and nothing else about it
+     * changes; the store keeps its `accepted.json`. Compare, then save, so
+     * every launch after the first writes nothing. It never clears hours.
+     *
+     * On the actor and IO, never the main thread, where iOS runs it. It
+     * stands aside while a download is in flight: that download's commit
+     * writes these same files from [offActor], and [isDownloading] covers
+     * that window. A route that states no hours is never touched.
+     *
+     * @return how many stages it left without their hours: a write that
+     *   failed, or a Way that did not load. The caller logs the count; this
+     *   package logs nothing, and a count carries nothing from a package.
+     */
+    suspend fun restampStageHours(installed: Installed): Int = onActor {
+        val hours = installed.route.stampHours
+        if (isDownloading || hours == null) return@onActor 0
+        var left = 0
+        for (index in 0 until installed.route.stageCount) {
+            val id = WayStore.stageWayId(installed.routeId, index)
+            val way = store.load(id)
+            if (way == null) {
+                left++
+                continue
+            }
+            if (way.stampHours == hours) continue
+            try {
+                saveStage(id, WayJson.encode(way.copy(stampHours = hours)))
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (_: Exception) {
+                // That stage stays silent and the next launch tries again: a
+                // notice is never a reason to fail a launch. The count is the
+                // caller's to log.
+                left++
+            }
+        }
+        left
     }
 
     private fun owned(operation: suspend () -> Unit): Deferred<Unit> =
@@ -290,7 +338,13 @@ class PilgrimagePackageManager internal constructor(
             for (index in 0 until fetched.route.stageCount) {
                 val stageUrl = PilgrimageCatalogService.packageUrl(release, entry.id, stageFileName(index))
                     ?: throw refusal(PilgrimageError.NOT_WALKABLE)
-                val plan = StagePlan(entry.id, stageUrl, fetched.route.stageCount, fetched.route.stages[index])
+                val plan = StagePlan(
+                    routeId = entry.id,
+                    url = stageUrl,
+                    stageCount = fetched.route.stageCount,
+                    expected = fetched.route.stages[index],
+                    stampHours = fetched.route.stampHours,
+                )
                 packageBytes += offActor { stageOneStage(plan, temp) }
                 checkBudget(packageBytes, cap)
                 _phase.value = Phase.Downloading(done = index + 2, total = total)
@@ -338,7 +392,12 @@ class PilgrimagePackageManager internal constructor(
     private suspend fun stageOneStage(plan: StagePlan, temp: File): Int {
         val index = plan.expected.index
         val data = fetch(plan.url, PilgrimageWayImporter.MAX_STAGE_BYTES.toLong())
-        val way = PilgrimageWayImporter.way(from = data, routeId = plan.routeId, stageIndex = index)
+        val way = PilgrimageWayImporter.way(
+            from = data,
+            routeId = plan.routeId,
+            stageIndex = index,
+            stampHours = plan.stampHours,
+        )
         val stage = way.stage
         if (stage == null || stage.count != plan.stageCount || stage.name.swiftCompareTo(plan.expected.name) != 0) {
             throw refusal(PilgrimageError.NOT_WALKABLE)
@@ -542,8 +601,18 @@ class PilgrimagePackageManager internal constructor(
 
     private class FetchedRoute(val route: PilgrimageRoute, val bytes: Int)
 
-    /** [expected] is `route.json`'s row at this index, safe by position: the rows are exactly `0 until count`. */
-    private class StagePlan(val routeId: String, val url: HttpUrl, val stageCount: Int, val expected: PilgrimageRouteStage)
+    /**
+     * [expected] is `route.json`'s row at this index, safe by position: the rows are exactly `0 until count`.
+     * [stampHours] is `route.json`'s, copied onto the stage Way here, the one place that holds both files
+     * (`PilgrimagePackageManager.swift:363-366@e551b11`).
+     */
+    private class StagePlan(
+        val routeId: String,
+        val url: HttpUrl,
+        val stageCount: Int,
+        val expected: PilgrimageRouteStage,
+        val stampHours: WayStampHours?,
+    )
 
     /** [previousStageCount] is what this route had installed before, so a rollback reaches past what it wrote. */
     private class CommitPlan(val routeId: String, val release: String, val stageCount: Int, val previousStageCount: Int)

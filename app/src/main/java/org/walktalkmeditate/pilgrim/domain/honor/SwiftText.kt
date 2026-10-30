@@ -65,6 +65,24 @@ internal fun String.prefixCharacters(maxCharacters: Int): String {
 }
 
 /**
+ * Swift's `prefix { $0.isASCII && $0.isNumber }`: the leading characters,
+ * whole grapheme clusters, that are each one ASCII digit. A digit carrying
+ * a combining mark is one Swift character and not ASCII, so the run stops
+ * before it, where a `'0'..'9'` test on UTF-16 units would read on.
+ */
+internal fun String.leadingAsciiDigits(): String {
+    val characters = BreakIterator.getCharacterInstance(Locale.ROOT)
+    characters.setText(this)
+    var start = 0
+    var end = characters.next()
+    while (end != BreakIterator.DONE && end - start == 1 && this[start] in '0'..'9') {
+        start = end
+        end = characters.next()
+    }
+    return substring(0, start)
+}
+
+/**
  * Swift's `String <`: both sides compared in NFC, by Unicode scalar.
  * Kotlin's `compareTo` compares the raw UTF-16 units instead, which puts a
  * decomposed accent, or a character beyond the BMP, somewhere else.

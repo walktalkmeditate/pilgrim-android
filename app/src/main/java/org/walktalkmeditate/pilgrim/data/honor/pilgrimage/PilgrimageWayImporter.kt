@@ -4,6 +4,7 @@ package org.walktalkmeditate.pilgrim.data.honor.pilgrimage
 import java.nio.charset.CharacterCodingException
 import kotlin.math.abs
 import kotlinx.serialization.DeserializationStrategy
+import kotlinx.serialization.Serializable
 import org.walktalkmeditate.pilgrim.data.honor.WayImporter
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.domain.honor.OwnWalkWayBuilder
@@ -19,6 +20,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.domain.honor.WayStage
 import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
 import org.walktalkmeditate.pilgrim.domain.honor.WayStagePlace
+import org.walktalkmeditate.pilgrim.domain.honor.WayStampHours
 import org.walktalkmeditate.pilgrim.domain.honor.prefixCharacters
 import org.walktalkmeditate.pilgrim.domain.honor.swiftCompareTo
 import org.walktalkmeditate.pilgrim.domain.honor.trimmedOrNull
@@ -63,6 +65,7 @@ object PilgrimageWayImporter {
 
     private const val WAYPOINT_KIND = "waypoint"
     private val LANGUAGE_CODE = Regex("[a-z]{2,3}")
+    private val CLOCK_PART = Regex("[+-]?[0-9]{1,2}")
 
     /** Swift's `WayMarkKind(rawValue:)`: the six serial names exactly, never the Kotlin names. */
     private val MARK_KINDS: Map<String, WayMarkKind> = WayMarkKind.serializer().descriptor.let { descriptor ->
@@ -70,14 +73,16 @@ object PilgrimageWayImporter {
     }
 
     /**
-     * iOS `way(from:routeId:stageIndex:)` (`PilgrimageWayImporter.swift:168-203@7c200bf`),
+     * iOS `way(from:routeId:stageIndex:stampHours:)` (`PilgrimageWayImporter.swift:202-241@e551b11`),
      * its checks in iOS's order (P1 §5.1): the request before the bytes,
      * the length cap before the decode, the file's identity against the
      * request, every bound, the departure date, then the line's length.
+     * [stampHours] is the route's, which the package manager hands down as
+     * it stages each stage; a stage read on its own carries none.
      *
      * @throws PilgrimageException [PilgrimageError.NOT_WALKABLE], for every refusal.
      */
-    fun way(from: ByteArray, routeId: String, stageIndex: Int): Way {
+    fun way(from: ByteArray, routeId: String, stageIndex: Int, stampHours: WayStampHours? = null): Way {
         if (!WayStore.isValidRouteId(routeId) || stageIndex !in 0 until MAX_STAGE_COUNT) throw notWalkable()
         if (from.size > MAX_STAGE_BYTES) throw notWalkable()
         val file = decoded(StageFile.serializer(), from)
@@ -107,6 +112,7 @@ object PilgrimageWayImporter {
             weather = null,
             marks = marks(file.marks),
             stage = stage(file.stage),
+            stampHours = stampHours,
         )
     }
 
@@ -140,6 +146,7 @@ object PilgrimageWayImporter {
             stageCount = file.stageCount.toInt(),
             tradition = file.tradition?.prefixCharacters(WayImporter.MAX_LABEL_CHARACTERS),
             summary = file.summary.trimmedOrNull(MAX_SUMMARY_CHARACTERS),
+            stampHours = stampHours(from),
             stages = file.stages.sortedBy { it.index }.map { row ->
                 PilgrimageRouteStage(
                     index = row.index.toInt(),
@@ -225,6 +232,50 @@ object PilgrimageWayImporter {
     private fun isSaneHours(hours: StageFile.Hours): Boolean =
         hours.min.isFinite() && hours.max.isFinite() &&
             hours.min in 0.0..MAX_HOURS && hours.max in 0.0..MAX_HOURS && hours.max >= hours.min
+
+    /**
+     * iOS's `try?` read of `RouteFile.StampHours` and `stampHours(_:)`
+     * (`PilgrimageWayImporter.swift:158-161,196,388-392@e551b11`): an object
+     * whose `opens` and `closes` are both JSON strings, each "HH:mm", or no
+     * hours at all. Any other shape (a missing or null member, numbers, a
+     * bare string, `null`, an array of windows) is no hours, and the route
+     * still decodes; a pair either half of which won't read is dropped whole.
+     * Read by a typed probe of the same bytes, which fails at the first token
+     * of a wrong shape and builds no tree, so a deeply nested value can't
+     * overflow the stack. Only decode errors are caught, never an `Error`.
+     */
+    private fun stampHours(from: ByteArray): WayStampHours? {
+        val wire = try {
+            decoded(StampHoursProbe.serializer(), from).stampHours
+        } catch (e: PilgrimageException) {
+            null
+        } ?: return null
+        val opens = minutesSinceMidnight(wire.opens) ?: return null
+        val closes = minutesSinceMidnight(wire.closes) ?: return null
+        return WayStampHours(opensMinutes = opens, closesMinutes = closes)
+    }
+
+    @Serializable
+    private class StampHoursProbe(val stampHours: StampHoursWire? = null)
+
+    @Serializable
+    private class StampHoursWire(val opens: String, val closes: String)
+
+    /**
+     * iOS `minutesSinceMidnight` (`PilgrimageWayImporter.swift:394-400@e551b11`,
+     * annex A.1.2): two parts on `:`, empty ones kept, each exactly two
+     * characters that Swift's `Int(_:)` reads, so a sign is allowed ("+8" is
+     * 8) and only ASCII digits are, which a bare `toIntOrNull` wouldn't hold
+     * to; then 0-23 and 0-59.
+     */
+    private fun minutesSinceMidnight(clock: String): Int? {
+        val parts = clock.split(':')
+        if (parts.size != 2 || parts.any { it.length != 2 || !CLOCK_PART.matches(it) }) return null
+        val hour = parts[0].toInt()
+        val minute = parts[1].toInt()
+        if (hour !in 0..23 || minute !in 0..59) return null
+        return hour * 60 + minute
+    }
 
     /**
      * Only waypoints are kept; any other kind is skipped once it has been

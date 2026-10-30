@@ -84,6 +84,7 @@ import org.walktalkmeditate.pilgrim.domain.isInProgress
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.ui.honor.ListeningChip
 import org.walktalkmeditate.pilgrim.ui.honor.WayRelation
+import org.walktalkmeditate.pilgrim.ui.honor.WayStampNotice
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
@@ -418,19 +419,33 @@ private fun MinimizedContent(
     }
 }
 
-/** The caption line's words, written when drawn, in the walker's unit at that moment (Annex A.11 item 3). */
+/** The caption line's words, written when drawn, in the walker's unit and clock at that moment (Annex A.11 item 3). */
 internal object HonorCaptionCopy {
 
     /**
-     * "off the way · N m", always metres (pilgrim-ios #109, matched), or
-     * "water in 280 m" / "water in 0.2 mi" as iOS's `WayDistance` writes
-     * it, a non-finite or negative distance reading 0.
+     * "off the way · N m", always metres (pilgrim-ios #109, matched); "water
+     * in 280 m" / "water in 0.2 mi" as iOS's `WayDistance` writes it; "temple
+     * 10 stamps until 5 · 3.2 km" with the hour on the walker's [twelveHour]
+     * clock. A non-finite or negative distance reads 0.
      */
-    fun text(resources: Resources, caption: HonorCaption, units: UnitSystem): String = when (caption) {
+    fun text(
+        resources: Resources,
+        caption: HonorCaption,
+        units: UnitSystem,
+        twelveHour: Boolean,
+    ): String = when (caption) {
         is HonorCaption.OffWay -> resources.getString(R.string.honor_soft_tap_caption, caption.meters.toString())
         is HonorCaption.Water -> resources.getString(
             R.string.honor_water_caption,
             WayRelation.distance(if (caption.meters.isFinite()) caption.meters else 0.0, units),
+        )
+        is HonorCaption.Stamp -> WayStampNotice.caption(
+            resources,
+            templeNumber = caption.templeNumber,
+            closesMinutes = caption.closesMinutes,
+            meters = caption.meters,
+            units = units,
+            twelveHour = twelveHour,
         )
     }
 }
@@ -459,7 +474,9 @@ private fun HonorMinimizedContent(
     val distance = WalkFormat.distance(distanceMeters, units)
     val remaining = honor.remainingMeters?.let { WalkFormat.distance(it, units) }
         ?: stringResource(R.string.honor_stat_remaining_unknown)
-    val caption = honor.caption?.let { HonorCaptionCopy.text(LocalResources.current, it, units) }
+    val resources = LocalResources.current
+    val twelveHour = WayStampNotice.isTwelveHourClock(LocalContext.current)
+    val caption = honor.caption?.let { HonorCaptionCopy.text(resources, it, units, twelveHour) }
     val third = caption ?: stringResource(R.string.honor_stats_a11y_remaining, remaining)
     val stats = stringResource(R.string.honor_stats_a11y_value, duration, distance, third)
     val value = intention?.takeIf { it.isNotEmpty() }

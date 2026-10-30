@@ -36,4 +36,28 @@ object HonorTuning {
 
     /** Stage-only: at most one water caption per this many seconds of the engine clock. */
     const val MARK_QUIET_SECONDS = 3600.0
+
+    /**
+     * The least walking between any two notices on the caption line, water
+     * or temple (`HonorTuning.swift:33-36@e551b11`): the line holds a notice
+     * for 20 s, and a minute keeps one from replacing another still being
+     * read, or two taps landing together.
+     */
+    const val NOTICE_GAP_SECONDS = 60.0
+
+    /**
+     * How long before the stamp office shuts the notice is worth saying, from
+     * 15:00 for a 17:00 close (`HonorTuning.swift:37-40@e551b11`).
+     */
+    const val STAMP_NOTICE_MINUTES = 120
+
+    /** Nearer than this and the temple has stopped being a decision: the walker is already arriving (`:41-43`). */
+    const val STAMP_MIN_AHEAD_METERS = 1000.0
+
+    /**
+     * The least walking between two temple notices (`:44-50`): Shikoku's
+     * temples can stand barely a kilometre apart, and water's hour would
+     * hold a 16:10 notice's successor past 17:00.
+     */
+    const val STAMP_QUIET_SECONDS = 600.0
 }

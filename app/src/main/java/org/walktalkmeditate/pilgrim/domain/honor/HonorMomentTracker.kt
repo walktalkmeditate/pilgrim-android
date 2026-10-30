@@ -1,19 +1,34 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.domain.honor
 
+import java.time.Instant
+import java.time.ZoneId
+import org.walktalkmeditate.pilgrim.domain.Clock
+
 /**
  * Pure moment bookkeeping for an honor walk (iOS
  * `HonorMomentTracker.swift@7c200bf`): which moments have been reached,
  * which voice is playing or waiting, and when a waiting voice is
- * abandoned. No clock and no timers; [HonorEngine] feeds it fixes and
- * gates. Parity spec B §8.
+ * abandoned. No clock of its own and no timers; [HonorEngine] feeds it
+ * fixes and gates. Parity spec B §8.
  *
  * It also watches a pilgrimage stage's water (pilgrimage-stage spec P3
- * §2): only on-way water marks, each spoken once, at most one per
- * [HonorTuning.MARK_QUIET_SECONDS] of the engine clock with the first
- * free, and only within [HonorTuning.MARK_AHEAD_METERS] ahead along the
- * line while the walker is on the Way. It reads no gate, and runs only on
- * a fix. Own and shared Ways carry no marks, so for them it never speaks.
+ * §2): only on-way water marks, each spoken once, within
+ * [HonorTuning.MARK_AHEAD_METERS] ahead along the line while the walker is
+ * on the Way. Clocks of engine seconds keep the caption line quiet (iOS PR
+ * #91, `HonorMomentTracker.swift:62-81@e551b11`): water's own hour
+ * ([HonorTuning.MARK_QUIET_SECONDS]) and a minute between any two notices
+ * ([HonorTuning.NOTICE_GAP_SECONDS]), each first notice free. It reads no
+ * gate, and runs only on a fix. Own and shared Ways carry no marks, so for
+ * them it never speaks.
+ *
+ * A Shikoku stage also has a [StampOffice] (iOS PR #91, `:193-223@e551b11`):
+ * in the office's last [HonorTuning.STAMP_NOTICE_MINUTES], the nearest
+ * numbered temple at least [HonorTuning.STAMP_MIN_AHEAD_METERS] ahead is
+ * named, once, with [HonorTuning.STAMP_QUIET_SECONDS] of walking between
+ * temples. A temple already named holds every later one until it is
+ * inside the kilometre. The temple goes before the fountain on a fix, and
+ * the shared minute then lets only the first speak.
  */
 class HonorMomentTracker(
     moments: List<WayMoment>,
@@ -21,6 +36,8 @@ class HonorMomentTracker(
     private val geometry: WayGeometry,
     private val voicesEnabled: Boolean,
     private val distance: HonorDistance = WGS84_HONOR_DISTANCE,
+    /** The route's stamp office; null on every Way but a Shikoku stage's, and then no temple is ever named. */
+    private val stamp: StampOffice? = null,
 ) {
 
     sealed class Action {
@@ -32,6 +49,32 @@ class HonorMomentTracker(
 
         /** A water source [meters] ahead on the line, unrounded. */
         data class MarkAhead(val mark: WayMark, val meters: Double) : Action()
+
+        /** A stamp temple [meters] ahead on the line, unrounded, with its office soon to shut. */
+        data class StampAhead(val temple: WayMoment, val meters: Double) : Action()
+    }
+
+    /**
+     * iOS `StampOffice` (`HonorMomentTracker.swift:21-45@e551b11`): when the
+     * route's stamp office shuts, in minutes since midnight, and the wall
+     * clock and zone to read that against, both fixed when the engine is
+     * built.
+     */
+    class StampOffice(val closesMinutes: Int, val zone: ZoneId, private val clock: Clock) {
+
+        /**
+         * True from [HonorTuning.STAMP_NOTICE_MINUTES] before the office
+         * shuts until it does, on the local minute of the day. Deliberately
+         * reads the closing time alone, on the same day: every value the
+         * dataset carries is 08:00–17:00, so `opens` never falls inside the
+         * window and no close wraps past midnight.
+         */
+        val isClosingSoon: Boolean
+            get() {
+                val local = Instant.ofEpochMilli(clock.now()).atZone(zone)
+                val minutesNow = local.hour * 60 + local.minute
+                return minutesNow >= closesMinutes - HonorTuning.STAMP_NOTICE_MINUTES && minutesNow < closesMinutes
+            }
     }
 
     data class Gates(
@@ -45,14 +88,19 @@ class HonorMomentTracker(
 
     /**
      * What a revival needs back: the moments reached, the voices waiting in
-     * queue order, the water marks spoken, and the engine clock at the last
-     * notice (null while the first is still free).
+     * queue order, the water marks and temples spoken, and the notice
+     * clocks, each null while its first notice is still free (a null
+     * restored stays null, never 0).
      */
     data class Snapshot(
         val reached: Set<String>,
         val queue: List<String>,
         val firedMarks: Set<String>,
         val lastNoticeSeconds: Double?,
+        val lastWaterSeconds: Double?,
+        val lastStampSeconds: Double?,
+        /** The temples named, by moment id. */
+        val firedStamps: Set<String>,
     )
 
     /**
@@ -81,16 +129,35 @@ class HonorMomentTracker(
                 else -> 0
             }
         }
+
+    /**
+     * The stamp temples among the moments, in the order they are passed (the
+     * frac-then-id sort above), empty whenever the route states no hours, so
+     * the scan has nothing to scan on every Way but Shikoku's (`:97@e551b11`).
+     */
+    private val fudasho: List<WayMoment> =
+        if (stamp == null) emptyList() else this.moments.filter { it.templeNumber != null }
+    private val firedStamps = mutableSetOf<String>()
     private val reached = mutableSetOf<String>()
     private val queue = mutableListOf<WayMoment>()
     private val firedMarks = mutableSetOf<String>()
 
     /**
-     * The engine clock at the last notice; null means the first is free. iOS
-     * names it `lastMarkSeconds` (`HonorMomentTracker.swift:37@7c200bf`); the
-     * name is the one iOS PR #91 gives it, a clock that notice kinds share.
+     * The engine clock at the last notice of either kind, read only for the
+     * minute that keeps two notices off the caption line at once; null means
+     * the line is free (iOS `lastNoticeSeconds`, `HonorMomentTracker.swift:68-73@e551b11`).
+     * That minute can cost one of them, as iOS documents and intends: a
+     * fountain under about 80 m ahead when another notice speaks is passed
+     * before the minute is up, and a temple 1.00-1.08 km ahead is inside the
+     * kilometre by then.
      */
     private var lastNoticeSeconds: Double? = null
+
+    /** Water's own hour: the engine clock at the last water notice; null means the first is free (`:64-67`). */
+    private var lastWaterSeconds: Double? = null
+
+    /** The temples' ten minutes: the engine clock at the last temple notice; null means the first is free (`:80-81`). */
+    private var lastStampSeconds: Double? = null
 
     var playing: WayMoment? = null
         private set
@@ -141,6 +208,10 @@ class HonorMomentTracker(
             }
         }
 
+        // The temple before the fountain: when both are due on one fix the
+        // minute lets only the first speak, and of the two an office about to
+        // shut is the one still worth a walker's afternoon (`:138-143@e551b11`).
+        actions += stampAhead(progressFrac, activeSeconds, isOnWay)
         actions += waterAhead(progressFrac, activeSeconds, isOnWay)
         actions += startNextIfPossible(gates)
         return actions
@@ -172,12 +243,16 @@ class HonorMomentTracker(
         queue = queue.map { it.id },
         firedMarks = firedMarks.toSet(),
         lastNoticeSeconds = lastNoticeSeconds,
+        lastWaterSeconds = lastWaterSeconds,
+        lastStampSeconds = lastStampSeconds,
+        firedStamps = firedStamps.toSet(),
     )
 
     /**
      * Restores [snapshot] with nothing playing: a voice that was playing when
      * its process died is over, never replayed (plan U17). Moment ids this
-     * Way does not carry, and mark ids it does not watch, are dropped.
+     * Way does not carry, and mark and temple ids it does not watch, are
+     * dropped.
      */
     fun restore(snapshot: Snapshot) {
         val byId = moments.associateBy { it.id }
@@ -188,7 +263,12 @@ class HonorMomentTracker(
         val watched = marks.mapTo(HashSet()) { it.id }
         firedMarks.clear()
         snapshot.firedMarks.filterTo(firedMarks) { it in watched }
+        val temples = fudasho.mapTo(HashSet()) { it.id }
+        firedStamps.clear()
+        snapshot.firedStamps.filterTo(firedStamps) { it in temples }
         lastNoticeSeconds = snapshot.lastNoticeSeconds
+        lastWaterSeconds = snapshot.lastWaterSeconds
+        lastStampSeconds = snapshot.lastStampSeconds
         playing = null
         isVoicePaused = false
     }
@@ -201,14 +281,16 @@ class HonorMomentTracker(
     }
 
     /**
-     * iOS `waterAhead` (`HonorMomentTracker.swift:124-139@7c200bf`): the
+     * iOS `waterAhead` (`HonorMomentTracker.swift:175-191@e551b11`): the
      * nearest unfired water the walker is about to reach. Never one already
-     * behind them, never off the Way, and at most one an hour of walking;
-     * the marks skipped inside the quiet hour stay silent pins.
+     * behind them, never off the Way, never inside the minute after another
+     * notice, and at most one an hour of walking; the marks skipped inside
+     * the quiet hour stay silent pins. A water notice writes its own hour
+     * and the shared minute.
      */
     private fun waterAhead(progressFrac: Double, activeSeconds: Double, isOnWay: Boolean): List<Action> {
-        if (!isOnWay || marks.isEmpty() || !(geometry.totalMeters > 0)) return emptyList()
-        val last = lastNoticeSeconds
+        if (!isOnWay || marks.isEmpty() || !(geometry.totalMeters > 0) || !isLineFree(activeSeconds)) return emptyList()
+        val last = lastWaterSeconds
         if (last != null && activeSeconds - last < HonorTuning.MARK_QUIET_SECONDS) return emptyList()
         for (mark in marks) {
             if (mark.id in firedMarks) continue
@@ -216,10 +298,50 @@ class HonorMomentTracker(
             if (!(ahead >= 0)) continue
             if (!(ahead <= HonorTuning.MARK_AHEAD_METERS)) break
             firedMarks += mark.id
+            lastWaterSeconds = activeSeconds
             lastNoticeSeconds = activeSeconds
             return listOf(Action.MarkAhead(mark, meters = ahead))
         }
         return emptyList()
+    }
+
+    /**
+     * iOS `stampAhead` (`HonorMomentTracker.swift:193-223@e551b11`): the
+     * nearest stamp temple still far enough ahead to be a choice, in the last
+     * two hours its office is open. Once per temple, never one behind, never
+     * off the way, never inside the minute after another notice, and ten
+     * minutes of walking after the last temple. A temple behind or inside
+     * the kilometre is passed over; the first one past it either speaks or,
+     * if it was named already, ends the scan. A fact and never a forecast:
+     * what the office does and how far it is.
+     */
+    private fun stampAhead(progressFrac: Double, activeSeconds: Double, isOnWay: Boolean): List<Action> {
+        val office = stamp
+        if (!isOnWay || fudasho.isEmpty() || !(geometry.totalMeters > 0) || office == null ||
+            !isLineFree(activeSeconds) || !office.isClosingSoon
+        ) {
+            return emptyList()
+        }
+        val last = lastStampSeconds
+        if (last != null && activeSeconds - last < HonorTuning.STAMP_QUIET_SECONDS) return emptyList()
+        for (temple in fudasho) {
+            val ahead = (temple.frac - progressFrac) * geometry.totalMeters
+            // Behind them, or close enough that the walk has already decided.
+            if (!(ahead >= HonorTuning.STAMP_MIN_AHEAD_METERS)) continue
+            // The nearest choice, already named: the next is not news yet.
+            if (temple.id in firedStamps) return emptyList()
+            firedStamps += temple.id
+            lastStampSeconds = activeSeconds
+            lastNoticeSeconds = activeSeconds
+            return listOf(Action.StampAhead(temple, meters = ahead))
+        }
+        return emptyList()
+    }
+
+    /** One notice on the caption line at a time, whatever its kind (`:225-229`): exactly a minute is free. */
+    private fun isLineFree(activeSeconds: Double): Boolean {
+        val last = lastNoticeSeconds ?: return true
+        return activeSeconds - last >= HonorTuning.NOTICE_GAP_SECONDS
     }
 
     private fun place(moment: WayMoment): WayCoordinate = moment.at ?: geometry.coordinate(atFrac = moment.frac)
