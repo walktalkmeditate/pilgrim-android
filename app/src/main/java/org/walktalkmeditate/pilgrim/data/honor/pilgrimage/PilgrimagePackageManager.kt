@@ -152,9 +152,10 @@ class PilgrimagePackageManager internal constructor(
     val phase: StateFlow<Phase> = _phase.asStateFlow()
 
     /**
-     * The commit's one write to the store: a stage's id and its `way.json`
-     * text, already in the store's encoding. A seam so a test can fail it
-     * mid-loop and prove the rollback.
+     * The write of a stage's `way.json` to the store, by id and text already
+     * in the store's encoding: the commit's write, and the launch restamp's
+     * ([restampStageHours]). A seam so a test can fail it mid-loop and prove
+     * the rollback, or count the restamp's writes.
      */
     @Volatile internal var saveStage: (id: String, wayJson: String) -> Unit = store::saveEncoded
 
@@ -237,7 +238,7 @@ class PilgrimagePackageManager internal constructor(
     }
 
     /**
-     * iOS `restampStageHours(of:)` (`PilgrimagePackageManager.swift@e551b11`):
+     * iOS `restampStageHours(of:)` (`PilgrimagePackageManager.swift:156-170@e551b11`):
      * a route installed by a build whose stages carry no stamp hours
      * (Android 2.0.0) has them in its `route.json`, committed byte for byte,
      * and an Update compares releases only, so nothing else would ever hand
@@ -250,24 +251,35 @@ class PilgrimagePackageManager internal constructor(
      * stands aside while a download is in flight: that download's commit
      * writes these same files from [offActor], and [isDownloading] covers
      * that window. A route that states no hours is never touched.
+     *
+     * @return how many stages it left without their hours: a write that
+     *   failed, or a Way that did not load. The caller logs the count; this
+     *   package logs nothing, and a count carries nothing from a package.
      */
-    suspend fun restampStageHours(installed: Installed) = onActor {
+    suspend fun restampStageHours(installed: Installed): Int = onActor {
         val hours = installed.route.stampHours
-        if (isDownloading || hours == null) return@onActor
+        if (isDownloading || hours == null) return@onActor 0
+        var left = 0
         for (index in 0 until installed.route.stageCount) {
             val id = WayStore.stageWayId(installed.routeId, index)
             val way = store.load(id)
-            if (way == null || way.stampHours == hours) continue
+            if (way == null) {
+                left++
+                continue
+            }
+            if (way.stampHours == hours) continue
             try {
                 saveStage(id, WayJson.encode(way.copy(stampHours = hours)))
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (_: Exception) {
                 // That stage stays silent and the next launch tries again: a
-                // notice is never a reason to fail a launch. iOS prints the
-                // failure; nothing in this package logs.
+                // notice is never a reason to fail a launch. The count is the
+                // caller's to log.
+                left++
             }
         }
+        left
     }
 
     private fun owned(operation: suspend () -> Unit): Deferred<Unit> =

@@ -276,7 +276,10 @@ class HonorFinalizer internal constructor(
             val manager = packages.get()
             val installed = manager.runAtLaunch()
             tiles.reconcile(installed?.let { PilgrimageTilesManager.InstalledRoute(it.routeId, it.route.stageCount) })
-            if (installed != null) manager.restampStageHours(installed)
+            if (installed != null) {
+                val left = manager.restampStageHours(installed)
+                if (left > 0) Log.w(TAG, "the launch left $left stage(s) without their stamp hours")
+            }
         }
     }
 }

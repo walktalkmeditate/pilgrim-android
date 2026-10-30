@@ -682,7 +682,7 @@ The tracker's `Snapshot` (`P/domain/honor/HonorMomentTracker.kt:51-56`) gains `f
 **Android additions to record at the gate.** These extend annex A.11:
 
 8. The launch hand-down runs on IO, under the package actor, not on the main thread.
-9. **A live walk is unaffected by the restamp.** A stage walk reads the copy staged under the walk at Begin (`P/walk/honor/HonorSession.kt:240-258`), so a restamp at UI launch while `:tracker` is walking changes nothing for that walk. iOS can't be in this state, because it never resumes a walk.
+9. **A live walk is unaffected by the restamp.** A stage walk reads the copy staged under the walk at Begin (`P/walk/honor/HonorSession.kt:240-258`), so a restamp at UI launch while `:tracker` is walking changes nothing for that walk. iOS can't be in this state, because it never resumes a walk. The launch restamp runs even under a live walk and relies on the walk's staged copy: a walk begun in the same launch before the restamp finishes stages a copy with no hours, and is silent until the next walk.
 10. **The tap can lead the caption on screen.** The caption appears when Room emits the `STAMP` row in the UI process, a beat after `:tracker`'s haptic. This is the same ordering water already has.
 
 **Housekeeping.** `CLAUDE.md:15` and `:89` still say #91 rides Android 2.0.1. The 2.1.0 plan updates both, along with the parity line.

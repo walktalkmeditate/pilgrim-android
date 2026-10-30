@@ -1685,6 +1685,21 @@ class HonorWalkViewModelTest {
         assertEquals(stamp to null, stillShown to vm.sheet.value!!.caption)
     }
 
+    /** The latest notice is the last one spoken, not the latest by a wall clock that was set back in between. */
+    @Test
+    fun `a notice spoken after the clock was set back is still the latest`() = runTest(dispatcher) {
+        startStageWalk(templeStageWay(HonorHarness.SHIKOKU_HOURS))
+        val vm = viewModel()
+        collectCards(vm)
+        vm.state.awaitValue { it?.session != null }
+
+        db.honorDao().insertNotice(stampNotice(meters = 3200.0, firedAt = clock.now() + 120_000L))
+        db.honorDao().insertNotice(waterNotice(refId = "wp-osm-water-node1", meters = 280.0, firedAt = clock.now()))
+
+        val caption = vm.sheet.awaitValue { it?.caption is HonorCaption.Water }!!.caption
+        assertEquals(HonorCaption.Water(280.0), caption)
+    }
+
     @Test
     fun `a temple reads in the walker's clock and unit, a distance that isn't a number reading 0`() {
         val resources = context.resources

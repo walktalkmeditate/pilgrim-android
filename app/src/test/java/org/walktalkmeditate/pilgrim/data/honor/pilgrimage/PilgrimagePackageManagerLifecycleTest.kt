@@ -481,10 +481,11 @@ class PilgrimagePackageManagerLifecycleTest {
         manager.download(h.entry, RELEASE).awaitBlocking()
         val saves = countingSaves(manager)
 
-        manager.restamp(requireNotNull(manager.installedBlocking()))
+        val left = manager.restamp(requireNotNull(manager.installedBlocking()))
 
         assertEquals(0, saves.get())
-        assertNull(h.wayStore.load(stageZeroId)?.stampHours)
+        assertEquals(0, left)
+        assertNull(requireNotNull(h.wayStore.load(stageZeroId)).stampHours)
     }
 
     /** A launch pass never fails the launch: a stage the disk refuses stays silent, and the rest learn their hours. */
@@ -498,9 +499,10 @@ class PilgrimagePackageManagerLifecycleTest {
             h.wayStore.saveEncoded(id, wayJson)
         }
 
-        manager.restamp(requireNotNull(manager.installedBlocking()))
+        val left = manager.restamp(requireNotNull(manager.installedBlocking()))
 
-        assertNull("left as it was", h.wayStore.load(stageZeroId)?.stampHours)
+        assertEquals("the one stage the disk refused", 1, left)
+        assertNull("left as it was", requireNotNull(h.wayStore.load(stageZeroId)).stampHours)
         assertNotNull(h.wayStore.load(stageOneId)?.stampHours)
     }
 

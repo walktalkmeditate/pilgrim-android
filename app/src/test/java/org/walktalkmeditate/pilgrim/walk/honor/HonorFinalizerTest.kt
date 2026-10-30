@@ -995,19 +995,27 @@ class HonorFinalizerTest {
             packages.rewriteInstalledRouteFile(
                 JsonArray(listOf(stampHoursJson("08:00", "12:00"), stampHoursJson("13:00", "17:00"))),
             )
+            val saves = AtomicInteger()
+            val manager = packages.makeManager().also {
+                it.saveStage = { id, wayJson ->
+                    saves.incrementAndGet()
+                    packages.wayStore.saveEncoded(id, wayJson)
+                }
+            }
             listOf("pilgrimage:camino-frances:0", "pilgrimage:camino-frances:1", "pilgrimage:camino-norte:0")
                 .forEach { tiles.loader.seed(it, corridorHash = "h") }
 
-            launchFinalizer(tiles, packages.makeManager()).runAtLaunch()
+            launchFinalizer(tiles, manager).runAtLaunch()
             tiles.drain()
             tiles.loader.releaseRegions()
 
+            assertEquals("nothing is written for hours it cannot read", 0, saves.get())
             assertEquals(
                 "only the map no installed route owns goes",
                 setOf("pilgrimage:camino-norte:0"),
                 tiles.loader.removedIds.toSet(),
             )
-            assertNull("and its stages stay silent", packages.wayStore.load("pilgrimage:camino-frances:0")?.stampHours)
+            assertNull("and its stages stay silent", requireNotNull(packages.wayStore.load("pilgrimage:camino-frances:0")).stampHours)
         } finally {
             tiles.close()
             packages.close()
