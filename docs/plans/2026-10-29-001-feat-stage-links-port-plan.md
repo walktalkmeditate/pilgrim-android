@@ -1,7 +1,7 @@
 ---
 title: "feat: Honor — stage links, iOS main @ 3b78728 parity, Android 2.1.0 (Phase 22)"
 type: feat
-status: active
+status: completed
 date: 2026-10-29
 origin: docs/parity/2026-10-28-stage-links-port.md
 ---

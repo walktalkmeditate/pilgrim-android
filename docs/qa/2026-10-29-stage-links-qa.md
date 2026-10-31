@@ -2,6 +2,8 @@
 
 Device: the owner's Android phone. Build: the top of `feat/stage-links`, debug variant (`org.walktalkmeditate.pilgrim.debug`). Spec: `docs/parity/2026-10-28-stage-links-port.md`. Plan: `docs/plans/2026-10-29-001-feat-stage-links-port-plan.md`. An iPhone on a build with iOS #125 helps for side-by-side rows but isn't required.
 
+**Not run on a device.** The owner closed the 2.1.0 device pass on 2026-10-30 after the temple checklist's § D and released. These rows stay open for a later pass.
+
 ## Setup
 
 - Install: `./gradlew :app:installDebug`.

@@ -1,7 +1,7 @@
 ---
 title: "feat: Honor — a temple ahead stamps until five, iOS PR #91 port, Phase 22 (Android 2.1.0)"
 type: feat
-status: active
+status: completed
 date: 2026-10-29
 origin: docs/parity/2026-10-28-stamp-closing-port.md
 ---

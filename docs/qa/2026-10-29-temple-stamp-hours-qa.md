@@ -2,6 +2,8 @@
 
 Device: the owner's phone. Owner: user. Build: the top of `feat/temple-stamp-hours`, debug variant (`org.walktalkmeditate.pilgrim.debug`), Honor flag on.
 
+**Run 2026-10-30** on a OnePlus CPH2655 (Android 16), with the debug build of `main` @ `246aa1e4` (both Phase 22 PRs merged). § D1–D4 passed. The owner closed the pass there and released 2.1.0, so D5 and §§ A–C, E and F were not run.
+
 This is plan unit U29 (`docs/plans/2026-10-29-002-feat-temple-stamp-hours-port-plan.md`). The spec is `docs/parity/2026-10-28-stamp-closing-port.md`; each row names the unit it checks.
 
 **Schema 13.** This build's first launch migrates Room 12 → 13 on the phone. From then on schema 13 is frozen: any later change is schema 14 with a migration.
@@ -50,11 +52,11 @@ This is plan unit U29 (`docs/plans/2026-10-29-002-feat-temple-stamp-hours-port-p
 
 | # | Check | Result |
 |---|---|---|
-| D1 | `adb uninstall $P`. Build 2.0.0's debug app: `git worktree add ../pilgrim-android-v200 v2.0.0`, copy `local.properties` into it, `./gradlew :app:assembleDebug` there, `adb install` its APK. Download `shikoku-88-awa`, and save its maps. The stage `way.json` (Setup's one-liner) prints `stampHours None`. | — |
-| D2 | Note the mtimes: `adb shell run-as $P stat -c '%Y %n' 'no_backup/Ways/pilgrimage:shikoku-88-awa:0/way.json' 'no_backup/Ways/pilgrimage:shikoku-88-awa:0/accepted.json'`. Install this branch's debug build over it with `adb install -r`, and launch. Every stage's `way.json` now carries `"stampHours":{"closesMinutes":1020,"opensMinutes":480}`; `accepted.json`'s mtime is unchanged. | — |
-| D3 | After that launch: the route page shows no "update ready", its maps still read "maps saved", and the journal's walks are all there (schema 13 migrated). | — |
-| D4 | A second cold launch writes nothing: the `way.json` mtimes stay as D2 left them. | — |
-| D5 | Walk a temple at 15:30 on the upgraded route: it speaks, so the hand-down reaches the walk. Then `git worktree remove ../pilgrim-android-v200`. | — |
+| D1 | `adb uninstall $P`. Build 2.0.0's debug app: `git worktree add ../pilgrim-android-v200 v2.0.0`, copy `local.properties` into it, `./gradlew :app:assembleDebug` there, `adb install` its APK. Download `shikoku-88-awa`, and save its maps. The stage `way.json` (Setup's one-liner) prints `stampHours None`. | Pass. 2.0.0 debug (code 912) installed clean; `shikoku-88-awa` downloaded with its maps saved; stage 0's `way.json` prints `stampHours None` (27.94 km, temples 1–10). |
+| D2 | Note the mtimes: `adb shell run-as $P stat -c '%Y %n' 'no_backup/Ways/pilgrimage:shikoku-88-awa:0/way.json' 'no_backup/Ways/pilgrimage:shikoku-88-awa:0/accepted.json'`. Install this branch's debug build over it with `adb install -r`, and launch. Every stage's `way.json` now carries `"stampHours":{"closesMinutes":1020,"opensMinutes":480}`; `accepted.json`'s mtime is unchanged. | Pass. After the first launch of the `main` build, all 5 stage `way.json` files carry `{"closesMinutes":1020,"opensMinutes":480}` and were rewritten (mtime 1793370294 → 1793370351); all 5 `accepted.json` mtimes are unchanged. |
+| D3 | After that launch: the route page shows no "update ready", its maps still read "maps saved", and the journal's walks are all there (schema 13 migrated). | Pass. No "update ready", the maps still read saved, the journal opens (owner); Room `user_version` is 13. |
+| D4 | A second cold launch writes nothing: the `way.json` mtimes stay as D2 left them. | Pass. A second cold launch left all 10 mtimes as D2 left them. |
+| D5 | Walk a temple at 15:30 on the upgraded route: it speaks, so the hand-down reaches the walk. Then `git worktree remove ../pilgrim-android-v200`. | Not run (the owner closed the pass). |
 
 ## E. Kills (U24, U26)
 
